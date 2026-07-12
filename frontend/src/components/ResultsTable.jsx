@@ -28,6 +28,10 @@ export default function ResultsTable({ allResults, errors }) {
         return { bg: theme.successLight, color: theme.successDark, label: 'BUY' };
       case 'OPPORTUNITY':
         return { bg: theme.warningLight, color: theme.warningDark, label: 'OPP' };
+      case 'VALID':
+        return { bg: '#1f6feb22', color: '#58a6ff', label: 'RALLY' };
+      case 'INVALID':
+        return { bg: theme.bgTertiary, color: theme.textTertiary, label: '—' };
       default:
         return { bg: theme.bgTertiary, color: theme.textTertiary, label: '—' };
     }
@@ -277,12 +281,13 @@ export default function ResultsTable({ allResults, errors }) {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                               {row.strategy_results?.map((sr, i) => {
                                 const sStyle = getStatusStyle(sr.status);
+                                const isRally = sr.strategy_id === 'rally_20_percent';
                                 return (
                                   <div key={i} style={{
                                     padding: '8px 12px',
                                     background: theme.bgCard,
                                     borderRadius: '6px',
-                                    border: `1px solid ${theme.border}`,
+                                    border: `1px solid ${isRally && sr.status === 'VALID' ? '#58a6ff40' : theme.border}`,
                                   }}>
                                     <div style={{
                                       display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px',
@@ -306,6 +311,41 @@ export default function ResultsTable({ allResults, errors }) {
                                         <div key={j}>• {r}</div>
                                       ))}
                                     </div>
+                                    {/* Rally-specific price levels */}
+                                    {isRally && sr.status === 'VALID' && (
+                                      <div style={{
+                                        marginTop: '8px',
+                                        display: 'flex',
+                                        gap: '8px',
+                                        flexWrap: 'wrap',
+                                      }}>
+                                        <span style={{
+                                          padding: '3px 8px', borderRadius: '4px',
+                                          background: '#1f883d22', color: '#3fb950',
+                                          fontSize: '11px', fontWeight: 600,
+                                          fontFamily: "'SF Mono', 'Fira Code', monospace",
+                                        }}>
+                                          📥 Next Buy: ₹{sr.next_buy_at?.toFixed(2)}
+                                        </span>
+                                        <span style={{
+                                          padding: '3px 8px', borderRadius: '4px',
+                                          background: '#da363322', color: '#f85149',
+                                          fontSize: '11px', fontWeight: 600,
+                                          fontFamily: "'SF Mono', 'Fira Code', monospace",
+                                        }}>
+                                          📤 Next Sell: ₹{sr.next_sell_at?.toFixed(2)}
+                                        </span>
+                                        {sr.days_since_last_rally != null && (
+                                          <span style={{
+                                            padding: '3px 8px', borderRadius: '4px',
+                                            background: '#58a6ff18', color: '#79c0ff',
+                                            fontSize: '11px', fontWeight: 500,
+                                          }}>
+                                            🕒 {sr.days_since_last_rally}d ago
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}

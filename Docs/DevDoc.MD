@@ -154,6 +154,18 @@ Buddy/
 
 ## Strategies Implemented
 
+### 3. 20% Rally
+- **ID:** `rally_20_percent`
+- **Applies to:** S200
+- **Pine Script Source:** `Docs/20_Percent_Rally_PineScript`
+- **Logic:** Detects completed consecutive green-candle streaks (close > open) where the move from the streak's lowest Low to highest High is ≥ 20%. Streak must have ended within the last 9 months (~189 trading days). Only *completed* streaks count — an ongoing streak is excluded until it breaks.
+- **Signals:**
+  - `VALID`   → A qualifying 20% rally found in the window (Score: 100)
+  - `INVALID` → No qualifying rally in the window (Score: 0)
+- **Extra Outputs:** `next_buy_at` (streak low), `next_sell_at` (streak high), `days_since_last_rally`, `total_valid_rallies_in_window`
+
+---
+
 ### 1. Envelope (200 DMA)
 - **ID:** `envelope_200dma`
 - **Applies to:** F40
@@ -254,14 +266,23 @@ Buddy/
 - [ ] Fundamental filters (Market Cap, D/E, ROCE, ROE)
 - [ ] Filter configuration UI
 
-### 🔲 Milestone 4: 20% Rally Strategy
-**Status: PENDING**
+### ✅ Milestone 4: 20% Rally Strategy
+**Status: COMPLETED — Session 3**
 
-- [ ] Translate Pine Script to Python
-- [ ] Green streak detection
-- [ ] Rally validation (20% threshold, 6-month window)
-- [ ] Apply to S200 pool
-- [ ] Dashboard support for pattern strategies
+- [x] Translate Pine Script (`Docs/20_Percent_Rally_PineScript`) to Python exactly
+- [x] `compute_rally_metrics()` in metrics_engine — streak detection, low/high tracking, rally%
+- [x] Completed-streak-only rule (mirrors Pine: label fires only when streak breaks)
+- [x] Validity window extended to **9 months (189 trading days)** per user requirement
+- [x] `rally_20_percent.py` strategy — VALID/INVALID status, Score 100/0
+- [x] `next_buy_at` / `next_sell_at` price levels (Pine: "Next Buy at" / "Next Sell at" labels)
+- [x] Registered in `registry.py`, applies to S200 pool
+- [x] `compute_metrics()` signature extended with `rally_threshold` + `rally_window_days`
+- [x] Scanner passes rally config thresholds to metrics engine
+- [x] Frontend: VALID/INVALID signal badge (blue "RALLY" badge)
+- [x] Frontend: Expanded row shows Next Buy/Sell prices + days since streak
+- [x] ScanSummary: New "20% Rally" metric card with count
+- [x] Signal filter: "20% Rally ✓" and "No Rally" options added
+- [x] `strategy_rules.json` updated (field names, 189-day window)
 
 ### 🔲 Milestone 5: Data & Persistence
 **Status: PENDING**

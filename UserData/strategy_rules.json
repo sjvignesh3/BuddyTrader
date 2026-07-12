@@ -9,7 +9,7 @@
     "minimum_history": {
       "dma_days": 200,
       "rolling_52w_days": 252,
-      "rally_lookback_days": 126
+        "rally_lookback_days": 189
     }
   },
   "stock_pools": {
@@ -211,7 +211,7 @@
       "priority": 3,
       "inputs": {
         "movement_threshold_pct": 20.0,
-        "validity_window_days": 126,
+        "validity_window_days": 189,
         "green_candle_rule": "close > open",
         "require_completed_green_streak": true,
         "event_date_basis": "streak_end_date"
@@ -231,30 +231,31 @@
         "selection": "Use the most recent valid completed streak within the last 6 months."
       },
       "derived_metrics": [
-        "last_valid_rally_low",
-        "last_valid_rally_high",
-        "last_valid_rally_pct",
-        "last_valid_rally_start_date",
-        "last_valid_rally_end_date",
-        "days_since_last_valid_rally",
-        "has_valid_20pct_rally_in_6m"
+        "has_valid_20pct_rally",
+        "last_rally_low",
+        "last_rally_high",
+        "last_rally_pct",
+        "last_rally_start_date",
+        "last_rally_end_date",
+        "days_since_last_rally",
+        "total_valid_rallies_in_window"
       ],
       "rules": {
         "pattern_valid": {
-          "metric": "has_valid_20pct_rally_in_6m",
+          "metric": "has_valid_20pct_rally",
           "operator": "==",
           "value": true,
-          "reason": "A completed 20% rally occurred within the last 6 months"
+          "reason": "A completed 20% rally occurred within the last 9 months"
         }
       },
       "status_logic": [
         {
           "status": "VALID",
-          "when": "has_valid_20pct_rally_in_6m == true"
+          "when": "has_valid_20pct_rally == true"
         },
         {
           "status": "INVALID",
-          "when": "has_valid_20pct_rally_in_6m == false"
+          "when": "has_valid_20pct_rally == false"
         }
       ],
       "score_map": {
@@ -264,12 +265,16 @@
       "output_fields": [
         "symbol",
         "close",
-        "last_valid_rally_low",
-        "last_valid_rally_high",
-        "last_valid_rally_pct",
-        "last_valid_rally_start_date",
-        "last_valid_rally_end_date",
-        "days_since_last_valid_rally",
+        "has_valid_20pct_rally",
+        "last_rally_low",
+        "last_rally_high",
+        "last_rally_pct",
+        "last_rally_start_date",
+        "last_rally_end_date",
+        "days_since_last_rally",
+        "total_valid_rallies_in_window",
+        "next_buy_at",
+        "next_sell_at",
         "strategy_status",
         "score",
         "reasons"

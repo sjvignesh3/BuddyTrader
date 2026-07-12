@@ -3,6 +3,7 @@ import { useTheme } from '../context/ThemeContext';
 import { triggerScan, getCachedScan } from '../services/api';
 import ResultsTable from '../components/ResultsTable';
 import ScanSummary from '../components/ScanSummary';
+import { exportPoolToCSV } from '../services/exportUtils';
 
 const POOL_TABS = [
   { code: 'F40',      label: 'Flagship 40',   short: 'F40',   icon: '🏛️' },
@@ -105,7 +106,8 @@ export default function ScannerPage({ initialPool, scanCache, setScanCache }) {
 
     if (filters.signal) {
       if (filters.signal === 'SIGNAL') {
-        data = data.filter(r => r.best_status !== 'NO_SIGNAL');
+        // "Has Signal" = any meaningful status (not NO_SIGNAL / INVALID)
+        data = data.filter(r => r.best_status !== 'NO_SIGNAL' && r.best_status !== 'INVALID');
       } else {
         data = data.filter(r => r.best_status === filters.signal);
       }
@@ -316,6 +318,48 @@ export default function ScannerPage({ initialPool, scanCache, setScanCache }) {
               </>
             )}
           </button>
+
+          {/* Export CSV — only visible when data is available */}
+          {currentData && !scanning && (
+            <button
+              onClick={() => exportPoolToCSV(filteredResults, activePool)}
+              title={`Export ${activePool} results as CSV`}
+              style={{
+                padding: '7px 14px',
+                borderRadius: '6px',
+                border: `1px solid ${theme.border}`,
+                background: theme.bgCard,
+                color: theme.textSecondary,
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = theme.bgHover;
+                e.currentTarget.style.color = theme.text;
+                e.currentTarget.style.borderColor = theme.accent;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = theme.bgCard;
+                e.currentTarget.style.color = theme.textSecondary;
+                e.currentTarget.style.borderColor = theme.border;
+              }}
+            >
+              {/* Download icon */}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Export CSV
+            </button>
+          )}
+
         </div>
       </div>
 
@@ -443,7 +487,9 @@ export default function ScannerPage({ initialPool, scanCache, setScanCache }) {
                   <option value="SIGNAL">Has Signal</option>
                   <option value="BUY_ZONE">Buy Zone</option>
                   <option value="OPPORTUNITY">Opportunity</option>
+                  <option value="VALID">20% Rally ✓</option>
                   <option value="NO_SIGNAL">No Signal</option>
+                  <option value="INVALID">No Rally</option>
                 </select>
               </div>
 

@@ -117,11 +117,20 @@ def run_scan(pool_code: str = "F40", strategy_ids: Optional[List[str]] = None,
         # Pass ATH override (5y daily) + Yahoo meta fields (52W high/low) to metrics engine
         ath_override = ath_data.get(symbol)
         meta_fields  = get_meta_for_symbol(symbol)
+
+        # Pull rally config so compute_metrics uses the right thresholds
+        rally_cfg    = strategies_config.get("rally_20_percent", {})
+        rally_inputs = rally_cfg.get("inputs", {})
+        rally_threshold    = rally_inputs.get("movement_threshold_pct", 20.0)
+        rally_window_days  = rally_inputs.get("validity_window_days", 189)
+
         metrics = compute_metrics(
             symbol,
             price_data[symbol],
             ath_override=ath_override,
             meta_fields=meta_fields,
+            rally_threshold=rally_threshold,
+            rally_window_days=rally_window_days,
         )
         if metrics is None:
             errors.append({"symbol": symbol, "error": "Failed to compute metrics"})

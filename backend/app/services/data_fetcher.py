@@ -2,44 +2,39 @@
 Data fetcher - fetches OHLCV data for NSE stocks.
 Uses Yahoo Finance v8 API directly (bypasses yfinance library issues).
 
-KEY DESIGN DECISIONS (v4 — accuracy fix):
+KEY DESIGN DECISIONS (v5 — ATH accuracy fix):
 
   Column used for 200 DMA  → AdjClose (dividend-adjusted close)
-  Column used for ATH      → AdjClose max from 5y daily data
+  Column used for ATH      → max(AdjustedHigh) from 5y daily data
+                             AdjustedHigh = High * (AdjClose / Close) per row
   52W High / 52W Low       → Yahoo meta `fiftyTwoWeekHigh` / `fiftyTwoWeekLow`
   Latest close             → meta `regularMarketPrice` (unadjusted, live)
 
-WHY ADJUSTED CLOSE:
-  Yahoo Finance stores raw (unadjusted) OHLC prices. Whenever a stock pays a
-  dividend or does a split, all historical closes are retroactively adjusted
-  downward so the price series is comparable across time. The `adjclose` field
-  is this adjusted series.
+WHY ADJUSTED HIGH FOR ATH (v5 fix):
+  ATH = highest intraday price ever reached, adjusted for dividends/splits.
+  Previous v4 used max(AdjClose) — but AdjClose is a closing price, not the
+  intraday peak. The ATH candle's High is always >= its Close.
 
-  TradingView and most screeners (including screener.in) compute the 200 DMA
-  and ATH from the adjusted close series — which is why:
-    - Raw Close 200 DMA = 2736  (wrong, inflated by pre-dividend historical closes)
-    - AdjClose 200 DMA  = 2681  (matches TV ~2694, small residual gap from
-                                  different dividend adjustment factors)
-    - Raw High ATH      = 4592  (unadjusted intraday high, not what TV shows)
-    - AdjClose ATH      = 4253  (close to TV's 4289.85; tiny difference is
-                                  Yahoo vs TV using slightly different adj factors)
+  Example — JPOLYINVST:
+    ATH day Close  = 1415.60   ← what v4 returned (wrong)
+    ATH day High   = 1487.70   ← what TradingView shows (correct)
+    Gap            = 72 points
 
-ROOT CAUSE SUMMARY (all 3 bugs fixed):
-  BUG 1 — 200 DMA was 2736 (ours) vs 2694 (TV):
-    CAUSE: Used raw Close instead of AdjClose.
-    FIX:   rolling(200) on AdjClose. Delta shrinks to <15 pts (~0.5%).
+  Fix: derive Adjusted High = High * (AdjClose / Close) for every row.
+  This applies the same proportional dividend/split adjustment that Yahoo
+  applies to Close, giving a true adjusted intraday-high series.
+  ATH = max(AdjustedHigh) over 5y daily data.
 
-  BUG 2 — 52W High was 3399 (ours) vs 3350 (screener):
-    CAUSE: max(raw High column) over 252 rows; intraday High > screener definition.
-    FIX:   Use Yahoo meta `fiftyTwoWeekHigh` — pre-computed by Yahoo, matches
-           screener/TV exactly.
+EARLIER FIXES (v4):
+  BUG 1 — 200 DMA used raw Close instead of AdjClose → inflated DMA.
+    FIX:   rolling(200) on AdjClose. Matches TV within ~0.5%.
 
-  BUG 3 — ATH was 4592 (ours) vs 4289 (TV):
-    CAUSE: `range=max` returns monthly candles → monthly High = entire month's
-           intraday extreme, severely inflated. Even 5y raw High = 4592 because
-           Yahoo's raw High is unadjusted.
-    FIX:   Use max(AdjClose) from 5y daily data. AdjClose on Aug-30-2024 = 4253,
-           which is the correct comparable-series high matching TV.
+  BUG 2 — 52W High used max(raw High column) over 252 rows.
+    FIX:   Use Yahoo meta `fiftyTwoWeekHigh` → matches screener.in / TV exactly.
+
+  BUG 3 — ATH used `range=max` → Yahoo silently returns monthly candles →
+           monthly High = entire month's intraday extreme → hugely inflated.
+    FIX:   Switched to 5y daily. v5 now also adjusts the High for dividends.
 """
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
@@ -169,20 +164,35 @@ def _try_yfinance(symbol: str, period: str = "1y") -> Optional[Tuple[pd.DataFram
 
 def _fetch_ath(symbol: str) -> Optional[float]:
     """
-    Fetch All-Time High using max(AdjClose) from 5y daily data.
+    Fetch All-Time High using adjusted High values from 5y daily data.
 
-    WHY AdjClose for ATH:
-    - Raw High is unadjusted. On dividend ex-dates, Yahoo's raw prices do NOT
-      retroactively reduce the High of that day, so raw High > actual traded price.
-    - AdjClose reflects the true economic value on each day, comparable across time.
-    - max(AdjClose over 5y) matches what TradingView shows as the ATH candle close.
-    - We use AdjClose (not AdjHigh — Yahoo doesn't provide that directly) which
-      slightly understates the true intraday ATH, but is consistent and reproducible.
+    ATH DEFINITION:
+      All-Time High = the highest intraday price ever reached, adjusted for
+      dividends/splits so values are comparable across time.
+
+    WHY NOT raw High:
+      Yahoo's raw High is unadjusted. On days before a dividend ex-date, the
+      historical raw High is NOT retroactively reduced, so raw High > the true
+      comparable price. For a stock with years of dividends, raw ATH can be
+      significantly inflated.
+
+    WHY NOT AdjClose (previous approach):
+      AdjClose gives the closing price, not the intraday peak. The ATH candle's
+      High is always >= its Close. Using AdjClose understates the ATH.
+      For JPOLYINVST: Close=1415.60 vs High=1487.70 — a 72-point gap.
+
+    HOW WE COMPUTE ADJUSTED HIGH:
+      Yahoo does not provide an "AdjHigh" column directly. We derive it:
+        adj_factor   = AdjClose / Close   (per-row dividend/split factor)
+        adjusted_high = High * adj_factor
+      This applies the same proportional adjustment to the High as Yahoo
+      applies to the Close, giving a comparable series of daily adjusted highs.
+      ATH = max(adjusted_high) over 5y daily data.
 
     WHY 5y AND NOT max:
-    - `range=max&interval=1d` silently returns MONTHLY candles for long histories,
+      `range=max&interval=1d` silently returns MONTHLY candles for long histories,
       making monthly High = entire month's intraday extreme → hugely inflated ATH.
-    - 5y is the longest range that reliably returns daily candles.
+      5y is the longest range that reliably returns daily candles.
     """
     if symbol in _ath_cache:
         return _ath_cache[symbol]
@@ -197,16 +207,35 @@ def _fetch_ath(symbol: str) -> Optional[float]:
     else:
         df, _ = result
 
-    if df is not None and not df.empty:
-        if "AdjClose" in df.columns:
-            ath = float(df["AdjClose"].max())
-        else:
-            ath = float(df["Close"].max())
-        _ath_cache[symbol] = ath
-        logger.debug(f"{symbol} ATH (5y AdjClose): {ath:.2f}")
-        return ath
+    if df is None or df.empty:
+        return None
 
-    return None
+    # Compute adjusted High = High * (AdjClose / Close)
+    # Fall back gracefully if AdjClose is missing or Close is zero
+    if "AdjClose" in df.columns and "High" in df.columns and "Close" in df.columns:
+        close_vals    = df["Close"].replace(0, float("nan"))
+        adj_factors   = df["AdjClose"] / close_vals        # per-row adj multiplier
+        adjusted_high = df["High"] * adj_factors           # adjusted intraday high
+        adjusted_high = adjusted_high.dropna()
+        if not adjusted_high.empty:
+            ath = float(adjusted_high.max())
+            logger.debug(
+                f"{symbol} ATH (5y adj High): {ath:.2f}  "
+                f"[raw High max: {df['High'].max():.2f}, AdjClose max: {df['AdjClose'].max():.2f}]"
+            )
+        else:
+            # AdjClose all NaN — fall back to raw High max
+            ath = float(df["High"].max())
+            logger.warning(f"{symbol}: adj_high all NaN, falling back to raw High max: {ath:.2f}")
+    elif "High" in df.columns:
+        ath = float(df["High"].max())
+        logger.warning(f"{symbol}: No AdjClose column, using raw High max: {ath:.2f}")
+    else:
+        ath = float(df["Close"].max())
+        logger.warning(f"{symbol}: No High column at all, using Close max: {ath:.2f}")
+
+    _ath_cache[symbol] = ath
+    return ath
 
 
 def fetch_stock_data(symbol: str, period: str = "1y") -> Optional[pd.DataFrame]:

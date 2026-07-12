@@ -8,11 +8,13 @@ from typing import Dict
 from .base import BaseStrategy
 from .envelope import EnvelopeStrategy
 from .week52_high_low import Week52HighLowStrategy
+from .rally_20_percent import Rally20PercentStrategy
 
 # Registry: strategy_id -> strategy instance
 STRATEGY_REGISTRY: Dict[str, BaseStrategy] = {
     "envelope_200dma": EnvelopeStrategy(),
     "week52_high_low": Week52HighLowStrategy(),
+    "rally_20_percent": Rally20PercentStrategy(),
 }
 
 

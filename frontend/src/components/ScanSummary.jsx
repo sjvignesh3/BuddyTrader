@@ -6,11 +6,15 @@ export default function ScanSummary({ data }) {
 
   if (!data) return null;
 
+  // Count VALID (20% Rally) stocks from results array
+  const validRallyCount = (data.results || []).filter(r => r.best_status === 'VALID').length;
+
   const cards = [
     { label: 'Scanned',     value: data.total_stocks_scanned, color: theme.textSecondary },
     { label: 'Data OK',     value: data.data_available_for,   color: theme.accent },
     { label: 'Buy Zone',    value: data.buy_zone_count,       color: theme.success,  highlight: data.buy_zone_count > 0 },
     { label: 'Opportunity', value: data.opportunity_count,    color: theme.warning,  highlight: data.opportunity_count > 0 },
+    { label: '20% Rally',   value: validRallyCount,           color: '#58a6ff',      highlight: validRallyCount > 0 },
     { label: 'No Signal',   value: data.no_signal_count,      color: theme.textTertiary },
     { label: 'Errors',      value: data.error_count,          color: data.error_count > 0 ? theme.danger : theme.textTertiary },
   ];
@@ -44,7 +48,9 @@ export default function ScanSummary({ data }) {
             key={card.label}
             style={{
               background: card.highlight
-                ? (theme.mode === 'dark' ? theme.successLight : '#F0FFF4')
+                ? (card.color === '#58a6ff'
+                    ? '#1f6feb18'
+                    : theme.mode === 'dark' ? theme.successLight : '#F0FFF4')
                 : theme.bgCard,
               borderRadius: '8px',
               padding: '12px 14px',
