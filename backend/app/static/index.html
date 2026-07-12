@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buddy - Swing Trading Scanner</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: #f0f2f5; color: #212529; }
+
+    /* Header */
+    .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px 32px; color: #fff; border-bottom: 3px solid #0f3460; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand .logo { font-size: 32px; }
+    .brand h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+    .badge { background: #e94560; color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 12px; text-transform: uppercase; }
+    .subtitle { margin: 4px 0 0 44px; font-size: 13px; color: #8892b0; }
+
+    /* Controls */
+    .controls { display: flex; align-items: center; gap: 16px; padding: 16px 32px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; flex-wrap: wrap; }
+    .controls label { font-size: 14px; font-weight: 500; color: #495057; }
+    .controls select { padding: 8px 12px; border-radius: 8px; border: 1px solid #ced4da; font-size: 14px; background: #fff; cursor: pointer; }
+    .scan-btn { padding: 10px 24px; border-radius: 8px; border: none; background: #0f3460; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .scan-btn:hover { background: #1a4a8a; }
+    .scan-btn:disabled { background: #6c757d; cursor: not-allowed; }
+    .data-source { font-size: 12px; padding: 4px 10px; border-radius: 12px; font-weight: 600; margin-left: auto; }
+    .data-source.live { background: #d4edda; color: #155724; }
+    .data-source.sample { background: #fff3cd; color: #856404; }
+
+    /* Summary */
+    .summary { padding: 16px 32px; }
+    .meta { display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px; color: #6c757d; margin-bottom: 16px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+    .card { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; border-left: 4px solid #6c757d; }
+    .card.green { border-left-color: #2d6a4f; background: #f0fff4; }
+    .card.yellow { border-left-color: #e76f51; }
+    .card.blue { border-left-color: #0077b6; }
+    .card.red { border-left-color: #dc3545; }
+    .card .icon { font-size: 20px; margin-bottom: 4px; }
+    .card .value { font-size: 28px; font-weight: 700; color: #212529; }
+    .card .label { font-size: 12px; color: #6c757d; font-weight: 500; text-transform: uppercase; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 4px; padding: 0 32px; margin-top: 16px; }
+    .tab { padding: 8px 16px; border-radius: 8px 8px 0 0; border: 1px solid #dee2e6; border-bottom: none; background: #f8f9fa; cursor: pointer; font-size: 13px; font-weight: 500; color: #495057; }
+    .tab.active { background: #fff; font-weight: 700; color: #0f3460; border-color: #0f3460; }
+
+    /* Table */
+    .table-wrap { margin: 0 32px 32px; overflow-x: auto; border: 1px solid #dee2e6; border-radius: 0 8px 8px 8px; background: #fff; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { padding: 12px 10px; text-align: left; background: #f8f9fa; border-bottom: 2px solid #dee2e6; font-weight: 600; color: #495057; cursor: pointer; white-space: nowrap; user-select: none; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    th:hover { background: #e9ecef; }
+    td { padding: 10px 10px; white-space: nowrap; border-bottom: 1px solid #f0f0f0; }
+    tr:hover td { background: #e8f4fd; }
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+    .fw-bold { font-weight: 600; }
+    .positive { color: #2d6a4f; font-weight: 600; }
+    .negative { color: #dc3545; }
+    .near-low { color: #2d6a4f; font-weight: 600; }
+
+    /* Status badges */
+    .status { padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .status.buy-zone { background: #d4edda; color: #155724; }
+    .status.opportunity { background: #fff3cd; color: #856404; }
+    .status.no-signal { background: #f8f9fa; color: #6c757d; }
+
+    .score { font-size: 16px; font-weight: 700; }
+
+    /* Welcome / Loading */
+    .center-msg { text-align: center; padding: 80px 32px; }
+    .center-msg .icon { font-size: 64px; margin-bottom: 16px; }
+    .center-msg h2 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+    .center-msg p { font-size: 16px; color: #495057; margin-bottom: 8px; }
+    .center-msg .hint { font-size: 14px; color: #6c757d; }
+
+    /* Expanded row */
+    .expanded-row { padding: 12px 16px; background: #f8f9fa; border-bottom: 2px solid #dee2e6; font-size: 13px; line-height: 1.6; }
+    .strat-detail { margin-top: 8px; padding: 8px 12px; background: #fff; border-radius: 6px; border: 1px solid #e9ecef; }
+    .strat-reasons { margin-top: 4px; font-size: 12px; color: #495057; }
+
+    /* Error list */
+    .error-item { padding: 8px 12px; background: #fff3f3; border-radius: 6px; margin-bottom: 8px; font-size: 13px; border: 1px solid #fecaca; margin: 8px 32px; }
+
+    .empty { padding: 48px; text-align: center; color: #6c757d; font-size: 15px; }
+
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .pulsing { animation: pulse 1.5s infinite; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="brand">
+      <span class="logo">📊</span>
+      <h1>Buddy Scanner</h1>
+      <span class="badge">MVP</span>
+    </div>
+    <p class="subtitle">NSE Swing Trading Opportunity Scanner</p>
+  </header>
+
+  <!-- Controls -->
+  <div class="controls">
+    <label>Stock Pool:</label>
+    <select id="poolSelect">
+      <option value="F40">Flagship 40 (F40)</option>
+      <option value="E40">Emerging 40 (E40)</option>
+      <option value="S200">Smartpick 200 (S200)</option>
+    </select>
+    <button id="scanBtn" class="scan-btn" onclick="runScan()">🔍 Run Scan</button>
+    <span id="dataSourceBadge" class="data-source" style="display:none"></span>
+  </div>
+
+  <!-- Content -->
+  <div id="content">
+    <div class="center-msg">
+      <div class="icon">🚀</div>
+      <h2>Ready to Scan</h2>
+      <p>Select a stock pool and click <strong>Run Scan</strong> to find swing trading opportunities.</p>
+      <p class="hint">Currently configured: <strong>Envelope</strong> and <strong>52 Week High Low</strong> strategies for F40</p>
+    </div>
+  </div>
+
+<script>
+let scanData = null;
+let currentTab = 'opportunities';
+let sortCol = 'best_score';
+let sortAsc = false;
+let expandedRow = null;
+
+async function runScan() {
+  const btn = document.getElementById('scanBtn');
+  const pool = document.getElementById('poolSelect').value;
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning...';
+
+  document.getElementById('content').innerHTML = `
+    <div class="center-msg">
+      <div class="icon pulsing">⏳</div>
+      <h2>Scanning ${pool}...</h2>
+      <p>Fetching live market data and evaluating strategies</p>
+      <p class="hint">This may take 10-30 seconds</p>
+    </div>`;
+
+  try {
+    const res = await fetch(`/api/scan?pool=${pool}`, { method: 'POST' });
+    scanData = await res.json();
+    renderResults();
+  } catch (err) {
+    document.getElementById('content').innerHTML = `
+      <div class="error-item">❌ Scan failed: ${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 Run Scan';
+  }
+}
+
+function renderResults() {
+  if (!scanData) return;
+  const d = scanData;
+
+  // Data source badge
+  const badge = document.getElementById('dataSourceBadge');
+  badge.style.display = 'inline';
+  if (d.data_source === 'live') {
+    badge.className = 'data-source live';
+    badge.textContent = '🟢 Live Data';
+  } else {
+    badge.className = 'data-source sample';
+    badge.textContent = '🟡 Sample Data';
+  }
+
+  let html = `
+    <div class="summary">
+      <div class="meta">
+        <span>🕐 ${new Date(d.scan_timestamp).toLocaleString()}</span>
+        <span>⏱️ ${d.scan_duration_seconds}s</span>
+        <span>📊 Pool: ${d.pool}</span>
+        <span>🎯 ${d.strategies_applied.join(', ')}</span>
+      </div>
+      <div class="cards">
+        <div class="card blue"><div class="icon">📋</div><div class="value">${d.total_stocks_scanned}</div><div class="label">Total Scanned</div></div>
+        <div class="card"><div class="icon">📡</div><div class="value">${d.data_available_for}</div><div class="label">Data Available</div></div>
+        <div class="card ${d.buy_zone_count > 0 ? 'green' : ''}"><div class="icon">🟢</div><div class="value">${d.buy_zone_count}</div><div class="label">Buy Zone</div></div>
+        <div class="card ${d.opportunity_count > 0 ? 'yellow' : ''}"><div class="icon">🟡</div><div class="value">${d.opportunity_count}</div><div class="label">Opportunity</div></div>
+        <div class="card"><div class="icon">⚪</div><div class="value">${d.no_signal_count}</div><div class="label">No Signal</div></div>
+        <div class="card ${d.error_count > 0 ? 'red' : ''}"><div class="icon">${d.error_count > 0 ? '❌' : '✅'}</div><div class="value">${d.error_count}</div><div class="label">Errors</div></div>
+      </div>
+    </div>`;
+
+  // Tabs
+  html += `<div class="tabs">
+    <div class="tab ${currentTab==='opportunities'?'active':''}" onclick="switchTab('opportunities')">🎯 Opportunities (${d.opportunities.length})</div>
+    <div class="tab ${currentTab==='no_signal'?'active':''}" onclick="switchTab('no_signal')">⚪ No Signal (${d.no_signal.length})</div>
+    ${d.errors.length > 0 ? `<div class="tab ${currentTab==='errors'?'active':''}" onclick="switchTab('errors')">❌ Errors (${d.errors.length})</div>` : ''}
+  </div>`;
+
+  // Table
+  const rows = currentTab === 'opportunities' ? d.opportunities :
+               currentTab === 'no_signal' ? d.no_signal : [];
+
+  if (currentTab === 'errors') {
+    html += '<div>';
+    d.errors.forEach(e => {
+      html += `<div class="error-item"><strong>${e.symbol}</strong>: ${e.error}</div>`;
+    });
+    html += '</div>';
+  } else {
+    // Sort
+    const sorted = [...rows].sort((a, b) => {
+      const va = a[sortCol] ?? 0, vb = b[sortCol] ?? 0;
+      if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+      return sortAsc ? va - vb : vb - va;
+    });
+
+    const arrow = (col) => sortCol === col ? (sortAsc ? ' ↑' : ' ↓') : '';
+
+    html += `<div class="table-wrap"><table>
+      <thead><tr>
+        <th onclick="sortBy('symbol')">Symbol${arrow('symbol')}</th>
+        <th onclick="sortBy('sector')">Sector${arrow('sector')}</th>
+        <th onclick="sortBy('cap_type')">Cap${arrow('cap_type')}</th>
+        <th onclick="sortBy('close')" class="text-right">Close ₹${arrow('close')}</th>
+        <th onclick="sortBy('dma_200')" class="text-right">200 DMA${arrow('dma_200')}</th>
+        <th onclick="sortBy('below_200dma_pct')" class="text-right">% Below DMA${arrow('below_200dma_pct')}</th>
+        <th onclick="sortBy('low_52w')" class="text-right">52W Low${arrow('low_52w')}</th>
+        <th onclick="sortBy('high_52w')" class="text-right">52W High${arrow('high_52w')}</th>
+        <th onclick="sortBy('distance_from_52w_low_pct')" class="text-right">% From Low${arrow('distance_from_52w_low_pct')}</th>
+        <th onclick="sortBy('best_status')">Signal${arrow('best_status')}</th>
+        <th onclick="sortBy('best_score')" class="text-center">Score${arrow('best_score')}</th>
+      </tr></thead><tbody>`;
+
+    sorted.forEach((r, i) => {
+      const statusClass = r.best_status === 'BUY_ZONE' ? 'buy-zone' : r.best_status === 'OPPORTUNITY' ? 'opportunity' : 'no-signal';
+      const statusLabel = r.best_status === 'BUY_ZONE' ? '🟢 BUY ZONE' : r.best_status === 'OPPORTUNITY' ? '🟡 OPPORTUNITY' : '⚪ No Signal';
+      const bg = i % 2 === 0 ? '#fff' : '#fafafa';
+
+      html += `<tr style="background:${bg};cursor:pointer" onclick="toggleRow(${i})">
+        <td class="fw-bold">${r.symbol}</td>
+        <td>${r.sector}</td>
+        <td style="font-size:11px;color:#6c757d">${r.cap_type}</td>
+        <td class="text-right">₹${r.close.toFixed(2)}</td>
+        <td class="text-right">₹${r.dma_200.toFixed(2)}</td>
+        <td class="text-right ${r.below_200dma_pct > 0 ? 'positive' : 'negative'}">${r.below_200dma_pct.toFixed(1)}%</td>
+        <td class="text-right">₹${r.low_52w.toFixed(2)}</td>
+        <td class="text-right">₹${r.high_52w.toFixed(2)}</td>
+        <td class="text-right ${r.distance_from_52w_low_pct <= 5 ? 'near-low' : ''}">${r.distance_from_52w_low_pct.toFixed(1)}%</td>
+        <td><span class="status ${statusClass}">${statusLabel}</span></td>
+        <td class="text-center score">${r.best_score}</td>
+      </tr>`;
+
+      if (expandedRow === i) {
+        html += `<tr><td colspan="11" class="expanded-row"><strong>Strategy Details:</strong>`;
+        (r.strategy_results || []).forEach(sr => {
+          const sc = sr.status === 'BUY_ZONE' ? 'buy-zone' : sr.status === 'OPPORTUNITY' ? 'opportunity' : 'no-signal';
+          html += `<div class="strat-detail">
+            <strong>${sr.strategy_name}:</strong> <span class="status ${sc}">${sr.status} (Score: ${sr.score})</span>
+            <div class="strat-reasons">${(sr.reasons || []).map(r => '• ' + r).join('<br>')}</div>
+          </div>`;
+        });
+        html += `</td></tr>`;
+      }
+    });
+
+    html += `</tbody></table>`;
+    if (sorted.length === 0) {
+      html += `<div class="empty">${currentTab === 'opportunities' ? '🔍 No opportunities found. Market may not be in a corrective phase for this pool.' : 'No data to display.'}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  document.getElementById('content').innerHTML = html;
+}
+
+function switchTab(tab) { currentTab = tab; expandedRow = null; renderResults(); }
+function sortBy(col) { if (sortCol === col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = false; } renderResults(); }
+function toggleRow(i) { expandedRow = expandedRow === i ? null : i; renderResults(); }
+</script>
+</body>
+</html>

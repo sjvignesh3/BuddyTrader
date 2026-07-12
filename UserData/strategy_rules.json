@@ -1,0 +1,285 @@
+{
+  "version": "1.0.0",
+  "name": "Buddy Strategy Rules",
+  "description": "Programmable strategy configuration for Envelope, 52 Week High Low, and 20% Rally based on Plan.MD and user-defined rules.",
+  "market": "NSE",
+  "timeframe": "1d",
+  "data_requirements": {
+    "price_series": "daily_ohlcv",
+    "minimum_history": {
+      "dma_days": 200,
+      "rolling_52w_days": 252,
+      "rally_lookback_days": 126
+    }
+  },
+  "stock_pools": {
+    "F40": {
+      "name": "Flagship 40",
+      "source_column": "Flagship 40 (F40)",
+      "category": "Qualitative"
+    },
+    "E40": {
+      "name": "Emerging 40",
+      "source_column": "Emerging 40 (E40)",
+      "category": "Qualitative"
+    },
+    "S200": {
+      "name": "Smartpick 200",
+      "source_column": "Smartpick 200 (S200)",
+      "category": "Quantitative"
+    }
+  },
+  "global_metric_definitions": {
+    "dma_200": {
+      "type": "sma",
+      "source": "close",
+      "length": 200,
+      "formula": "SMA(close, 200)"
+    },
+    "below_200dma_pct": {
+      "type": "derived_percentage",
+      "formula": "((dma_200 - close) / dma_200) * 100"
+    },
+    "low_52w": {
+      "type": "rolling_min",
+      "source": "low",
+      "length": 252,
+      "formula": "MIN(low, 252)"
+    },
+    "high_52w": {
+      "type": "rolling_max",
+      "source": "high",
+      "length": 252,
+      "formula": "MAX(high, 252)"
+    },
+    "distance_from_52w_low_pct": {
+      "type": "derived_percentage",
+      "formula": "((close - low_52w) / low_52w) * 100"
+    },
+    "distance_from_52w_high_pct": {
+      "type": "derived_percentage",
+      "formula": "((high_52w - close) / high_52w) * 100"
+    }
+  },
+  "status_enums": {
+    "zone_status": [
+      "BUY_ZONE",
+      "OPPORTUNITY",
+      "NO_SIGNAL"
+    ],
+    "pattern_status": [
+      "VALID",
+      "INVALID"
+    ]
+  },
+  "strategies": [
+    {
+      "id": "envelope_200dma",
+      "name": "Envelope",
+      "enabled": true,
+      "type": "technical",
+      "applies_to_pools": [
+        "F40"
+      ],
+      "priority": 1,
+      "inputs": {
+        "source": "close",
+        "dma_length": 200,
+        "buy_zone_below_dma_pct": 14.0,
+        "opportunity_below_dma_pct": 9.0
+      },
+      "derived_metrics": [
+        "dma_200",
+        "below_200dma_pct"
+      ],
+      "rules": {
+        "buy_zone": {
+          "metric": "below_200dma_pct",
+          "operator": ">=",
+          "value": 14.0,
+          "reason": "Price is 14% or more below 200 DMA"
+        },
+        "opportunity": {
+          "metric": "below_200dma_pct",
+          "operator": ">=",
+          "value": 9.0,
+          "reason": "Price is 9% or more below 200 DMA; suitable for GTT watch"
+        }
+      },
+      "status_logic": [
+        {
+          "status": "BUY_ZONE",
+          "when": "below_200dma_pct >= 14.0"
+        },
+        {
+          "status": "OPPORTUNITY",
+          "when": "below_200dma_pct >= 9.0 and below_200dma_pct < 14.0"
+        },
+        {
+          "status": "NO_SIGNAL",
+          "when": "below_200dma_pct < 9.0"
+        }
+      ],
+      "score_map": {
+        "BUY_ZONE": 100,
+        "OPPORTUNITY": 70,
+        "NO_SIGNAL": 0
+      },
+      "output_fields": [
+        "symbol",
+        "close",
+        "dma_200",
+        "below_200dma_pct",
+        "strategy_status",
+        "score",
+        "reasons"
+      ]
+    },
+    {
+      "id": "week52_high_low",
+      "name": "52 Week High Low",
+      "enabled": true,
+      "type": "technical",
+      "applies_to_pools": [
+        "F40",
+        "E40"
+      ],
+      "priority": 2,
+      "inputs": {
+        "lookback_days": 252,
+        "buy_zone_tolerance_pct": 0.5,
+        "opportunity_above_52w_low_pct": 5.0
+      },
+      "derived_metrics": [
+        "low_52w",
+        "high_52w",
+        "distance_from_52w_low_pct",
+        "distance_from_52w_high_pct"
+      ],
+      "rules": {
+        "buy_zone": {
+          "metric": "distance_from_52w_low_pct",
+          "operator": "<=",
+          "value": 0.5,
+          "reason": "Price is at or extremely near the 52-week low"
+        },
+        "opportunity": {
+          "metric": "distance_from_52w_low_pct",
+          "operator": "<=",
+          "value": 5.0,
+          "reason": "Price is within 5% above the 52-week low"
+        }
+      },
+      "status_logic": [
+        {
+          "status": "BUY_ZONE",
+          "when": "distance_from_52w_low_pct <= 0.5"
+        },
+        {
+          "status": "OPPORTUNITY",
+          "when": "distance_from_52w_low_pct > 0.5 and distance_from_52w_low_pct <= 5.0"
+        },
+        {
+          "status": "NO_SIGNAL",
+          "when": "distance_from_52w_low_pct > 5.0"
+        }
+      ],
+      "score_map": {
+        "BUY_ZONE": 100,
+        "OPPORTUNITY": 75,
+        "NO_SIGNAL": 0
+      },
+      "output_fields": [
+        "symbol",
+        "close",
+        "low_52w",
+        "high_52w",
+        "distance_from_52w_low_pct",
+        "strategy_status",
+        "score",
+        "reasons"
+      ]
+    },
+    {
+      "id": "rally_20_percent",
+      "name": "20% Rally",
+      "enabled": true,
+      "type": "technical_pattern",
+      "applies_to_pools": [
+        "S200"
+      ],
+      "priority": 3,
+      "inputs": {
+        "movement_threshold_pct": 20.0,
+        "validity_window_days": 126,
+        "green_candle_rule": "close > open",
+        "require_completed_green_streak": true,
+        "event_date_basis": "streak_end_date"
+      },
+      "pine_translation": {
+        "source_file": "Docs/20_Percent_Rally_PineScript",
+        "summary": "Track consecutive green candles, compute lowest low and highest high in each completed streak, and validate streaks where movement from low to high is at least 20%."
+      },
+      "algorithm": {
+        "streak_definition": "A streak starts on the first candle where close > open and continues while close > open on consecutive candles.",
+        "tracking": [
+          "For each green streak, track the minimum low.",
+          "For each green streak, track the maximum high.",
+          "When a non-green candle occurs, close the streak and compute rally percentage as ((highest_high - lowest_low) / lowest_low) * 100."
+        ],
+        "validation": "A streak is a valid 20% rally if rally percentage >= 20 and the streak end date is within the last 126 trading days.",
+        "selection": "Use the most recent valid completed streak within the last 6 months."
+      },
+      "derived_metrics": [
+        "last_valid_rally_low",
+        "last_valid_rally_high",
+        "last_valid_rally_pct",
+        "last_valid_rally_start_date",
+        "last_valid_rally_end_date",
+        "days_since_last_valid_rally",
+        "has_valid_20pct_rally_in_6m"
+      ],
+      "rules": {
+        "pattern_valid": {
+          "metric": "has_valid_20pct_rally_in_6m",
+          "operator": "==",
+          "value": true,
+          "reason": "A completed 20% rally occurred within the last 6 months"
+        }
+      },
+      "status_logic": [
+        {
+          "status": "VALID",
+          "when": "has_valid_20pct_rally_in_6m == true"
+        },
+        {
+          "status": "INVALID",
+          "when": "has_valid_20pct_rally_in_6m == false"
+        }
+      ],
+      "score_map": {
+        "VALID": 100,
+        "INVALID": 0
+      },
+      "output_fields": [
+        "symbol",
+        "close",
+        "last_valid_rally_low",
+        "last_valid_rally_high",
+        "last_valid_rally_pct",
+        "last_valid_rally_start_date",
+        "last_valid_rally_end_date",
+        "days_since_last_valid_rally",
+        "strategy_status",
+        "score",
+        "reasons"
+      ]
+    }
+  ],
+  "implementation_notes": {
+    "pool_assignment": "Stocks may belong to one or more pools based on imported universe mapping.",
+    "scan_mode": "End-of-day only.",
+    "ranking": "Use per-strategy score_map initially; later combine with filter weights and normalized scores.",
+    "tolerance_note": "52-week low equality is modeled using a tolerance percentage because exact equality is uncommon in market data."
+  }
+}
