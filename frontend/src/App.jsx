@@ -1,136 +1,77 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 import Header from './components/Header';
-import ScanControls from './components/ScanControls';
-import ScanSummary from './components/ScanSummary';
-import ResultsTable from './components/ResultsTable';
-import { triggerScan } from './services/api';
+import HomePage from './pages/HomePage';
+import ScannerPage from './pages/ScannerPage';
+import { getScanStatuses } from './services/api';
 
-const globalStyles = `
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #f0f2f5;
-    color: #212529;
-  }
-  ::-webkit-scrollbar { height: 6px; width: 6px; }
-  ::-webkit-scrollbar-thumb { background: #ced4da; border-radius: 3px; }
-  tr:hover { background: #e8f4fd !important; }
-`;
+function AppContent() {
+  const { theme } = useTheme();
+  const [currentPage, setCurrentPage] = useState('home');
+  const [initialPool, setInitialPool] = useState('F40');
 
-export default function App() {
-  const [scanning, setScanning] = useState(false);
-  const [pool, setPool] = useState('F40');
-  const [scanData, setScanData] = useState(null);
-  const [error, setError] = useState(null);
+  // Per-pool scan cache (persisted in React state, survives tab switches)
+  const [scanCache, setScanCache] = useState({});
 
-  const handleScan = async () => {
-    setScanning(true);
-    setError(null);
-    try {
-      const result = await triggerScan(pool);
-      setScanData(result);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setScanning(false);
-    }
+  // Load scan statuses on mount
+  useEffect(() => {
+    getScanStatuses()
+      .then(statuses => {
+        // Only store metadata (timestamps, counts) for pool cards
+        // Full data is loaded lazily when user visits scanner
+        const meta = {};
+        for (const [pool, data] of Object.entries(statuses)) {
+          if (data.scan_timestamp) {
+            meta[pool] = data;
+          }
+        }
+        // Merge with existing cache (don't overwrite full data)
+        setScanCache(prev => {
+          const merged = { ...prev };
+          for (const [pool, data] of Object.entries(meta)) {
+            if (!merged[pool]) merged[pool] = data;
+          }
+          return merged;
+        });
+      })
+      .catch(() => {}); // Silently ignore if backend is not running
+  }, []);
+
+  const handleNavigate = (page, poolCode) => {
+    setCurrentPage(page);
+    if (poolCode) setInitialPool(poolCode);
   };
 
   return (
-    <>
-      <style>{globalStyles}</style>
-      <Header />
-      <ScanControls
-        onScan={handleScan}
-        scanning={scanning}
-        pool={pool}
-        setPool={setPool}
-      />
+    <div style={{
+      minHeight: '100vh',
+      background: theme.bg,
+      transition: 'background 0.25s, color 0.25s',
+    }}>
+      <Header currentPage={currentPage} onNavigate={handleNavigate} />
 
-      {error && (
-        <div style={styles.error}>
-          ❌ {error}
-        </div>
+      {currentPage === 'home' && (
+        <HomePage
+          onNavigate={handleNavigate}
+          scanCache={scanCache}
+        />
       )}
 
-      {!scanData && !scanning && (
-        <div style={styles.welcome}>
-          <div style={styles.welcomeIcon}>🚀</div>
-          <h2 style={styles.welcomeTitle}>Ready to Scan</h2>
-          <p style={styles.welcomeText}>
-            Select a stock pool and click <strong>Run Scan</strong> to find swing trading opportunities.
-          </p>
-          <p style={styles.welcomeHint}>
-            Currently configured strategies for F40: <strong>Envelope</strong> and <strong>52 Week High Low</strong>
-          </p>
-        </div>
+      {currentPage === 'scanner' && (
+        <ScannerPage
+          initialPool={initialPool}
+          scanCache={scanCache}
+          setScanCache={setScanCache}
+        />
       )}
-
-      {scanning && (
-        <div style={styles.loading}>
-          <div style={styles.spinner}>⏳</div>
-          <p>Fetching live data and running strategies...</p>
-          <p style={styles.loadingHint}>This may take 30-60 seconds for the first scan</p>
-        </div>
-      )}
-
-      {scanData && !scanning && (
-        <>
-          <ScanSummary data={scanData} />
-          <ResultsTable
-            opportunities={scanData.opportunities}
-            noSignal={scanData.no_signal}
-            errors={scanData.errors}
-          />
-        </>
-      )}
-    </>
+    </div>
   );
 }
 
-const styles = {
-  error: {
-    margin: '16px 32px',
-    padding: '12px 16px',
-    background: '#fff3f3',
-    border: '1px solid #fecaca',
-    borderRadius: '8px',
-    color: '#dc3545',
-    fontSize: '14px',
-  },
-  welcome: {
-    textAlign: 'center',
-    padding: '80px 32px',
-  },
-  welcomeIcon: { fontSize: '64px', marginBottom: '16px' },
-  welcomeTitle: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: '#212529',
-    marginBottom: '8px',
-  },
-  welcomeText: {
-    fontSize: '16px',
-    color: '#495057',
-    marginBottom: '8px',
-  },
-  welcomeHint: {
-    fontSize: '14px',
-    color: '#6c757d',
-  },
-  loading: {
-    textAlign: 'center',
-    padding: '80px 32px',
-    color: '#495057',
-  },
-  spinner: {
-    fontSize: '48px',
-    marginBottom: '16px',
-    animation: 'pulse 1.5s infinite',
-  },
-  loadingHint: {
-    fontSize: '13px',
-    color: '#6c757d',
-    marginTop: '8px',
-  },
-};
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
+  );
+}

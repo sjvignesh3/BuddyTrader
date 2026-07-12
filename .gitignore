@@ -1,0 +1,112 @@
+# ─────────────────────────────────────────────
+#  Buddy – Swing Trading Scanner Dashboard
+#  .gitignore
+# ─────────────────────────────────────────────
+
+
+# ── Python ────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+!.env.example
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+MANIFEST
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Type checkers
+.mypy_cache/
+.pytype/
+
+# Jupyter
+.ipynb_checkpoints/
+
+
+# ── FastAPI / Uvicorn ─────────────────────────
+*.log
+uvicorn.log
+
+
+# ── Data & Cache ──────────────────────────────
+# Backend data cache directory (runtime-generated)
+backend/data/
+!backend/data/.gitkeep
+
+# Never commit raw market data CSVs (large files)
+*.csv
+# Exception – keep the master universe template tracked
+!UserData/Vicky - Master Template - Master.csv
+
+
+# ── Frontend (React / Vite) ───────────────────
+node_modules/
+frontend/node_modules/
+
+# Vite build output
+frontend/dist/
+frontend/.vite/
+
+# Local env overrides
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Parcel / CRA leftovers (just in case)
+.cache/
+.parcel-cache/
+
+
+# ── OS & Editor artefacts ─────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Desktop.ini
+
+# JetBrains IDEs
+.idea/
+
+# VS Code / Zoho Code IDE
+.vscode/
+*.code-workspace
+
+# Vim / Emacs
+*.swp
+*.swo
+*~
+\#*\#
+
+
+# ── Secrets & Credentials ─────────────────────
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
+
+
+# ── Misc ──────────────────────────────────────
+.bin/
+*.bak
+*.tmp

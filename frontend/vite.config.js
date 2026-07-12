@@ -5,7 +5,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
-    host: true,
+    host: '0.0.0.0',
+    allowedHosts: [
+      'all',
+      '.zcodecorp.in',
+      'localhost',
+    ],
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

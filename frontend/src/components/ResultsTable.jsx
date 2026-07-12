@@ -1,173 +1,315 @@
 import React, { useState } from 'react';
+import { useTheme } from '../context/ThemeContext';
 
-const STATUS_STYLES = {
-  BUY_ZONE: { bg: '#d4edda', color: '#155724', label: '🟢 BUY ZONE' },
-  OPPORTUNITY: { bg: '#fff3cd', color: '#856404', label: '🟡 OPPORTUNITY' },
-  NO_SIGNAL: { bg: '#f8f9fa', color: '#6c757d', label: '⚪ No Signal' },
-};
-
-export default function ResultsTable({ opportunities, noSignal, errors }) {
-  const [tab, setTab] = useState('opportunities');
+export default function ResultsTable({ allResults, errors }) {
+  const { theme } = useTheme();
   const [sortCol, setSortCol] = useState('best_score');
   const [sortAsc, setSortAsc] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
+  const [showErrors, setShowErrors] = useState(false);
 
   const handleSort = (col) => {
-    if (sortCol === col) {
-      setSortAsc(!sortAsc);
-    } else {
-      setSortCol(col);
-      setSortAsc(false);
+    if (sortCol === col) setSortAsc(!sortAsc);
+    else { setSortCol(col); setSortAsc(false); }
+  };
+
+  const sortedData = [...(allResults || [])].sort((a, b) => {
+    const va = a[sortCol] ?? 0;
+    const vb = b[sortCol] ?? 0;
+    if (typeof va === 'string' && typeof vb === 'string') {
+      return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    }
+    return sortAsc ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
+  });
+
+  const getStatusStyle = (status) => {
+    switch (status) {
+      case 'BUY_ZONE':
+        return { bg: theme.successLight, color: theme.successDark, label: 'BUY' };
+      case 'OPPORTUNITY':
+        return { bg: theme.warningLight, color: theme.warningDark, label: 'OPP' };
+      default:
+        return { bg: theme.bgTertiary, color: theme.textTertiary, label: '—' };
     }
   };
 
-  const currentData = tab === 'opportunities' ? opportunities : tab === 'no_signal' ? noSignal : errors;
+  const getCapStyle = (cap) => {
+    const lower = (cap || '').toLowerCase();
+    if (lower.includes('large')) return { bg: theme.badge.large + '15', color: theme.badge.large, text: 'LRG' };
+    if (lower.includes('mid'))   return { bg: theme.badge.mid + '15', color: theme.badge.mid, text: 'MID' };
+    if (lower.includes('small')) return { bg: theme.badge.small + '15', color: theme.badge.small, text: 'SML' };
+    return { bg: theme.bgTertiary, color: theme.textTertiary, text: cap || '—' };
+  };
 
-  const sortedData = tab !== 'errors'
-    ? [...(currentData || [])].sort((a, b) => {
-        const va = a[sortCol] ?? 0;
-        const vb = b[sortCol] ?? 0;
-        return sortAsc ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
-      })
-    : currentData || [];
+  const columns = [
+    { key: 'symbol',                   label: 'Symbol',       align: 'left',   w: '90px'  },
+    { key: 'sector',                   label: 'Sector',       align: 'left',   w: '100px' },
+    { key: 'cap_type',                 label: 'Cap',          align: 'center', w: '55px'  },
+    { key: 'close',                    label: 'Close ₹',      align: 'right',  w: '80px'  },
+    { key: 'dma_200',                  label: '200 DMA',      align: 'right',  w: '80px'  },
+    { key: 'below_200dma_pct',         label: '% Below DMA',  align: 'right',  w: '85px'  },
+    { key: 'low_52w',                  label: '52W Low',      align: 'right',  w: '80px'  },
+    { key: 'high_52w',                 label: '52W High',     align: 'right',  w: '80px'  },
+    { key: 'distance_from_52w_low_pct',label: '% From Low',   align: 'right',  w: '75px'  },
+    { key: 'ath',                      label: 'ATH',          align: 'right',  w: '80px'  },
+    { key: 'down_from_ath_pct',        label: '% ↓ ATH',      align: 'right',  w: '70px'  },
+    { key: 'best_status',             label: 'Signal',       align: 'center', w: '60px'  },
+    { key: 'best_score',              label: 'Score',        align: 'center', w: '50px'  },
+  ];
+
+  const thStyle = (col) => ({
+    padding: '8px 10px',
+    textAlign: col.align,
+    background: theme.bgTertiary,
+    borderBottom: `2px solid ${theme.border}`,
+    fontWeight: 600,
+    color: sortCol === col.key ? theme.accent : theme.textTertiary,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    userSelect: 'none',
+    fontSize: '10px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.4px',
+    transition: 'color 0.1s',
+    minWidth: col.w,
+    position: 'sticky',
+    top: 0,
+    zIndex: 2,
+  });
+
+  const monoStyle = {
+    fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
+    fontSize: '11.5px',
+  };
 
   return (
-    <div style={styles.container}>
-      {/* Tabs */}
-      <div style={styles.tabs}>
-        <button
-          style={{ ...styles.tab, ...(tab === 'opportunities' ? styles.tabActive : {}) }}
-          onClick={() => setTab('opportunities')}
-        >
-          🎯 Opportunities ({opportunities?.length || 0})
-        </button>
-        <button
-          style={{ ...styles.tab, ...(tab === 'no_signal' ? styles.tabActive : {}) }}
-          onClick={() => setTab('no_signal')}
-        >
-          ⚪ No Signal ({noSignal?.length || 0})
-        </button>
-        {errors?.length > 0 && (
+    <div style={{ padding: '0 24px 24px' }}>
+
+      {/* Error toggle */}
+      {errors?.length > 0 && (
+        <div style={{ marginBottom: '8px' }}>
           <button
-            style={{ ...styles.tab, ...(tab === 'errors' ? styles.tabActive : {}) }}
-            onClick={() => setTab('errors')}
+            onClick={() => setShowErrors(!showErrors)}
+            style={{
+              background: theme.dangerLight,
+              border: `1px solid ${theme.danger}20`,
+              borderRadius: '6px',
+              padding: '6px 12px',
+              cursor: 'pointer',
+              fontSize: '11px',
+              fontWeight: 600,
+              color: theme.danger,
+            }}
           >
-            ❌ Errors ({errors.length})
+            {showErrors ? 'Hide' : 'Show'} {errors.length} Error{errors.length > 1 ? 's' : ''}
           </button>
-        )}
-      </div>
+          {showErrors && (
+            <div style={{
+              marginTop: '6px',
+              padding: '10px 14px',
+              background: theme.bgCard,
+              border: `1px solid ${theme.border}`,
+              borderRadius: '6px',
+            }}>
+              {errors.map((e, i) => (
+                <div key={i} style={{
+                  padding: '5px 0',
+                  fontSize: '12px',
+                  color: theme.text,
+                  borderBottom: i < errors.length - 1 ? `1px solid ${theme.divider}` : 'none',
+                }}>
+                  <strong>{e.symbol}</strong>
+                  <span style={{ color: theme.textTertiary, margin: '0 6px' }}>→</span>
+                  <span style={{ color: theme.danger }}>{e.error}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Table */}
-      {tab === 'errors' ? (
-        <div style={styles.errorList}>
-          {errors?.map((e, i) => (
-            <div key={i} style={styles.errorItem}>
-              <strong>{e.symbol}</strong>: {e.error}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div style={styles.tableWrapper}>
-          <table style={styles.table}>
+      <div style={{
+        border: `1px solid ${theme.border}`,
+        borderRadius: '8px',
+        background: theme.bgCard,
+        overflow: 'hidden',
+        boxShadow: theme.shadow,
+      }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            fontSize: '12px',
+          }}>
             <thead>
               <tr>
-                {[
-                  { key: 'symbol', label: 'Symbol' },
-                  { key: 'sector', label: 'Sector' },
-                  { key: 'cap_type', label: 'Cap' },
-                  { key: 'close', label: 'Close ₹' },
-                  { key: 'dma_200', label: '200 DMA' },
-                  { key: 'below_200dma_pct', label: '% Below DMA' },
-                  { key: 'low_52w', label: '52W Low' },
-                  { key: 'high_52w', label: '52W High' },
-                  { key: 'distance_from_52w_low_pct', label: '% From Low' },
-                  { key: 'best_status', label: 'Signal' },
-                  { key: 'best_score', label: 'Score' },
-                ].map(({ key, label }) => (
+                {columns.map((col) => (
                   <th
-                    key={key}
-                    style={styles.th}
-                    onClick={() => handleSort(key)}
+                    key={col.key}
+                    style={thStyle(col)}
+                    onClick={() => handleSort(col.key)}
                   >
-                    {label} {sortCol === key ? (sortAsc ? '↑' : '↓') : ''}
+                    {col.label}
+                    {sortCol === col.key && (
+                      <span style={{ marginLeft: '2px', fontSize: '8px' }}>
+                        {sortAsc ? '▲' : '▼'}
+                      </span>
+                    )}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {sortedData.map((row, idx) => {
-                const statusStyle = STATUS_STYLES[row.best_status] || STATUS_STYLES.NO_SIGNAL;
+                const statusStyle = getStatusStyle(row.best_status);
+                const capStyle = getCapStyle(row.cap_type);
                 const isExpanded = expandedRow === idx;
+
                 return (
                   <React.Fragment key={row.symbol + idx}>
                     <tr
                       style={{
-                        ...styles.tr,
-                        background: idx % 2 === 0 ? '#fff' : '#fafafa',
+                        background: isExpanded
+                          ? theme.accentLight
+                          : idx % 2 === 0 ? 'transparent' : theme.tableRowAlt,
                         cursor: 'pointer',
+                        transition: 'background 0.08s',
+                        borderBottom: `1px solid ${theme.borderLight}`,
                       }}
                       onClick={() => setExpandedRow(isExpanded ? null : idx)}
+                      onMouseEnter={(e) => {
+                        if (!isExpanded) e.currentTarget.style.background = theme.tableRowHover;
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isExpanded) e.currentTarget.style.background = idx % 2 === 0 ? 'transparent' : theme.tableRowAlt;
+                      }}
                     >
-                      <td style={{ ...styles.td, fontWeight: 600 }}>{row.symbol}</td>
-                      <td style={styles.td}>{row.sector}</td>
-                      <td style={styles.td}>
-                        <span style={styles.capBadge}>{row.cap_type}</span>
+                      <td style={{ padding: '8px 10px', fontWeight: 600, color: theme.text, fontSize: '12px' }}>
+                        {row.symbol}
                       </td>
-                      <td style={{ ...styles.td, textAlign: 'right' }}>₹{row.close?.toFixed(2)}</td>
-                      <td style={{ ...styles.td, textAlign: 'right' }}>₹{row.dma_200?.toFixed(2)}</td>
                       <td style={{
-                        ...styles.td,
-                        textAlign: 'right',
-                        color: row.below_200dma_pct > 0 ? '#2d6a4f' : '#dc3545',
-                        fontWeight: 600,
+                        padding: '8px 10px', color: theme.textSecondary, fontSize: '11px',
+                        maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {row.sector || '—'}
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                        <span style={{
+                          fontSize: '9px', fontWeight: 600, padding: '2px 5px',
+                          borderRadius: '3px', background: capStyle.bg, color: capStyle.color,
+                        }}>
+                          {capStyle.text}
+                        </span>
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 500, color: theme.text, ...monoStyle }}>
+                        {row.close?.toFixed(2)}
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: theme.textSecondary, ...monoStyle }}>
+                        {row.dma_200?.toFixed(2)}
+                      </td>
+                      <td style={{
+                        padding: '8px 10px', textAlign: 'right', fontWeight: 600, ...monoStyle,
+                        color: row.below_200dma_pct > 0 ? theme.success : theme.danger,
                       }}>
                         {row.below_200dma_pct?.toFixed(1)}%
                       </td>
-                      <td style={{ ...styles.td, textAlign: 'right' }}>₹{row.low_52w?.toFixed(2)}</td>
-                      <td style={{ ...styles.td, textAlign: 'right' }}>₹{row.high_52w?.toFixed(2)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: theme.textSecondary, ...monoStyle }}>
+                        {row.low_52w?.toFixed(2)}
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: theme.textSecondary, ...monoStyle }}>
+                        {row.high_52w?.toFixed(2)}
+                      </td>
                       <td style={{
-                        ...styles.td,
-                        textAlign: 'right',
-                        color: row.distance_from_52w_low_pct <= 5 ? '#2d6a4f' : '#6c757d',
+                        padding: '8px 10px', textAlign: 'right', ...monoStyle,
                         fontWeight: row.distance_from_52w_low_pct <= 5 ? 600 : 400,
+                        color: row.distance_from_52w_low_pct <= 5 ? theme.success : theme.textSecondary,
                       }}>
                         {row.distance_from_52w_low_pct?.toFixed(1)}%
                       </td>
-                      <td style={styles.td}>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: theme.textSecondary, ...monoStyle }}>
+                        {row.ath?.toFixed(2)}
+                      </td>
+                      <td style={{
+                        padding: '8px 10px', textAlign: 'right', fontWeight: 600, ...monoStyle,
+                        color: row.down_from_ath_pct >= 30 ? theme.success
+                             : row.down_from_ath_pct >= 15 ? theme.warning
+                             : theme.textTertiary,
+                      }}>
+                        {row.down_from_ath_pct?.toFixed(1)}%
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                         <span style={{
-                          ...styles.statusBadge,
-                          background: statusStyle.bg,
-                          color: statusStyle.color,
+                          padding: '2px 7px', borderRadius: '3px',
+                          fontSize: '9px', fontWeight: 700,
+                          background: statusStyle.bg, color: statusStyle.color,
+                          letterSpacing: '0.3px',
                         }}>
                           {statusStyle.label}
                         </span>
                       </td>
-                      <td style={{ ...styles.td, textAlign: 'center', fontWeight: 700, fontSize: '16px' }}>
+                      <td style={{
+                        padding: '8px 10px', textAlign: 'center',
+                        fontWeight: 700, fontSize: '13px',
+                        color: row.best_score > 0 ? theme.accent : theme.textTertiary,
+                      }}>
                         {row.best_score}
                       </td>
                     </tr>
+
+                    {/* Expanded Strategy Details */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={11} style={styles.expandedRow}>
-                          <div style={styles.reasonsBox}>
-                            <strong>Strategy Details:</strong>
-                            {row.strategy_results?.map((sr, i) => (
-                              <div key={i} style={styles.strategyDetail}>
-                                <span style={{ fontWeight: 600 }}>{sr.strategy_name}:</span>{' '}
-                                <span style={{
-                                  ...styles.miniStatusBadge,
-                                  background: STATUS_STYLES[sr.status]?.bg || '#f8f9fa',
-                                  color: STATUS_STYLES[sr.status]?.color || '#6c757d',
-                                }}>
-                                  {sr.status} (Score: {sr.score})
-                                </span>
-                                <div style={styles.reasons}>
-                                  {sr.reasons?.map((r, j) => (
-                                    <div key={j}>• {r}</div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
+                        <td colSpan={13} style={{
+                          padding: '0',
+                          borderBottom: `2px solid ${theme.accent}30`,
+                        }}>
+                          <div style={{
+                            padding: '12px 16px',
+                            background: theme.bgTertiary,
+                          }}>
+                            <div style={{
+                              fontSize: '10px', fontWeight: 700, color: theme.textTertiary,
+                              textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px',
+                            }}>
+                              Strategy Details
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                              {row.strategy_results?.map((sr, i) => {
+                                const sStyle = getStatusStyle(sr.status);
+                                return (
+                                  <div key={i} style={{
+                                    padding: '8px 12px',
+                                    background: theme.bgCard,
+                                    borderRadius: '6px',
+                                    border: `1px solid ${theme.border}`,
+                                  }}>
+                                    <div style={{
+                                      display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px',
+                                    }}>
+                                      <span style={{ fontWeight: 600, color: theme.text, fontSize: '12px' }}>
+                                        {sr.strategy_name}
+                                      </span>
+                                      <span style={{
+                                        padding: '1px 5px', borderRadius: '3px',
+                                        fontSize: '9px', fontWeight: 700,
+                                        background: sStyle.bg, color: sStyle.color,
+                                      }}>
+                                        {sr.status}
+                                      </span>
+                                      <span style={{ fontSize: '11px', color: theme.textTertiary, fontWeight: 500 }}>
+                                        Score: {sr.score}
+                                      </span>
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: theme.textSecondary, lineHeight: 1.5 }}>
+                                      {sr.reasons?.map((r, j) => (
+                                        <div key={j}>• {r}</div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -177,130 +319,17 @@ export default function ResultsTable({ opportunities, noSignal, errors }) {
               })}
             </tbody>
           </table>
-          {sortedData.length === 0 && (
-            <div style={styles.empty}>
-              {tab === 'opportunities'
-                ? '🔍 No opportunities found. Market may not be in a corrective phase.'
-                : 'No data to display.'}
-            </div>
-          )}
         </div>
-      )}
+
+        {sortedData.length === 0 && (
+          <div style={{
+            padding: '40px', textAlign: 'center',
+            color: theme.textTertiary, fontSize: '13px',
+          }}>
+            No stocks match the current filters.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-
-const styles = {
-  container: {
-    padding: '0 32px 32px',
-  },
-  tabs: {
-    display: 'flex',
-    gap: '4px',
-    marginBottom: '12px',
-  },
-  tab: {
-    padding: '8px 16px',
-    borderRadius: '8px 8px 0 0',
-    border: '1px solid #dee2e6',
-    borderBottom: 'none',
-    background: '#f8f9fa',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: 500,
-    color: '#495057',
-  },
-  tabActive: {
-    background: '#fff',
-    fontWeight: 700,
-    color: '#0f3460',
-    borderColor: '#0f3460',
-    borderBottomColor: '#fff',
-  },
-  tableWrapper: {
-    overflowX: 'auto',
-    border: '1px solid #dee2e6',
-    borderRadius: '0 8px 8px 8px',
-    background: '#fff',
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    fontSize: '13px',
-  },
-  th: {
-    padding: '12px 10px',
-    textAlign: 'left',
-    background: '#f8f9fa',
-    borderBottom: '2px solid #dee2e6',
-    fontWeight: 600,
-    color: '#495057',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    userSelect: 'none',
-    fontSize: '12px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-  },
-  tr: {
-    borderBottom: '1px solid #f0f0f0',
-    transition: 'background 0.1s',
-  },
-  td: {
-    padding: '10px 10px',
-    whiteSpace: 'nowrap',
-  },
-  statusBadge: {
-    padding: '4px 10px',
-    borderRadius: '12px',
-    fontSize: '11px',
-    fontWeight: 600,
-    whiteSpace: 'nowrap',
-  },
-  miniStatusBadge: {
-    padding: '2px 8px',
-    borderRadius: '8px',
-    fontSize: '11px',
-    fontWeight: 600,
-  },
-  capBadge: {
-    fontSize: '11px',
-    color: '#6c757d',
-  },
-  expandedRow: {
-    padding: '12px 16px',
-    background: '#f8f9fa',
-    borderBottom: '2px solid #dee2e6',
-  },
-  reasonsBox: {
-    fontSize: '13px',
-    lineHeight: '1.6',
-  },
-  strategyDetail: {
-    marginTop: '8px',
-    padding: '8px 12px',
-    background: '#fff',
-    borderRadius: '6px',
-    border: '1px solid #e9ecef',
-  },
-  reasons: {
-    marginTop: '4px',
-    fontSize: '12px',
-    color: '#495057',
-  },
-  empty: {
-    padding: '48px',
-    textAlign: 'center',
-    color: '#6c757d',
-    fontSize: '15px',
-  },
-  errorList: { padding: '16px' },
-  errorItem: {
-    padding: '8px 12px',
-    background: '#fff3f3',
-    borderRadius: '6px',
-    marginBottom: '8px',
-    fontSize: '13px',
-    border: '1px solid #fecaca',
-  },
-};
