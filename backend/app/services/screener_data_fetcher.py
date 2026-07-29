@@ -727,8 +727,22 @@ def clear_fundamental_cache():
 
 
 def get_auth_status() -> Dict[str, Any]:
-    """Return current authentication status for API exposure."""
+    """
+    Return current authentication status for API exposure.
+    If credentials are configured but login hasn't been attempted yet,
+    attempt it now so the status is always accurate on first page load.
+    """
+    global _session_valid, _login_error_reason
+
     email, _ = _get_credentials()
+
+    # ── Eagerly attempt login if credentials exist but no attempt yet ──────
+    # This covers the "just started the backend" case — the UI hits /auth-status
+    # before any scan is run, so _login() has never been called.
+    if email and not _session_valid and _login_error_reason is None:
+        logger.info("Auth-status: credentials present, attempting login now...")
+        _login()  # populates _session_valid and _login_error_reason
+
     network_blocked   = _login_error_reason == "network_blocked"
     wrong_credentials = (
         _login_error_reason is not None
@@ -758,8 +772,8 @@ def get_auth_status() -> Dict[str, Any]:
     else:
         mode = "credentials_configured"
         note = (
-            "Credentials are set but login has not been attempted yet "
-            "(or failed with an unexpected error). Run the screener to trigger login."
+            f"Login failed with an unexpected error: {_login_error_reason or 'unknown'}. "
+            "Check backend logs for details."
         )
 
     return {

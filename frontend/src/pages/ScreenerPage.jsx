@@ -504,12 +504,12 @@ export default function ScreenerPage() {
           const title = isNetworkBlocked   ? 'Network Blocked — screener.in unreachable from this server'
                       : isWrongCredentials ? 'Wrong Credentials — screener.in rejected the login'
                       : isPublicOnly       ? 'Public Mode — Partial Data Only'
-                      : 'Screener.in Login Pending';
+                      : 'Screener.in Login Error';
 
           const badge = isNetworkBlocked   ? 'NETWORK BLOCKED'
                       : isWrongCredentials ? 'WRONG PASSWORD'
                       : isPublicOnly       ? 'PUBLIC ONLY'
-                      : authStatus.mode?.toUpperCase();
+                      : 'LOGIN ERROR';
 
           return (
             <div style={{
