@@ -97,13 +97,17 @@ Desktop.ini
 \#*\#
 
 
-# ── Secrets & Credentials ─────────────────────
+# ── Secrets & Credentials ─────────────────────────────────
 *.pem
 *.key
 *.p12
 *.pfx
 secrets.json
 credentials.json
+
+# App-specific env files — NEVER commit these
+backend/.env
+backend/.env.local
 
 
 # ── Misc ──────────────────────────────────────

@@ -3,6 +3,12 @@ Buddy Scanner - FastAPI Application Entry Point
 """
 import logging
 from pathlib import Path
+
+# ── Load .env FIRST — before any other imports read os.environ ──────────────
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")   # backend/.env
+# ─────────────────────────────────────────────────────────────────────────────
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse

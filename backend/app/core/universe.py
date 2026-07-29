@@ -40,8 +40,13 @@ def load_universe() -> List[Dict]:
 
 
 def get_pool_stocks(pool_code: str) -> List[Dict]:
-    """Get stocks belonging to a specific pool (F40, E40, S200)."""
+    """Get stocks belonging to a specific pool (F40, E40, S200).
+    Pass pool_code="ALL" to return the entire universe — used by PlayArea
+    to enrich custom symbols with sector / cap_type from the master CSV.
+    """
     all_stocks = load_universe()
+    if pool_code == "ALL":
+        return all_stocks
     return [s for s in all_stocks if s["pool_code"] == pool_code]
 
 

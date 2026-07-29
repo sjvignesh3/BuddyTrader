@@ -15,7 +15,9 @@ Buddy/
 │   │   ├── services/
 │   │   │   ├── data_fetcher.py  # Yahoo Finance fetcher (v8 API + yfinance fallback + ATH max history)
 │   │   │   ├── metrics_engine.py # Technical metrics (DMA, 52W, true ATH from max history)
-│   │   │   └── scanner.py       # Main orchestrator with per-pool caching + ATH integration
+│   │   │   ├── scanner.py       # Main orchestrator with per-pool caching + ATH integration
+│   │   │   ├── screener_data_fetcher.py  # Screener.in HTML parser (quarterly, ratios, pledging)
+│   │   │   └── screener_engine.py        # Data-driven fundamental screener engine (SOLID)
 │   │   ├── strategies/          # Pluggable strategies
 │   │   │   ├── base.py          # Abstract base class
 │   │   │   ├── envelope.py      # Envelope (200 DMA) strategy
@@ -36,7 +38,8 @@ Buddy/
 │   │   │   └── ThemeContext.jsx  # Light/Dark theme with localStorage persistence
 │   │   ├── pages/
 │   │   │   ├── HomePage.jsx     # Landing: pool cards, motivation, journal, fundamentals
-│   │   │   └── ScannerPage.jsx  # Scanner: pool tabs, filters, scan results
+│   │   │   ├── ScannerPage.jsx  # Scanner: pool tabs, filters, scan results
+│   │   │   └── ScreenerPage.jsx # Advanced Screener: configurable fundamental screening
 │   │   ├── services/
 │   │   │   └── api.js           # API client for FastAPI backend
 │   │   ├── App.jsx              # Root component with page routing
@@ -75,7 +78,9 @@ Buddy/
 | GET    | `/api/pools`                 | List all stock pools                 |
 | GET    | `/api/pools/{code}/stocks`   | Stocks in a pool                     |
 | GET    | `/api/strategies`            | Strategy configurations              |
-| POST   | `/api/cache/clear`           | Clear price data + ATH cache         |
+| POST   | `/api/cache/clear`           | Clear price + ATH + fundamental cache|
+| GET    | `/api/screener/rules`        | Default screener rule definitions    |
+| POST   | `/api/screener/run`          | Run advanced fundamental screener    |
 
 ## Dashboard Features
 
@@ -150,7 +155,7 @@ Buddy/
 - **Scrollbar**: Hidden globally for clean appearance
 - **Animations**: Fade-in on page transitions, spin for loading states
 - **Responsive**: Grid layouts with `auto-fit` for all screen sizes
-- **Navigation**: Header-based with Home / Scanner
+- **Navigation**: Header-based with Home / Scanner / Screener
 
 ## Strategies Implemented
 
@@ -256,15 +261,59 @@ Buddy/
 - [x] Developer credit (Vicky)
 - [x] DevDoc.MD updated with v2 architecture
 
-### 🔲 Milestone 3: E40 + S200 Strategy Mapping
+### ✅ Milestone 3: Advanced Fundamental Screener
+**Status: COMPLETED — Session 4**
+
+- [x] **Screener Data Fetcher** — fetches fundamental data from Screener.in (HTML parsing)
+  - Quarterly results (Sales, PBT, Net Profit)
+  - Annual P&L data
+  - Key ratios (PE, PB via Price/BookValue, ROCE, ROE)
+  - Shareholding (Promoter holding, Pledging)
+  - In-memory cache with 6hr TTL
+- [x] **Screener Engine** — data-driven rule evaluation (SOLID principles)
+  - 9 independent configurable filter rules
+  - Pure evaluator functions (business logic decoupled from UI)
+  - Evaluator registry pattern (new filters = add config object only)
+  - Categories: ATH Filters, Valuation, Quality, Promoter
+- [x] **REST API endpoints**
+  - `GET /api/screener/rules` — default rule definitions for UI rendering
+  - `POST /api/screener/run` — run screener with user-configured rules
+- [x] **React Screener Page** — full UI with:
+  - Pool tabs (F40, E40, S200, PlayArea)
+  - Data-driven filter configuration panel (auto-generated from rule configs)
+  - Enable/disable checkbox per rule
+  - User-editable parameter values with validation
+  - Tooltip/help text for each criterion
+  - Reset to Defaults button
+  - LocalStorage persistence of all user preferences
+  - Summary cards (Total, Data Available, All Passed, Duration)
+  - **Copyable comma-separated symbol list** for passed stocks
+  - Sortable results table with all fundamental columns
+  - Expandable rows with per-rule evaluation details
+  - Filter by: All / Passed / Failed
+- [x] **Header updated** — "Screener" nav tab (🔬) alongside Home & Scanner
+- [x] **No existing functionality broken** — all prior endpoints verified
+
+### Filter Rules Implemented
+
+| # | Category   | Rule                        | Default     | Condition                                 |
+|---|------------|-----------------------------| ------------|-------------------------------------------|
+| 1 | ATH        | Sales at ATH                | ✅ On, 2%   | Latest Q Sales ≥ Q-ATH × (1 - tol%)      |
+| 2 | ATH        | PBT at ATH                  | ✅ On, 2%   | Latest Q PBT ≥ Q-ATH × (1 - tol%)        |
+| 3 | ATH        | Net Profit at ATH           | ✅ On, 2%   | Latest Q Profit ≥ Q-ATH × (1 - tol%)     |
+| 4 | ATH        | Match Last N Quarters       | ✅ On, 2Q   | Above 3 rules hold for last N quarters    |
+| 5 | Valuation  | PE < Historical Avg PE      | ✅ On, 5yr  | Current PE < Avg PE of previous N years   |
+| 6 | Valuation  | PB < Historical Avg PB      | ✅ On, 5yr  | Current PB < Avg PB of previous N years   |
+| 7 | Quality    | ROCE ≥ threshold            | ✅ On, 18%  | ROCE ≥ min_value                          |
+| 8 | Quality    | ROE ≥ threshold             | ✅ On, 18%  | ROE ≥ min_value                           |
+| 9 | Promoter   | Pledging ≤ threshold        | ✅ On, 5%   | Promoter Pledging ≤ max_value             |
+
+### 🔲 Milestone 3b: E40 + S200 Strategy Mapping (Original)
 **Status: PENDING**
 
 - [ ] Apply 52W High Low to E40 pool (already configured in rules)
 - [ ] Validate E40 scan results against charts
 - [ ] Decide which strategies apply to S200
-- [ ] Add fundamental data import (CSV-based)
-- [ ] Fundamental filters (Market Cap, D/E, ROCE, ROE)
-- [ ] Filter configuration UI
 
 ### ✅ Milestone 4: 20% Rally Strategy
 **Status: COMPLETED — Session 3**

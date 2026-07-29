@@ -51,17 +51,31 @@ function formatStatus(status) {
 }
 
 /**
+ * Rally-specific pools that carry streak / re-entry columns on the main row.
+ */
+const RALLY_POOLS = new Set(['S200', 'PlayArea']);
+
+/**
  * Main export function.
  *
  * CSV structure per stock:
  *   — 1 main row with all core columns
+ *       Rally pools also get: Streak %, % to Next Buy, Days Since Streak
  *   — N strategy sub-rows (one per strategy_result), indented under the stock
+ *       Rally strategy rows also get: Streak %, % to Next Buy, Days Since Streak
  *
- * Columns:
+ * Columns (standard pools — F40 / E40):
  *   Main:     Symbol, Sector, Cap Type, Close, 200 DMA, % Below DMA,
  *             52W Low, 52W High, % From Low, ATH, % Down ATH, Signal, Score
- *   Strategy: (blank symbol), Strategy Name, Status, Score, Reasons,
- *             Next Buy At, Next Sell At, Days Since Last Rally
+ *
+ * Columns (rally pools — S200 / PlayArea):
+ *   Main:     Symbol, Sector, Cap Type, Close, 200 DMA, % Below DMA,
+ *             52W Low, 52W High, % From Low, ATH, % Down ATH,
+ *             Streak %, % to Next Buy, Days Since Streak
+ *
+ *   Strategy sub-rows (all pools):
+ *             (blank symbol), Strategy Name, Status, Score, Reasons,
+ *             Next Buy At, Next Sell At, Streak %, % to Next Buy, Days Since Streak
  *
  * @param {Array}  results   - Array of stock result objects (filteredResults)
  * @param {string} poolCode  - e.g. 'F40', 'E40', 'S200', 'PlayArea'
@@ -69,8 +83,9 @@ function formatStatus(status) {
 export function exportPoolToCSV(results, poolCode) {
   if (!results || results.length === 0) return;
 
-  const date = getTodayDate();
-  const fileName = `${poolCode}_${date}.csv`;
+  const date       = getTodayDate();
+  const fileName   = `${poolCode}_${date}.csv`;
+  const isRallyPool = RALLY_POOLS.has(poolCode);
 
   // ── Section 1: Scan metadata header ─────────────────────────────────────
   const metaRows = [
@@ -79,17 +94,28 @@ export function exportPoolToCSV(results, poolCode) {
   ];
 
   // ── Section 2: Column headers ────────────────────────────────────────────
-  const mainHeaders = [
+
+  // Base columns shared by every pool
+  const BASE_HEADERS = [
     'Symbol', 'Sector', 'Cap Type', 'Close (₹)', '200 DMA',
     '% Below DMA', '52W Low', '52W High', '% From Low',
-    'ATH', '% Down ATH', 'Signal', 'Score',
+    'ATH', '% Down ATH',
   ];
 
-  // Strategy sub-row headers (shifted right by 1 col for visual grouping)
+  // Tail columns differ by pool type
+  const RALLY_TAIL_HEADERS    = ['Streak %', '% to Next Buy', 'Days Since Streak'];
+  const STANDARD_TAIL_HEADERS = ['Signal', 'Score'];
+
+  const mainHeaders = isRallyPool
+    ? [...BASE_HEADERS, ...RALLY_TAIL_HEADERS]
+    : [...BASE_HEADERS, ...STANDARD_TAIL_HEADERS];
+
+  // Strategy sub-row headers — shifted right by 1 blank col for visual indent
   const stratHeaders = [
-    '',                   // blank Symbol col — visually indented
+    '',  // blank Symbol col — visually indented under parent stock
     'Strategy Name', 'Strategy Status', 'Strategy Score', 'Reasons',
-    'Next Buy At (₹)', 'Next Sell At (₹)', 'Days Since Last Rally',
+    'Next Buy At (₹)', 'Next Sell At (₹)',
+    'Streak %', '% to Next Buy', 'Days Since Streak',
   ];
 
   const allRows = [
@@ -99,43 +125,80 @@ export function exportPoolToCSV(results, poolCode) {
 
   // ── Section 3: Data rows ─────────────────────────────────────────────────
   results.forEach((stock) => {
-    // Main row
-    allRows.push([
-      stock.symbol                          ?? '',
-      stock.sector                          ?? '',
-      stock.cap_type                        ?? '',
-      stock.close           != null ? stock.close.toFixed(2)                    : '',
-      stock.dma_200         != null ? stock.dma_200.toFixed(2)                  : '',
-      stock.below_200dma_pct != null ? stock.below_200dma_pct.toFixed(2) + '%'  : '',
-      stock.low_52w         != null ? stock.low_52w.toFixed(2)                  : '',
-      stock.high_52w        != null ? stock.high_52w.toFixed(2)                 : '',
+
+    // ── Base cells (same for all pools) ─────────────────────────────────
+    const baseValues = [
+      stock.symbol                                                              ?? '',
+      stock.sector                                                              ?? '',
+      stock.cap_type                                                            ?? '',
+      stock.close              != null ? stock.close.toFixed(2)                 : '',
+      stock.dma_200            != null ? stock.dma_200.toFixed(2)               : '',
+      stock.below_200dma_pct   != null ? stock.below_200dma_pct.toFixed(2) + '%': '',
+      stock.low_52w            != null ? stock.low_52w.toFixed(2)               : '',
+      stock.high_52w           != null ? stock.high_52w.toFixed(2)              : '',
       stock.distance_from_52w_low_pct != null
         ? stock.distance_from_52w_low_pct.toFixed(2) + '%'                      : '',
-      stock.ath             != null ? stock.ath.toFixed(2)                      : '',
-      stock.down_from_ath_pct != null ? stock.down_from_ath_pct.toFixed(2) + '%': '',
-      formatStatus(stock.best_status),
-      stock.best_score      ?? '',
-    ]);
+      stock.ath                != null ? stock.ath.toFixed(2)                   : '',
+      stock.down_from_ath_pct  != null ? stock.down_from_ath_pct.toFixed(2) + '%': '',
+    ];
 
-    // Strategy accordion sub-rows
+    // ── Tail cells (pool-specific) ────────────────────────────────────────
+    const tailValues = isRallyPool
+      ? [
+          // Streak % — magnitude of the most recent qualifying rally
+          stock.last_rally_pct       != null ? stock.last_rally_pct.toFixed(2) + '%'  : '',
+          // % to Next Buy — how far price is above re-entry low (≤0 = in buy zone)
+          stock.pct_to_next_buy      != null
+            ? (stock.pct_to_next_buy > 0 ? '+' : '') + stock.pct_to_next_buy.toFixed(2) + '%'
+            : '',
+          // Days Since Streak — trading days since the last qualifying streak ended
+          stock.days_since_last_rally != null ? stock.days_since_last_rally + 'd'      : '',
+        ]
+      : [
+          formatStatus(stock.best_status),
+          stock.best_score ?? '',
+        ];
+
+    allRows.push([...baseValues, ...tailValues]);
+
+    // ── Strategy accordion sub-rows ───────────────────────────────────────
     if (stock.strategy_results && stock.strategy_results.length > 0) {
       // Print strategy sub-header once per stock block
       allRows.push(stratHeaders);
 
       stock.strategy_results.forEach((sr) => {
-        const reasons = (sr.reasons || []).join(' | ');
-        const isRally = sr.strategy_id === 'rally_20_percent';
+        const reasons  = (sr.reasons || []).join(' | ');
+        const isRally  = sr.strategy_id === 'rally_20_percent';
 
         allRows.push([
-          '',                                                   // blank symbol col
-          sr.strategy_name                ?? '',
+          '',                                                    // blank symbol col (indent)
+          sr.strategy_name ?? '',
           formatStatus(sr.status),
-          sr.score                        ?? '',
+          sr.score         ?? '',
           reasons,
-          isRally && sr.next_buy_at  != null ? sr.next_buy_at.toFixed(2)  : '',
-          isRally && sr.next_sell_at != null ? sr.next_sell_at.toFixed(2) : '',
-          isRally && sr.days_since_last_rally != null
-            ? sr.days_since_last_rally + ' days'               : '',
+
+          // Next Buy / Sell — rally strategy only
+          isRally && sr.next_buy_at  != null ? sr.next_buy_at.toFixed(2)   : '',
+          isRally && sr.next_sell_at != null ? sr.next_sell_at.toFixed(2)  : '',
+
+          // ── NEW: Streak %, % to Next Buy, Days Since Streak ─────────────
+          // These fields live on the strategy result for rally strategy,
+          // and on the top-level stock object for rally pools.
+          // Pull from sr first; fall back to top-level stock fields.
+          (() => {
+            const v = sr.last_rally_pct ?? (isRally ? stock.last_rally_pct : null);
+            return v != null ? v.toFixed(2) + '%' : '';
+          })(),
+          (() => {
+            const v = sr.pct_to_next_buy ?? (isRally ? stock.pct_to_next_buy : null);
+            return v != null
+              ? (v > 0 ? '+' : '') + v.toFixed(2) + '%'
+              : '';
+          })(),
+          (() => {
+            const v = sr.days_since_last_rally ?? (isRally ? stock.days_since_last_rally : null);
+            return v != null ? v + 'd' : '';
+          })(),
         ]);
       });
 

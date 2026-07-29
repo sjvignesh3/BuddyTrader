@@ -51,3 +51,34 @@ export async function clearCache() {
   if (!res.ok) throw new Error(`Failed to clear cache: ${res.statusText}`);
   return res.json();
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ADVANCED SCREENER API
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function getScreenerRules() {
+  const res = await fetch(`${BASE_URL}/screener/rules`);
+  if (!res.ok) throw new Error(`Failed to get screener rules: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getScreenerAuthStatus() {
+  const res = await fetch(`${BASE_URL}/screener/auth-status`);
+  if (!res.ok) throw new Error(`Failed to get auth status: ${res.statusText}`);
+  return res.json();
+}
+
+export async function runScreener(pool = 'F40', rules = null, symbols = null) {
+  const body = { pool };
+  if (rules) body.rules = rules;
+  if (symbols) body.symbols = symbols;
+
+  const res = await fetch(`${BASE_URL}/screener/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Screener failed: ${res.statusText}`);
+  return res.json();
+}

@@ -106,8 +106,13 @@ export default function ScannerPage({ initialPool, scanCache, setScanCache }) {
 
     if (filters.signal) {
       if (filters.signal === 'SIGNAL') {
-        // "Has Signal" = any meaningful status (not NO_SIGNAL / INVALID)
-        data = data.filter(r => r.best_status !== 'NO_SIGNAL' && r.best_status !== 'INVALID');
+        // "Has Signal" = any stock with meaningful status (not NO_SIGNAL / INVALID)
+        // For rally pools, VALID counts as a signal too
+        data = data.filter(r =>
+          r.best_status !== 'NO_SIGNAL' && r.best_status !== 'INVALID'
+        );
+      } else if (filters.signal === 'HAS_RALLY') {
+        data = data.filter(r => r.has_valid_20pct_rally === true);
       } else {
         data = data.filter(r => r.best_status === filters.signal);
       }
@@ -479,17 +484,29 @@ export default function ScannerPage({ initialPool, scanCache, setScanCache }) {
               gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
               gap: '8px',
             }}>
-              {/* Signal */}
+              {/* Signal — rally pools show rally-specific options */}
               <div>
-                <label style={{ fontSize: '10px', color: theme.textTertiary, fontWeight: 600, display: 'block', marginBottom: '3px' }}>Signal</label>
+                <label style={{ fontSize: '10px', color: theme.textTertiary, fontWeight: 600, display: 'block', marginBottom: '3px' }}>
+                  {['S200', 'PlayArea'].includes(activePool) ? 'Rally Filter' : 'Signal'}
+                </label>
                 <select value={filters.signal} onChange={(e) => setFilters(f => ({ ...f, signal: e.target.value }))} style={selectStyle}>
                   <option value="">All</option>
-                  <option value="SIGNAL">Has Signal</option>
-                  <option value="BUY_ZONE">Buy Zone</option>
-                  <option value="OPPORTUNITY">Opportunity</option>
-                  <option value="VALID">20% Rally ✓</option>
-                  <option value="NO_SIGNAL">No Signal</option>
-                  <option value="INVALID">No Rally</option>
+                  {['S200', 'PlayArea'].includes(activePool) ? (
+                    <>
+                      <option value="HAS_RALLY">Has 20% Rally ✓</option>
+                      <option value="VALID">Rally VALID</option>
+                      <option value="INVALID">No Rally</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="SIGNAL">Has Signal</option>
+                      <option value="BUY_ZONE">Buy Zone</option>
+                      <option value="OPPORTUNITY">Opportunity</option>
+                      <option value="VALID">20% Rally ✓</option>
+                      <option value="NO_SIGNAL">No Signal</option>
+                      <option value="INVALID">No Rally</option>
+                    </>
+                  )}
                 </select>
               </div>
 
@@ -556,6 +573,7 @@ export default function ScannerPage({ initialPool, scanCache, setScanCache }) {
           <ResultsTable
             allResults={filteredResults}
             errors={currentData.errors}
+            pool={activePool}
           />
         </>
       )}

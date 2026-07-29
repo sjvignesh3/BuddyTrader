@@ -43,8 +43,27 @@ def run_scan(pool_code: str = "F40", strategy_ids: Optional[List[str]] = None,
 
     # Step 1: Load pool stocks
     if pool_code == "PlayArea" and custom_symbols:
-        pool_stocks = [{"symbol": s.strip().upper(), "sector": "", "pool_code": "PlayArea",
-                        "pool_name": "Play Area", "cap_type": ""} for s in custom_symbols if s.strip()]
+        # Enrich PlayArea symbols with sector/cap_type from the master universe.
+        # S200 (or any pool) symbols get their real metadata; unknown symbols fall back to empty strings.
+        universe_lookup = {s["symbol"]: s for s in get_pool_stocks("ALL")}
+        pool_stocks = []
+        for sym in custom_symbols:
+            sym = sym.strip().upper()
+            if not sym:
+                continue
+            if sym in universe_lookup:
+                meta = universe_lookup[sym].copy()  # preserves sector, cap_type
+                meta["pool_code"] = "PlayArea"      # override pool identity
+                meta["pool_name"] = "Play Area"
+            else:
+                meta = {
+                    "symbol": sym,
+                    "sector": "",
+                    "pool_code": "PlayArea",
+                    "pool_name": "Play Area",
+                    "cap_type": "",
+                }
+            pool_stocks.append(meta)
     else:
         pool_stocks = get_pool_stocks(pool_code)
 
@@ -136,12 +155,23 @@ def run_scan(pool_code: str = "F40", strategy_ids: Optional[List[str]] = None,
             errors.append({"symbol": symbol, "error": "Failed to compute metrics"})
             continue
 
+        # ── Compute % to Next Buy: how far current price is ABOVE the re-entry low
+        #    Positive = price is above the buy level (needs to pull back to re-enter)
+        #    Negative = price is already BELOW the last rally low (deep value!)
+        rally_low  = metrics.get("last_rally_low", 0.0)
+        rally_high = metrics.get("last_rally_high", 0.0)
+        curr_close = metrics["close"]
+        if rally_low and rally_low > 0:
+            pct_to_next_buy = round(((curr_close - rally_low) / rally_low) * 100, 2)
+        else:
+            pct_to_next_buy = None
+
         stock_result = {
             "symbol": symbol,
             "sector": stock_info[symbol].get("sector", ""),
             "pool": pool_code,
             "cap_type": stock_info[symbol].get("cap_type", ""),
-            "close": metrics["close"],
+            "close": curr_close,
             "dma_200": metrics["dma_200"],
             "below_200dma_pct": metrics["below_200dma_pct"],
             "high_52w": metrics["high_52w"],
@@ -150,6 +180,17 @@ def run_scan(pool_code: str = "F40", strategy_ids: Optional[List[str]] = None,
             "distance_from_52w_low_pct": metrics["distance_from_52w_low_pct"],
             "ath": metrics["ath"],
             "down_from_ath_pct": metrics["down_from_ath_pct"],
+            # ── 20% Rally fields (top-level for S200 / PlayArea column rendering) ──
+            "has_valid_20pct_rally":         metrics.get("has_valid_20pct_rally", False),
+            "last_rally_pct":                metrics.get("last_rally_pct", 0.0),
+            "last_rally_low":                rally_low,
+            "last_rally_high":               rally_high,
+            "last_rally_start_date":         metrics.get("last_rally_start_date"),
+            "last_rally_end_date":           metrics.get("last_rally_end_date"),
+            "days_since_last_rally":         metrics.get("days_since_last_rally"),
+            "total_valid_rallies_in_window": metrics.get("total_valid_rallies_in_window", 0),
+            "pct_to_next_buy":               pct_to_next_buy,
+            # ──────────────────────────────────────────────────────────────────────
             "strategy_results": [],
             "best_status": "NO_SIGNAL",
             "best_score": 0,
@@ -175,8 +216,19 @@ def run_scan(pool_code: str = "F40", strategy_ids: Optional[List[str]] = None,
 
         all_results.append(stock_result)
 
-    # Step 7: Sort all results by score descending
-    all_results.sort(key=lambda x: x["best_score"], reverse=True)
+    # Step 7: Sort results
+    # S200 / PlayArea → sort by days_since_last_rally ascending (most recent rally first),
+    #                   then stocks with no rally pushed to the bottom.
+    # All other pools → sort by best_score descending (existing behaviour).
+    if pool_code in ("S200", "PlayArea"):
+        all_results.sort(
+            key=lambda x: (
+                x["days_since_last_rally"] is None,   # None → sink to bottom
+                x["days_since_last_rally"] or 9999,   # ascending: freshest rally first
+            )
+        )
+    else:
+        all_results.sort(key=lambda x: x["best_score"], reverse=True)
 
     scan_end = datetime.now()
     scan_duration = (scan_end - scan_start).total_seconds()

@@ -3,6 +3,7 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import Header from './components/Header';
 import HomePage from './pages/HomePage';
 import ScannerPage from './pages/ScannerPage';
+import ScreenerPage from './pages/ScreenerPage';
 import { getScanStatuses } from './services/api';
 
 function AppContent() {
@@ -63,6 +64,10 @@ function AppContent() {
           scanCache={scanCache}
           setScanCache={setScanCache}
         />
+      )}
+
+      {currentPage === 'screener' && (
+        <ScreenerPage />
       )}
     </div>
   );

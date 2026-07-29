@@ -57,6 +57,7 @@ export default function Header({ currentPage, onNavigate }) {
           {[
             { id: 'home', label: 'Home', icon: '🏠' },
             { id: 'scanner', label: 'Scanner', icon: '🔍' },
+            { id: 'screener', label: 'Screener', icon: '🔬' },
           ].map(item => {
             const isActive = currentPage === item.id;
             return (
