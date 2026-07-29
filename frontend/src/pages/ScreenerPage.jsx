@@ -486,69 +486,91 @@ export default function ScreenerPage() {
         </div>
 
         {/* ── Auth Status Banner ───────────────────────────────────────── */}
-        {authStatus && !authStatus.authenticated && (
-          <div style={{
-            padding: '10px 14px', marginBottom: '12px',
-            background: authStatus.network_blocked
-              ? `${theme.danger}10`
-              : authStatus.email_configured
-                ? `${theme.warning}15`
-                : `${theme.accent}10`,
-            border: `1px solid ${
-              authStatus.network_blocked ? theme.danger
-              : authStatus.email_configured ? theme.warning
-              : theme.accent}30`,
-            borderRadius: '8px',
-            display: 'flex', alignItems: 'flex-start', gap: '10px',
-          }}>
-            <span style={{ fontSize: '16px', flexShrink: 0, marginTop: '1px' }}>
-              {authStatus.network_blocked ? '🚫' : authStatus.email_configured ? '⚠️' : 'ℹ️'}
-            </span>
-            <div style={{ flex: 1 }}>
-              <div style={{
-                fontSize: '12px', fontWeight: 700,
-                color: authStatus.network_blocked ? theme.danger
-                  : authStatus.email_configured ? theme.warning
-                  : theme.accent,
-                marginBottom: '3px',
-              }}>
-                {authStatus.network_blocked
-                  ? 'Network Blocked — screener.in unreachable from this server'
-                  : authStatus.email_configured
-                    ? 'Screener.in Login Failed'
-                    : 'Public Mode — Partial Data Only'}
-              </div>
-              <div style={{ fontSize: '11px', color: theme.textSecondary, lineHeight: 1.5 }}>
-                {authStatus.network_blocked ? (
-                  <>
-                    <strong>Your credentials are correct</strong> — the issue is that this server&apos;s network blocks outbound connections to{' '}
-                    <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>screener.in</code>.{' '}
-                    Run the backend on your <strong>local machine</strong> where screener.in is reachable.
-                    PE &amp; PB (public chart API) will still work here.
-                  </>
-                ) : authStatus.email_configured ? (
-                  <>Check your <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>SCREENER_EMAIL</code> and <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>SCREENER_PASSWORD</code> environment variables.</>
-                ) : (
-                  <>
-                    <strong>PE & PB history</strong> (valuation filters) work without login via the public chart API.{' '}
-                    <strong>Quarterly financials</strong> (Sales/PBT/Profit ATH), <strong>ROCE</strong>, <strong>ROE</strong>, and <strong>Promoter Pledging</strong> require authentication.{' '}
-                    To enable full data, set <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>SCREENER_EMAIL</code> and{' '}
-                    <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>SCREENER_PASSWORD</code> in your backend environment.
-                  </>
-                )}
-              </div>
-            </div>
+        {authStatus && !authStatus.authenticated && (() => {
+          const isNetworkBlocked   = authStatus.network_blocked;
+          const isWrongCredentials = authStatus.wrong_credentials;
+          const isPublicOnly       = !authStatus.email_configured;
+
+          const bannerColor = isNetworkBlocked   ? theme.danger
+                            : isWrongCredentials ? theme.danger
+                            : isPublicOnly       ? theme.accent
+                            : theme.warning;
+
+          const icon  = isNetworkBlocked   ? '🚫'
+                      : isWrongCredentials ? '🔑'
+                      : isPublicOnly       ? 'ℹ️'
+                      : '⚠️';
+
+          const title = isNetworkBlocked   ? 'Network Blocked — screener.in unreachable from this server'
+                      : isWrongCredentials ? 'Wrong Credentials — screener.in rejected the login'
+                      : isPublicOnly       ? 'Public Mode — Partial Data Only'
+                      : 'Screener.in Login Pending';
+
+          const badge = isNetworkBlocked   ? 'NETWORK BLOCKED'
+                      : isWrongCredentials ? 'WRONG PASSWORD'
+                      : isPublicOnly       ? 'PUBLIC ONLY'
+                      : authStatus.mode?.toUpperCase();
+
+          return (
             <div style={{
-              flexShrink: 0, fontSize: '10px', fontWeight: 700, padding: '3px 8px',
-              borderRadius: '4px', background: theme.bgTertiary, color: theme.textTertiary,
-              whiteSpace: 'nowrap',
+              padding: '10px 14px', marginBottom: '12px',
+              background: `${bannerColor}10`,
+              border: `1px solid ${bannerColor}30`,
+              borderRadius: '8px',
+              display: 'flex', alignItems: 'flex-start', gap: '10px',
             }}>
-              {authStatus.network_blocked ? 'NETWORK BLOCKED'
-                : authStatus.mode === 'public_only' ? 'PUBLIC ONLY'
-                : authStatus.mode?.toUpperCase()}
+              <span style={{ fontSize: '16px', flexShrink: 0, marginTop: '1px' }}>{icon}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: bannerColor, marginBottom: '3px' }}>
+                  {title}
+                </div>
+                <div style={{ fontSize: '11px', color: theme.textSecondary, lineHeight: 1.6 }}>
+                  {isNetworkBlocked && (
+                    <>
+                      <strong>Your credentials are correct.</strong> The issue is this server&apos;s network firewall
+                      blocks outbound connections to{' '}
+                      <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>screener.in</code>.{' '}
+                      Run <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>python3 debug_login_local.py</code>{' '}
+                      on your <strong>local machine</strong> to confirm, then start the backend locally.
+                    </>
+                  )}
+                  {isWrongCredentials && (
+                    <>
+                      screener.in rejected the login for{' '}
+                      <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>{authStatus.email_configured ? 'your email' : '—'}</code>.{' '}
+                      Steps to fix:{'  '}
+                      <strong>1)</strong> Verify at{' '}
+                      <a href="https://www.screener.in/login/" target="_blank" rel="noreferrer"
+                         style={{ color: bannerColor }}>screener.in/login</a>,{'  '}
+                      <strong>2)</strong> Update <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>SCREENER_PASSWORD</code> in{' '}
+                      <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>backend/.env</code>,{'  '}
+                      <strong>3)</strong> Restart the backend.
+                    </>
+                  )}
+                  {isPublicOnly && (
+                    <>
+                      <strong>PE &amp; PB history</strong> work without login (public chart API).{' '}
+                      <strong>ROCE, ROE, Quarterly data, Pledging</strong> need authentication.{' '}
+                      Add <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>SCREENER_EMAIL</code> and{' '}
+                      <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>SCREENER_PASSWORD</code> to{' '}
+                      <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>backend/.env</code>.
+                    </>
+                  )}
+                  {!isNetworkBlocked && !isWrongCredentials && !isPublicOnly && (
+                    <>{authStatus.note}</>
+                  )}
+                </div>
+              </div>
+              <div style={{
+                flexShrink: 0, fontSize: '10px', fontWeight: 700, padding: '3px 8px',
+                borderRadius: '4px', background: theme.bgTertiary, color: theme.textTertiary,
+                whiteSpace: 'nowrap',
+              }}>
+                {badge}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {authStatus?.authenticated && (
           <div style={{

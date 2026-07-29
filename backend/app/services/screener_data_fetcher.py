@@ -106,9 +106,16 @@ def _build_opener(cj: http.cookiejar.CookieJar) -> urllib.request.OpenerDirector
 def _login() -> bool:
     """
     Perform a full screener.in login and store the session cookie.
-    Returns True on success.
+    Returns True on success, and populates _login_error_reason on failure.
+
+    Failure reasons:
+      "network_blocked"   — OS/firewall blocks outbound TCP to screener.in
+      "wrong_credentials" — login page returned, credentials rejected
+      "csrf_not_found"    — login page HTML changed, CSRF token missing
+      "network_error:<e>" — other socket/connection error
+      "error:<e>"         — unexpected exception
     """
-    global _session, _session_valid, _session_last_login
+    global _session, _session_valid, _session_last_login, _login_error_reason
 
     email, password = _get_credentials()
     if not email or not password:
@@ -119,7 +126,7 @@ def _login() -> bool:
     opener = _build_opener(cj)
 
     try:
-        # Step 1: GET login page to obtain CSRF token
+        # ── Step 1: GET login page → extract CSRF token ───────────────────
         login_page_req = urllib.request.Request(
             f"{SCREENER_BASE}/login/",
             headers={**_HEADERS_BASE, "Accept": "text/html,application/xhtml+xml"}
@@ -132,11 +139,12 @@ def _login() -> bool:
             html
         )
         if not csrf_m:
-            logger.warning("Screener login: could not find CSRF token")
+            logger.warning("Screener login: could not find CSRF token in login page")
+            _login_error_reason = "csrf_not_found"
             return False
         csrf_token = csrf_m.group(1)
 
-        # Step 2: POST credentials
+        # ── Step 2: POST credentials ──────────────────────────────────────
         post_data = urllib.parse.urlencode({
             "csrfmiddlewaretoken": csrf_token,
             "username": email,
@@ -157,19 +165,35 @@ def _login() -> bool:
         )
         with opener.open(login_req, timeout=20) as r:
             final_url = r.geturl()
+            resp_html = r.read().decode("utf-8")
 
         if "/login/" in final_url:
-            logger.warning("Screener login FAILED — check SCREENER_EMAIL / SCREENER_PASSWORD")
+            # Try to extract the exact error screener.in returns
+            err_m = re.search(
+                r'class="errorlist".*?<li>(.*?)</li>', resp_html, re.DOTALL
+            )
+            site_error = ""
+            if err_m:
+                site_error = re.sub(r"<[^>]+>", "", err_m.group(1)).strip()
+
+            logger.warning(
+                f"Screener login FAILED — credentials rejected for {email}. "
+                f"Site says: '{site_error}'. "
+                "Verify email/password at https://www.screener.in/login/"
+            )
+            _login_error_reason = f"wrong_credentials: {site_error}" if site_error else "wrong_credentials"
             return False
 
         _session = cj
         _session_valid = True
         _session_last_login = datetime.now()
+        _login_error_reason = None
         logger.info(f"Screener.in login successful for {email}")
         return True
 
     except OSError as e:
-        if e.errno == 99 or "Cannot assign requested address" in str(e) or "Connection refused" in str(e):
+        err_str = str(e)
+        if e.errno == 99 or "Cannot assign requested address" in err_str or "Connection refused" in err_str:
             logger.warning(
                 "Screener login BLOCKED — network cannot reach screener.in. "
                 "This environment restricts outbound connections to screener.in. "
@@ -178,7 +202,7 @@ def _login() -> bool:
             _login_error_reason = "network_blocked"
         else:
             logger.warning(f"Screener login network error: {e}")
-            _login_error_reason = f"network_error: {e}"
+            _login_error_reason = f"network_error: {err_str}"
         return False
     except Exception as e:
         logger.warning(f"Screener login error: {e}")
@@ -705,7 +729,11 @@ def clear_fundamental_cache():
 def get_auth_status() -> Dict[str, Any]:
     """Return current authentication status for API exposure."""
     email, _ = _get_credentials()
-    network_blocked = _login_error_reason == "network_blocked"
+    network_blocked   = _login_error_reason == "network_blocked"
+    wrong_credentials = (
+        _login_error_reason is not None
+        and str(_login_error_reason).startswith("wrong_credentials")
+    )
 
     if _session_valid:
         mode = "full"
@@ -716,21 +744,32 @@ def get_auth_status() -> Dict[str, Any]:
     elif network_blocked:
         mode = "network_blocked"
         note = (
-            "Credentials are configured correctly, but this server cannot reach screener.in. "
+            "Credentials are correct, but this server's network blocks screener.in. "
             "Run the backend on your local machine where screener.in is accessible."
+        )
+    elif wrong_credentials:
+        # Extract site message after "wrong_credentials: "
+        site_msg = str(_login_error_reason).replace("wrong_credentials:", "").strip()
+        mode = "wrong_credentials"
+        note = (
+            f"Login rejected by screener.in — {site_msg}. "
+            "Verify your email and password at https://www.screener.in/login/"
         )
     else:
         mode = "credentials_configured"
         note = (
-            "Full data (quarterly results, ROCE, ROE, pledging) requires login. "
-            "Set SCREENER_EMAIL and SCREENER_PASSWORD environment variables."
+            "Credentials are set but login has not been attempted yet "
+            "(or failed with an unexpected error). Run the screener to trigger login."
         )
 
     return {
         "authenticated": _session_valid,
         "email_configured": bool(email),
         "network_blocked": network_blocked,
+        "wrong_credentials": wrong_credentials,
         "last_login": _session_last_login.isoformat() if _session_last_login else None,
         "mode": mode,
         "note": note,
+        # Expose raw reason for debug scripts — redacted in production UI
+        "login_error": _login_error_reason,
     }
