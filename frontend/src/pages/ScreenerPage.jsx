@@ -487,26 +487,39 @@ export default function ScreenerPage() {
 
         {/* ── Auth Status Banner ───────────────────────────────────────── */}
         {authStatus && !authStatus.authenticated && (() => {
-          const isNetworkBlocked   = authStatus.network_blocked;
-          const isWrongCredentials = authStatus.wrong_credentials;
-          const isPublicOnly       = !authStatus.email_configured;
+          const mode               = authStatus.mode;
+          const isNetworkBlocked   = mode === 'network_blocked';
+          const isNetworkTimeout   = mode === 'network_timeout';
+          const isRateLimited      = mode === 'rate_limited';
+          const isWrongCredentials = mode === 'wrong_credentials';
+          const isPublicOnly       = mode === 'public_only';
+          const isLoginPending     = mode === 'login_pending';
 
-          const bannerColor = isNetworkBlocked   ? theme.danger
-                            : isWrongCredentials ? theme.danger
-                            : isPublicOnly       ? theme.accent
+          // Still logging in — show nothing rather than a flash of wrong state
+          if (isLoginPending) return null;
+
+          const bannerColor = (isNetworkBlocked || isWrongCredentials) ? theme.danger
+                            : (isNetworkTimeout || isRateLimited)      ? theme.warning
+                            : isPublicOnly                             ? theme.accent
                             : theme.warning;
 
           const icon  = isNetworkBlocked   ? '🚫'
+                      : isNetworkTimeout   ? '⏱️'
+                      : isRateLimited      ? '🚦'
                       : isWrongCredentials ? '🔑'
                       : isPublicOnly       ? 'ℹ️'
                       : '⚠️';
 
           const title = isNetworkBlocked   ? 'Network Blocked — screener.in unreachable from this server'
+                      : isNetworkTimeout   ? 'Login Timed Out — screener.in was slow to respond'
+                      : isRateLimited      ? 'Rate Limited — Too Many Login Attempts (HTTP 429)'
                       : isWrongCredentials ? 'Wrong Credentials — screener.in rejected the login'
                       : isPublicOnly       ? 'Public Mode — Partial Data Only'
                       : 'Screener.in Login Error';
 
           const badge = isNetworkBlocked   ? 'NETWORK BLOCKED'
+                      : isNetworkTimeout   ? 'TIMED OUT'
+                      : isRateLimited      ? '429 RATE LIMITED'
                       : isWrongCredentials ? 'WRONG PASSWORD'
                       : isPublicOnly       ? 'PUBLIC ONLY'
                       : 'LOGIN ERROR';
@@ -530,20 +543,32 @@ export default function ScreenerPage() {
                       <strong>Your credentials are correct.</strong> The issue is this server&apos;s network firewall
                       blocks outbound connections to{' '}
                       <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>screener.in</code>.{' '}
-                      Run <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>python3 debug_login_local.py</code>{' '}
+                      Run <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>py debug_login_local.py</code>{' '}
                       on your <strong>local machine</strong> to confirm, then start the backend locally.
+                    </>
+                  )}
+                  {isNetworkTimeout && (
+                    <>
+                      screener.in took too long to respond during login. This is usually <strong>temporary</strong>.{' '}
+                      <strong>Click Run Screener</strong> to retry — login will be attempted again automatically.
+                    </>
+                  )}
+                  {isRateLimited && (
+                    <>
+                      screener.in returned <strong>HTTP 429</strong> — too many login requests in a short time.{' '}
+                      This is now <strong>fixed</strong>: your session is saved to disk so restarts won&apos;t re-login.{' '}
+                      <strong>Wait 2–3 minutes</strong>, then click{' '}
+                      <strong>Run Screener</strong> — it will retry automatically.
                     </>
                   )}
                   {isWrongCredentials && (
                     <>
-                      screener.in rejected the login for{' '}
-                      <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>{authStatus.email_configured ? 'your email' : '—'}</code>.{' '}
-                      Steps to fix:{'  '}
+                      screener.in rejected the login. Steps to fix:{' '}
                       <strong>1)</strong> Verify at{' '}
                       <a href="https://www.screener.in/login/" target="_blank" rel="noreferrer"
-                         style={{ color: bannerColor }}>screener.in/login</a>,{'  '}
+                         style={{ color: bannerColor }}>screener.in/login</a>,{' '}
                       <strong>2)</strong> Update <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>SCREENER_PASSWORD</code> in{' '}
-                      <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>backend/.env</code>,{'  '}
+                      <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>backend/.env</code>,{' '}
                       <strong>3)</strong> Restart the backend.
                     </>
                   )}
@@ -556,7 +581,7 @@ export default function ScreenerPage() {
                       <code style={{ background: theme.bgTertiary, padding: '1px 4px', borderRadius: '3px' }}>backend/.env</code>.
                     </>
                   )}
-                  {!isNetworkBlocked && !isWrongCredentials && !isPublicOnly && (
+                  {!isNetworkBlocked && !isNetworkTimeout && !isRateLimited && !isWrongCredentials && !isPublicOnly && (
                     <>{authStatus.note}</>
                   )}
                 </div>

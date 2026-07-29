@@ -54,11 +54,14 @@ import os
 import re
 import time
 import json
+import pickle
+import threading
 import urllib.request
 import urllib.error
 import urllib.parse
 import http.cookiejar
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 logger = logging.getLogger(__name__)
@@ -71,12 +74,20 @@ CACHE_TTL = timedelta(hours=6)
 # ── Screener base URL ────────────────────────────────────────────────────────
 SCREENER_BASE = "https://www.screener.in"
 
-# ── Session state (Tier 2 auth) ──────────────────────────────────────────
+# ── Session cookie persistence ───────────────────────────────────────────────
+# Stored next to the .env file: backend/screener_session.pkl
+_SESSION_CACHE_FILE = Path(__file__).resolve().parents[3] / "screener_session.pkl"
+SESSION_TTL = timedelta(hours=23)   # persisted session reused for up to 23 h
+
+# ── Session state (Tier 2 auth) ──────────────────────────────────────────────
 _session: Optional[http.cookiejar.CookieJar] = None
 _session_valid: bool = False
 _session_last_login: Optional[datetime] = None
-SESSION_TTL = timedelta(hours=12)   # re-login after 12 hours
 _login_error_reason: Optional[str] = None   # human-readable last failure cause
+
+# ── Login lock — prevents concurrent login attempts ───────────────────────────
+_login_lock = threading.Lock()
+_login_in_progress: bool = False
 
 _HEADERS_BASE = {
     "User-Agent": (
@@ -101,26 +112,109 @@ def _get_credentials() -> Tuple[Optional[str], Optional[str]]:
 
 def _build_opener(cj: http.cookiejar.CookieJar) -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+def _save_session() -> None:
+    """Persist the current CookieJar + login timestamp to disk."""
+    try:
+        with open(_SESSION_CACHE_FILE, "wb") as f:
+            pickle.dump({"cookies": _session, "login_time": _session_last_login}, f)
+        logger.debug("Screener session saved to %s", _SESSION_CACHE_FILE)
+    except Exception as e:
+        logger.debug("Could not save session to disk: %s", e)
+
+
+def _load_session() -> bool:
+    """
+    Try to restore a previously saved session from disk.
+    Returns True if a valid, non-expired session was found.
+    """
+    global _session, _session_valid, _session_last_login, _login_error_reason
+
+    if not _SESSION_CACHE_FILE.exists():
+        return False
+    try:
+        with open(_SESSION_CACHE_FILE, "rb") as f:
+            stored = pickle.load(f)
+
+        cj: http.cookiejar.CookieJar = stored["cookies"]
+        login_time: datetime = stored["login_time"]
+
+        age = datetime.now() - login_time
+        if age > SESSION_TTL:
+            logger.info("Stored screener session expired (age=%s) — will re-login", age)
+            _SESSION_CACHE_FILE.unlink(missing_ok=True)
+            return False
+
+        # Quick probe: fetch dash page with stored cookies to verify session
+        opener = _build_opener(cj)
+        probe_req = urllib.request.Request(
+            f"{SCREENER_BASE}/dash/",
+            headers={**_HEADERS_BASE, "Accept": "text/html,application/xhtml+xml"},
+        )
+        with opener.open(probe_req, timeout=15) as r:
+            final_url = r.geturl()
+
+        if "/login/" in final_url:
+            logger.info("Stored session is no longer valid — will re-login")
+            _SESSION_CACHE_FILE.unlink(missing_ok=True)
+            return False
+
+        _session = cj
+        _session_valid = True
+        _session_last_login = login_time
+        _login_error_reason = None
+        logger.info("Screener session restored from disk (age=%s)", age)
+        return True
+
+    except Exception as e:
+        logger.debug("Could not restore session from disk: %s", e)
+        return False
 
 
 def _login() -> bool:
     """
-    Perform a full screener.in login and store the session cookie.
+    Perform a full screener.in login and store the session cookie in memory + disk.
     Returns True on success, and populates _login_error_reason on failure.
+
+    Guards:
+      • Uses _login_lock so only ONE login attempt runs at a time.
+      • Tries to restore a persisted session from disk first (avoids 429).
+      • Handles HTTP 429 (Too Many Requests) with a 65-second back-off + retry.
 
     Failure reasons:
       "network_blocked"   — OS/firewall blocks outbound TCP to screener.in
       "wrong_credentials" — login page returned, credentials rejected
       "csrf_not_found"    — login page HTML changed, CSRF token missing
+      "rate_limited"      — screener.in returned 429 and retry also failed
+      "network_timeout"   — connection timed out
       "network_error:<e>" — other socket/connection error
       "error:<e>"         — unexpected exception
     """
-    global _session, _session_valid, _session_last_login, _login_error_reason
+    global _session, _session_valid, _session_last_login, _login_error_reason, _login_in_progress
 
     email, password = _get_credentials()
     if not email or not password:
         logger.debug("Screener credentials not configured — running in public-only mode")
         return False
+
+    with _login_lock:
+        # Double-check: another thread may have logged in while we were waiting
+        if _session_valid:
+            return True
+
+        _login_in_progress = True
+        try:
+            return _do_login(email, password)
+        finally:
+            _login_in_progress = False
+
+
+def _do_login(email: str, password: str, _retry: bool = False) -> bool:
+    """Internal: perform the actual HTTP login flow. Called inside _login_lock."""
+    global _session, _session_valid, _session_last_login, _login_error_reason
+
+    # ── Try restoring persisted session first (avoids a fresh login / 429) ─
+    if not _retry and _load_session():
+        return True
 
     cj = http.cookiejar.CookieJar()
     opener = _build_opener(cj)
@@ -177,9 +271,10 @@ def _login() -> bool:
                 site_error = re.sub(r"<[^>]+>", "", err_m.group(1)).strip()
 
             logger.warning(
-                f"Screener login FAILED — credentials rejected for {email}. "
-                f"Site says: '{site_error}'. "
-                "Verify email/password at https://www.screener.in/login/"
+                "Screener login FAILED — credentials rejected for %s. "
+                "Site says: '%s'. "
+                "Verify email/password at https://www.screener.in/login/",
+                email, site_error,
             )
             _login_error_reason = f"wrong_credentials: {site_error}" if site_error else "wrong_credentials"
             return False
@@ -188,25 +283,58 @@ def _login() -> bool:
         _session_valid = True
         _session_last_login = datetime.now()
         _login_error_reason = None
-        logger.info(f"Screener.in login successful for {email}")
+        logger.info("Screener.in login successful for %s", email)
+        _save_session()   # ← persist so next restart skips re-login
         return True
+
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            if not _retry:
+                wait_s = 65   # screener.in rate-limit window is ~60 s
+                logger.warning(
+                    "Screener.in returned 429 Too Many Requests — "
+                    "backing off %d seconds then retrying once...", wait_s
+                )
+                time.sleep(wait_s)
+                return _do_login(email, password, _retry=True)
+            else:
+                logger.error(
+                    "Screener.in still returning 429 after back-off — "
+                    "too many login attempts. Wait a few minutes before restarting."
+                )
+                _login_error_reason = "rate_limited"
+                return False
+        logger.warning("Screener login HTTP error %d: %s", e.code, e)
+        _login_error_reason = f"network_error: HTTP Error {e.code}"
+        return False
 
     except OSError as e:
         err_str = str(e)
         if e.errno == 99 or "Cannot assign requested address" in err_str or "Connection refused" in err_str:
             logger.warning(
                 "Screener login BLOCKED — network cannot reach screener.in. "
-                "This environment restricts outbound connections to screener.in. "
                 "Run the backend locally where screener.in is reachable."
             )
             _login_error_reason = "network_blocked"
+        elif "timed out" in err_str.lower() or "timeout" in err_str.lower():
+            logger.warning(
+                "Screener login TIMED OUT — screener.in did not respond within 20s. "
+                "The app will retry on next request."
+            )
+            _login_error_reason = "network_timeout"
         else:
-            logger.warning(f"Screener login network error: {e}")
+            logger.warning("Screener login network error: %s", e)
             _login_error_reason = f"network_error: {err_str}"
         return False
+
     except Exception as e:
-        logger.warning(f"Screener login error: {e}")
-        _login_error_reason = f"error: {e}"
+        err_str = str(e)
+        if "timed out" in err_str.lower() or "timeout" in err_str.lower():
+            logger.warning("Screener login TIMED OUT (exception): %s", e)
+            _login_error_reason = "network_timeout"
+        else:
+            logger.warning("Screener login error: %s", e)
+            _login_error_reason = f"error: {e}"
         return False
 
 
@@ -214,8 +342,9 @@ def _get_session() -> Optional[urllib.request.OpenerDirector]:
     """
     Return an authenticated opener, logging in if needed.
     Returns None if credentials are not configured or login fails.
+    Transient errors (timeout, rate_limited) are cleared so the next scan retries.
     """
-    global _session, _session_valid, _session_last_login
+    global _session, _session_valid, _session_last_login, _login_error_reason
 
     # Check if session needs renewal
     if _session_valid and _session_last_login:
@@ -223,6 +352,12 @@ def _get_session() -> Optional[urllib.request.OpenerDirector]:
         if age > SESSION_TTL:
             logger.info("Screener session expired — re-logging in")
             _session_valid = False
+            _SESSION_CACHE_FILE.unlink(missing_ok=True)
+
+    # Transient errors: clear them so the next scan/run attempts login again
+    if _login_error_reason in ("network_timeout", "rate_limited"):
+        logger.info("Retrying screener.in login after previous '%s'...", _login_error_reason)
+        _login_error_reason = None
 
     if not _session_valid:
         if not _login():
@@ -729,21 +864,15 @@ def clear_fundamental_cache():
 def get_auth_status() -> Dict[str, Any]:
     """
     Return current authentication status for API exposure.
-    If credentials are configured but login hasn't been attempted yet,
-    attempt it now so the status is always accurate on first page load.
+    Read-only — does NOT attempt login. Login is driven by:
+      • trigger_background_login() at app startup (main.py)
+      • _get_session() when Run Screener is clicked
     """
-    global _session_valid, _login_error_reason
-
     email, _ = _get_credentials()
 
-    # ── Eagerly attempt login if credentials exist but no attempt yet ──────
-    # This covers the "just started the backend" case — the UI hits /auth-status
-    # before any scan is run, so _login() has never been called.
-    if email and not _session_valid and _login_error_reason is None:
-        logger.info("Auth-status: credentials present, attempting login now...")
-        _login()  # populates _session_valid and _login_error_reason
-
     network_blocked   = _login_error_reason == "network_blocked"
+    network_timeout   = _login_error_reason == "network_timeout"
+    rate_limited      = _login_error_reason == "rate_limited"
     wrong_credentials = (
         _login_error_reason is not None
         and str(_login_error_reason).startswith("wrong_credentials")
@@ -755,14 +884,28 @@ def get_auth_status() -> Dict[str, Any]:
     elif not email:
         mode = "public_only"
         note = "Set SCREENER_EMAIL and SCREENER_PASSWORD to enable full data."
+    elif _login_in_progress or _login_error_reason is None:
+        mode = "login_pending"
+        note = "Login in progress... Refresh in a few seconds."
     elif network_blocked:
         mode = "network_blocked"
         note = (
             "Credentials are correct, but this server's network blocks screener.in. "
             "Run the backend on your local machine where screener.in is accessible."
         )
+    elif network_timeout:
+        mode = "network_timeout"
+        note = (
+            "screener.in did not respond in time (timed out). "
+            "This is usually temporary — click Run Screener to retry."
+        )
+    elif rate_limited:
+        mode = "rate_limited"
+        note = (
+            "Screener.in blocked too many login attempts (HTTP 429). "
+            "Wait 2–3 minutes, then click Run Screener to retry automatically."
+        )
     elif wrong_credentials:
-        # Extract site message after "wrong_credentials: "
         site_msg = str(_login_error_reason).replace("wrong_credentials:", "").strip()
         mode = "wrong_credentials"
         note = (
@@ -770,9 +913,9 @@ def get_auth_status() -> Dict[str, Any]:
             "Verify your email and password at https://www.screener.in/login/"
         )
     else:
-        mode = "credentials_configured"
+        mode = "login_error"
         note = (
-            f"Login failed with an unexpected error: {_login_error_reason or 'unknown'}. "
+            f"Login failed: {_login_error_reason}. "
             "Check backend logs for details."
         )
 
@@ -780,10 +923,11 @@ def get_auth_status() -> Dict[str, Any]:
         "authenticated": _session_valid,
         "email_configured": bool(email),
         "network_blocked": network_blocked,
+        "network_timeout": network_timeout,
+        "rate_limited": rate_limited,
         "wrong_credentials": wrong_credentials,
         "last_login": _session_last_login.isoformat() if _session_last_login else None,
         "mode": mode,
         "note": note,
-        # Expose raw reason for debug scripts — redacted in production UI
         "login_error": _login_error_reason,
     }
