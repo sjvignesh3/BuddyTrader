@@ -870,13 +870,14 @@ def get_auth_status() -> Dict[str, Any]:
     """
     email, _ = _get_credentials()
 
-    network_blocked   = _login_error_reason == "network_blocked"
-    network_timeout   = _login_error_reason == "network_timeout"
-    rate_limited      = _login_error_reason == "rate_limited"
-    wrong_credentials = (
-        _login_error_reason is not None
-        and str(_login_error_reason).startswith("wrong_credentials")
-    )
+    err = str(_login_error_reason) if _login_error_reason else ""
+
+    network_blocked   = err == "network_blocked"
+    network_timeout   = err == "network_timeout"
+    # rate_limited covers both the clean "rate_limited" flag AND
+    # the raw "network_error: HTTP Error 429" string that falls through
+    rate_limited      = err == "rate_limited" or "429" in err
+    wrong_credentials = err.startswith("wrong_credentials")
 
     if _session_valid:
         mode = "full"
@@ -884,7 +885,11 @@ def get_auth_status() -> Dict[str, Any]:
     elif not email:
         mode = "public_only"
         note = "Set SCREENER_EMAIL and SCREENER_PASSWORD to enable full data."
-    elif _login_in_progress or _login_error_reason is None:
+    elif _login_in_progress:
+        mode = "login_pending"
+        note = "Login in progress... Refresh in a few seconds."
+    elif _login_error_reason is None and not _session_valid:
+        # Credentials configured but login hasn't been attempted yet
         mode = "login_pending"
         note = "Login in progress... Refresh in a few seconds."
     elif network_blocked:
@@ -902,11 +907,11 @@ def get_auth_status() -> Dict[str, Any]:
     elif rate_limited:
         mode = "rate_limited"
         note = (
-            "Screener.in blocked too many login attempts (HTTP 429). "
+            "Screener.in returned HTTP 429 — too many login attempts. "
             "Wait 2–3 minutes, then click Run Screener to retry automatically."
         )
     elif wrong_credentials:
-        site_msg = str(_login_error_reason).replace("wrong_credentials:", "").strip()
+        site_msg = err.replace("wrong_credentials:", "").strip()
         mode = "wrong_credentials"
         note = (
             f"Login rejected by screener.in — {site_msg}. "
@@ -915,7 +920,7 @@ def get_auth_status() -> Dict[str, Any]:
     else:
         mode = "login_error"
         note = (
-            f"Login failed: {_login_error_reason}. "
+            f"Login failed with an unexpected error: {err}. "
             "Check backend logs for details."
         )
 

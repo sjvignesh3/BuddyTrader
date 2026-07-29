@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .core.config import APP_TITLE, APP_VERSION, CORS_ORIGINS
 from .api.routes import router
+from .services.screener_data_fetcher import _login, _get_credentials
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -23,6 +25,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
@@ -45,6 +48,21 @@ app.include_router(router, prefix="/api")
 
 # Static files directory
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Kick off screener.in login in a background thread so the event loop is never blocked."""
+    email, password = _get_credentials()
+    if email and password:
+        def _bg_login():
+            logger.info("Background login started for %s", email)
+            ok = _login()
+            logger.info("Background login %s for %s", "SUCCEEDED" if ok else "FAILED", email)
+        t = threading.Thread(target=_bg_login, daemon=True, name="screener-login")
+        t.start()
+    else:
+        logger.info("Screener credentials not configured — running in public-only mode")
 
 
 @app.get("/")

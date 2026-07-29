@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
-import { getScreenerRules, runScreener } from '../services/api';
+import { getScreenerRules, getScreenerAuthStatus, runScreener } from '../services/api';
 
 // ── localStorage keys ─────────────────────────────────────────────────────
 const STORAGE_KEY = 'buddy-screener-rules';
@@ -109,13 +109,29 @@ export default function ScreenerPage() {
         const merged = mergeStoredRules(defaults, stored);
         setRules(merged);
         setRulesLoaded(true);
-        // Auth status comes along with rules response
         if (data.auth_status) setAuthStatus(data.auth_status);
       })
       .catch(err => {
         setError('Failed to load screener rules: ' + err.message);
       });
   }, []);
+
+  // ── Poll auth status every 3s while login is pending ──────────────────
+  useEffect(() => {
+    const isPending = !authStatus || authStatus.mode === 'login_pending';
+    if (!isPending) return; // already resolved — no polling needed
+
+    const intervalId = setInterval(() => {
+      getScreenerAuthStatus()
+        .then(status => {
+          setAuthStatus(status);
+          if (status.mode !== 'login_pending') clearInterval(intervalId);
+        })
+        .catch(() => {}); // silent — don't replace banner with a fetch error
+    }, 3000);
+
+    return () => clearInterval(intervalId);
+  }, [authStatus]);
 
   // Update auth status from scan results
   useEffect(() => {
@@ -486,6 +502,25 @@ export default function ScreenerPage() {
         </div>
 
         {/* ── Auth Status Banner ───────────────────────────────────────── */}
+        {/* Show a subtle spinner while auth status hasn't arrived yet */}
+        {!authStatus && (
+          <div style={{
+            padding: '8px 14px', marginBottom: '12px',
+            background: `${theme.accent}08`,
+            border: `1px solid ${theme.accent}20`,
+            borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px',
+          }}>
+            <span style={{
+              display: 'inline-block', width: '10px', height: '10px',
+              border: `2px solid ${theme.accent}40`, borderTopColor: theme.accent,
+              borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0,
+            }} />
+            <span style={{ fontSize: '11px', color: theme.textSecondary }}>
+              Connecting to Screener.in...
+            </span>
+          </div>
+        )}
+
         {authStatus && !authStatus.authenticated && (() => {
           const mode               = authStatus.mode;
           const isNetworkBlocked   = mode === 'network_blocked';
@@ -495,8 +530,24 @@ export default function ScreenerPage() {
           const isPublicOnly       = mode === 'public_only';
           const isLoginPending     = mode === 'login_pending';
 
-          // Still logging in — show nothing rather than a flash of wrong state
-          if (isLoginPending) return null;
+          // Login still in flight — show a subtle pending indicator
+          if (isLoginPending) return (
+            <div style={{
+              padding: '8px 14px', marginBottom: '12px',
+              background: `${theme.accent}08`,
+              border: `1px solid ${theme.accent}20`,
+              borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px',
+            }}>
+              <span style={{
+                display: 'inline-block', width: '10px', height: '10px',
+                border: `2px solid ${theme.accent}40`, borderTopColor: theme.accent,
+                borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0,
+              }} />
+              <span style={{ fontSize: '11px', color: theme.textSecondary }}>
+                Logging into Screener.in... <span style={{ color: theme.textTertiary }}>(auto-retrying every 3s)</span>
+              </span>
+            </div>
+          );
 
           const bannerColor = (isNetworkBlocked || isWrongCredentials) ? theme.danger
                             : (isNetworkTimeout || isRateLimited)      ? theme.warning
