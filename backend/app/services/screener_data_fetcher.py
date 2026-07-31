@@ -163,21 +163,94 @@ def pcache_is_valid(symbol: str) -> bool:
         return symbol.upper() in _pcache_memory
 
 
+def _slim_for_cache(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract ONLY the fields needed by the screener engine and UI from the full
+    fundamental data dict, discarding everything else before writing to disk.
+
+    WHY: The full data dict contains pe_series / pb_series — raw daily time-series
+    with up to 3 650 data points each. These are used ONLY to compute N-year averages
+    during the current run. Once computed, the raw series are never needed again.
+    Storing them bloats the cache by 50-100 KB per symbol (200 symbols → ~15 MB).
+
+    WHAT IS KEPT (and why):
+      ratios        → current_pe, current_pb, roce, roe, net_debt_to_equity,
+                       pe_5yr_avg_page, pb_5yr_avg_page (all screener rules + UI columns)
+      shareholding  → promoter_holding_pct, promoter_pledging_pct (pledging rule + UI column)
+      quarterly     → only the single latest quarter: sales, pbt, net_profit
+                       (ATH rules need ALL quarters, so we keep them all — they are small)
+      valuation     → pe_avg_Xyr, pb_avg_Xyr scalars only — pe_series/pb_series DROPPED
+      symbol        → for self-identification
+      auth_available → lets the engine know whether Tier-2 data is present
+
+    WHAT IS DROPPED:
+      pe_series     → raw daily PE history (3650 rows) — averages already computed
+      pb_series     → raw daily PB history (3650 rows) — averages already computed
+      current_pe_page / current_pb_page → duplicates of ratios.current_pe/pb
+      company_id    → not used after fetch; re-resolved on force_refresh
+      fetched_at    → duplicate of cached_at written by pcache_set
+    """
+    ratios = data.get("ratios", {})
+    valuation = data.get("valuation", {})
+    shareholding = data.get("shareholding", {})
+    quarterly = data.get("quarterly_results", [])
+
+    # Keep valuation scalars only — drop the raw daily series
+    slim_valuation: Dict[str, Any] = {}
+    for key, val in valuation.items():
+        if key in ("pe_series", "pb_series", "current_pe_page", "current_pb_page"):
+            continue          # these are the bloat culprits — drop them
+        slim_valuation[key] = val
+
+    return {
+        "symbol":         data.get("symbol"),
+        "auth_available": data.get("auth_available", False),
+        "ratios": {
+            "current_pe":         ratios.get("current_pe"),
+            "current_pb":         ratios.get("current_pb"),
+            "roce":               ratios.get("roce"),
+            "roe":                ratios.get("roe"),
+            "net_debt_to_equity": ratios.get("net_debt_to_equity"),
+            "pe_5yr_avg_page":    ratios.get("pe_5yr_avg_page"),
+            "pb_5yr_avg_page":    ratios.get("pb_5yr_avg_page"),
+        },
+        "shareholding": {
+            "promoter_holding_pct":  shareholding.get("promoter_holding_pct"),
+            "promoter_pledging_pct": shareholding.get("promoter_pledging_pct"),
+        },
+        # ALL quarters kept — ATH rules compare latest Q vs historical Q-ATH
+        # Each quarter is a small dict {quarter, sales, pbt, net_profit} — not bloat
+        "quarterly_results": [
+            {
+                "quarter":    q.get("quarter"),
+                "sales":      q.get("sales"),
+                "pbt":        q.get("pbt"),
+                "net_profit": q.get("net_profit"),
+            }
+            for q in quarterly
+        ],
+        "valuation": slim_valuation,
+    }
+
+
 def pcache_set(symbol: str, data: Dict[str, Any]) -> None:
     """
-    Write/update one symbol in the persistent cache.
+    Write/update one symbol in the persistent cache — slim format only.
     ONLY this symbol is changed — all other entries are untouched.
+    The full data (with pe_series/pb_series) stays in _fundamental_cache
+    for use during the current run; only the slim dict hits disk.
     """
     sym = symbol.upper()
+    slim = _slim_for_cache(data)
     with _pcache_lock:
         _pcache_ensure_loaded()
         _pcache_memory[sym] = {
             "symbol":    sym,
             "cached_at": datetime.now().isoformat(),
-            "data":      data,
+            "data":      slim,
         }
         _pcache_flush()
-    logger.debug("Persistent cache updated: %s", sym)
+    logger.debug("Persistent cache updated (slim): %s", sym)
 
 
 def get_persistent_cache_info() -> Dict[str, Any]:

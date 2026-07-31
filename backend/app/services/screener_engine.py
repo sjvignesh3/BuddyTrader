@@ -32,7 +32,6 @@ EVALUATION FUNCTIONS:
 """
 import logging
 import copy
-from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -386,18 +385,12 @@ def eval_pe_below_avg(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
             "avg_pe": None,
         }
 
-    # Try pre-computed average first (page quick-ratio wins, then chart-computed)
+    # Pre-computed scalar stored in valuation (page quick-ratio wins over chart-computed avg).
+    # pe_series is NOT stored in the persistent cache — averages are computed at fetch time
+    # and only the scalar results are persisted. If avg_pe is None here it means the data
+    # was genuinely unavailable during the original fetch (not enough history).
     avg_key = f"pe_avg_{lookback_years}yr"
     avg_pe = valuation.get(avg_key)
-
-    # Fallback: compute from raw chart series (only when page quick-ratio absent)
-    if avg_pe is None:
-        pe_series = valuation.get("pe_series", [])
-        if pe_series:
-            cutoff = (datetime.now() - timedelta(days=lookback_years * 365)).strftime("%Y-%m-%d")
-            window = [v for d, v in pe_series if d >= cutoff and v > 0]
-            if window:
-                avg_pe = round(sum(window) / len(window), 2)
 
     if avg_pe is None:
         return {
@@ -450,18 +443,12 @@ def eval_pb_below_avg(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
             "avg_pb": None,
         }
 
-    # Try pre-computed average (page quick-ratio wins, then chart-computed)
+    # Pre-computed scalar stored in valuation (page quick-ratio wins over chart-computed avg).
+    # pb_series is NOT stored in the persistent cache — averages are computed at fetch time
+    # and only the scalar results are persisted. If avg_pb is None here it means the data
+    # was genuinely unavailable during the original fetch (not enough history).
     avg_key = f"pb_avg_{lookback_years}yr"
     avg_pb = valuation.get(avg_key)
-
-    # Fallback: compute from raw chart series (only when page quick-ratio absent)
-    if avg_pb is None:
-        pb_series = valuation.get("pb_series", [])
-        if pb_series:
-            cutoff = (datetime.now() - timedelta(days=lookback_years * 365)).strftime("%Y-%m-%d")
-            window = [v for d, v in pb_series if d >= cutoff and v > 0]
-            if window:
-                avg_pb = round(sum(window) / len(window), 2)
 
     if avg_pb is None:
         return {
