@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
-import { getScreenerRules, getScreenerAuthStatus, runScreener } from '../services/api';
+import { getScreenerRules, getScreenerAuthStatus, runScreener, getScreenerCacheInfo } from '../services/api';
 
 // ── localStorage keys ─────────────────────────────────────────────────────
 const STORAGE_KEY = 'buddy-screener-rules';
@@ -109,6 +109,9 @@ export default function ScreenerPage() {
   const [sortAsc, setSortAsc] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
   const [filterMode, setFilterMode] = useState('all'); // all | passed | failed
+  const [forceRefresh, setForceRefresh] = useState(false); // bypass persistent cache
+  const [cacheInfo, setCacheInfo] = useState(null);        // {total_symbols, symbols[]}
+  const [showCachePanel, setShowCachePanel] = useState(false);
 
   const resultsRef = useRef(null);
 
@@ -207,6 +210,15 @@ export default function ScreenerPage() {
       .catch(() => {});
   }, []);
 
+  const handleToggleCachePanel = useCallback(() => {
+    if (!showCachePanel) {
+      getScreenerCacheInfo()
+        .then(info => setCacheInfo(info))
+        .catch(() => setCacheInfo(null));
+    }
+    setShowCachePanel(p => !p);
+  }, [showCachePanel]);
+
   // ── Run screener ──────────────────────────────────────────────────────
   const handleRun = async () => {
     // Validate all params before running
@@ -235,7 +247,7 @@ export default function ScreenerPage() {
         ? playAreaSymbols.split(',').map(s => s.trim()).filter(Boolean)
         : null;
 
-      const result = await runScreener(activePool, rules, symbols);
+      const result = await runScreener(activePool, rules, symbols, forceRefresh);
       setScanResult(result);
 
       // Scroll to results
@@ -375,7 +387,7 @@ export default function ScreenerPage() {
           );
         })}
 
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px', padding: '0 4px' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '0 4px' }}>
           {activePool === 'PlayArea' && (
             <input
               type="text"
@@ -391,19 +403,65 @@ export default function ScreenerPage() {
             />
           )}
 
+          {/* ── Cache Info button ─────────────────────────────────── */}
+          <button
+            onClick={handleToggleCachePanel}
+            title="View persistent cache status"
+            style={{
+              padding: '6px 10px', borderRadius: '6px',
+              border: `1px solid ${showCachePanel ? theme.accent : theme.border}`,
+              background: showCachePanel ? theme.accentLight : theme.bgTertiary,
+              color: showCachePanel ? theme.accent : theme.textSecondary,
+              fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+              transition: 'all 0.15s', display: 'flex', alignItems: 'center', gap: '4px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span style={{ fontSize: '13px' }}>🗄️</span>
+            Cache
+          </button>
+
+          {/* ── Force Refresh toggle ──────────────────────────────── */}
+          <button
+            onClick={() => setForceRefresh(p => !p)}
+            title={forceRefresh
+              ? 'Force Refresh ON — will bypass cache and fetch live data from screener.in, then update the cache'
+              : 'Use Cache — cached data is served regardless of age. Use Force Refresh to hard-fetch fresh data.'}
+            style={{
+              padding: '6px 12px', borderRadius: '6px',
+              border: `1px solid ${forceRefresh ? '#d29922' : theme.border}`,
+              background: forceRefresh ? '#d2992218' : theme.bgTertiary,
+              color: forceRefresh ? '#d29922' : theme.textSecondary,
+              fontSize: '11px', fontWeight: 700, cursor: 'pointer',
+              transition: 'all 0.15s', display: 'flex', alignItems: 'center', gap: '5px',
+              whiteSpace: 'nowrap',
+              boxShadow: forceRefresh ? '0 0 0 1px #d2992240' : 'none',
+            }}
+          >
+            <span style={{ fontSize: '13px' }}>{forceRefresh ? '🔄' : '📦'}</span>
+            {forceRefresh ? 'Force Refresh: ON' : 'Use Cache'}
+          </button>
+
+          {/* ── Run Screener button ───────────────────────────────── */}
           <button
             onClick={handleRun}
             disabled={scanning || (activePool === 'PlayArea' && !playAreaSymbols.trim()) || Object.keys(validationErrors).length > 0}
             style={{
               padding: '7px 16px', borderRadius: '6px', border: 'none',
-              background: scanning ? theme.textTertiary : theme.accent,
+              background: scanning ? theme.textTertiary
+                : forceRefresh ? '#d29922'
+                : theme.accent,
               color: '#fff', fontSize: '12px', fontWeight: 600,
               cursor: scanning ? 'not-allowed' : 'pointer',
               transition: 'all 0.15s', display: 'flex', alignItems: 'center', gap: '5px',
               opacity: scanning ? 0.7 : 1, whiteSpace: 'nowrap',
             }}
-            onMouseEnter={e => { if (!scanning) e.currentTarget.style.background = theme.accentHover; }}
-            onMouseLeave={e => { if (!scanning) e.currentTarget.style.background = theme.accent; }}
+            onMouseEnter={e => {
+              if (!scanning) e.currentTarget.style.background = forceRefresh ? '#b8861e' : theme.accentHover;
+            }}
+            onMouseLeave={e => {
+              if (!scanning) e.currentTarget.style.background = forceRefresh ? '#d29922' : theme.accent;
+            }}
           >
             {scanning ? (
               <>
@@ -412,14 +470,14 @@ export default function ScreenerPage() {
                   border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff',
                   borderRadius: '50%', animation: 'spin 0.7s linear infinite',
                 }} />
-                Screening...
+                {forceRefresh ? 'Hard Screening...' : 'Screening...'}
               </>
             ) : (
               <>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
                 </svg>
-                Run Screener
+                {forceRefresh ? 'Hard Screen' : 'Run Screener'}
               </>
             )}
           </button>
@@ -427,6 +485,137 @@ export default function ScreenerPage() {
       </div>
 
       <div style={{ padding: '16px 24px 40px', maxWidth: '1400px', margin: '0 auto' }}>
+
+        {/* ── Force Refresh Warning Banner ─────────────────────────────── */}
+        {forceRefresh && (
+          <div style={{
+            padding: '8px 14px', marginBottom: '12px',
+            background: '#d2992215',
+            border: '1px solid #d2992240',
+            borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '10px',
+          }}>
+            <span style={{ fontSize: '16px', flexShrink: 0 }}>🔄</span>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#d29922' }}>
+                Force Refresh is ON — Hard Screen Mode
+              </span>
+              <span style={{ fontSize: '11px', color: theme.textSecondary, marginLeft: '8px' }}>
+                The persistent cache will be bypassed. Fresh data will be fetched from screener.in
+                and the cache will be updated for the screened stocks only.
+              </span>
+            </div>
+            <button
+              onClick={() => setForceRefresh(false)}
+              style={{
+                padding: '3px 10px', borderRadius: '4px', border: '1px solid #d2992240',
+                background: 'transparent', color: '#d29922', fontSize: '11px',
+                fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              Turn Off
+            </button>
+          </div>
+        )}
+
+        {/* ── Cache Info Panel ─────────────────────────────────────────── */}
+        {showCachePanel && (
+          <div style={{
+            background: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: '10px',
+            padding: '16px 20px',
+            marginBottom: '16px',
+            boxShadow: theme.shadow,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '16px' }}>🗄️</span>
+                <span style={{ fontSize: '14px', fontWeight: 700, color: theme.text }}>
+                  Persistent Cache
+                </span>
+                {cacheInfo && (
+                  <span style={{
+                    fontSize: '10px', fontWeight: 700, padding: '2px 8px',
+                    borderRadius: '4px', background: theme.accentLight, color: theme.accent,
+                  }}>
+                    {cacheInfo.total_symbols} symbols
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '10px', color: theme.textTertiary }}>
+                  {cacheInfo ? `File: ${cacheInfo.cache_file?.split('/').slice(-2).join('/')} · No expiry — use Force Refresh to update` : 'Loading...'}
+                </span>
+                <button
+                  onClick={handleToggleCachePanel}
+                  style={{
+                    padding: '3px 8px', borderRadius: '4px', border: `1px solid ${theme.border}`,
+                    background: 'transparent', color: theme.textSecondary,
+                    fontSize: '11px', cursor: 'pointer',
+                  }}
+                >✕</button>
+              </div>
+            </div>
+
+            {!cacheInfo && (
+              <div style={{ fontSize: '12px', color: theme.textTertiary, padding: '8px 0' }}>Loading cache info...</div>
+            )}
+
+            {cacheInfo && cacheInfo.total_symbols === 0 && (
+              <div style={{
+                fontSize: '12px', color: theme.textTertiary, padding: '12px',
+                background: theme.bgTertiary, borderRadius: '6px', textAlign: 'center',
+              }}>
+                Cache is empty — run the screener to populate it.
+              </div>
+            )}
+
+            {cacheInfo && cacheInfo.total_symbols > 0 && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                  <thead>
+                    <tr>
+                      {['Symbol', 'Cached At', 'Age', ''].map(h => (
+                        <th key={h} style={{
+                          padding: '5px 10px', textAlign: 'left',
+                          background: theme.bgTertiary,
+                          borderBottom: `1px solid ${theme.border}`,
+                          fontWeight: 700, color: theme.textTertiary,
+                          fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.4px',
+                        }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cacheInfo.symbols.map((s, i) => (
+                      <tr key={s.symbol} style={{
+                        background: i % 2 === 0 ? 'transparent' : theme.tableRowAlt,
+                        borderBottom: `1px solid ${theme.borderLight}`,
+                      }}>
+                        <td style={{ padding: '5px 10px', fontWeight: 600, color: theme.text }}>{s.symbol}</td>
+                        <td style={{ padding: '5px 10px', color: theme.textSecondary }}>
+                          {s.cached_at ? new Date(s.cached_at).toLocaleString() : '—'}
+                        </td>
+                        <td style={{ padding: '5px 10px', color: theme.textTertiary }}>
+                          {s.age_hours != null ? `${s.age_hours.toFixed(1)}h ago` : '—'}
+                        </td>
+                        <td style={{ padding: '5px 10px' }}>
+                          <span style={{
+                            fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '3px',
+                            background: theme.accentLight,
+                            color: theme.accent,
+                          }}>
+                            ✓ CACHED
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Filter Configuration Panel ───────────────────────────────── */}
         <div style={{
@@ -712,15 +901,19 @@ export default function ScreenerPage() {
             {/* Summary cards */}
             <div style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
               gap: '8px', marginBottom: '14px',
             }}>
               {[
-                { label: 'Total Stocks', value: scanResult.total_stocks, color: theme.textSecondary },
-                { label: 'Data Available', value: scanResult.data_available, color: theme.accent },
-                { label: 'All Passed', value: scanResult.passed_all, color: theme.success,
+                { label: 'Total Stocks',   value: scanResult.total_stocks,           color: theme.textSecondary },
+                { label: 'Data Available', value: scanResult.data_available,          color: theme.accent },
+                { label: 'All Passed',     value: scanResult.passed_all,             color: theme.success,
                   highlight: scanResult.passed_all > 0 },
-                { label: 'Duration', value: `${scanResult.scan_duration_seconds}s`, color: theme.textTertiary },
+                { label: scanResult.force_refresh ? '🔄 Live Fetched' : '📦 From Cache',
+                  value: scanResult.force_refresh ? scanResult.live_fetches : scanResult.cache_hits,
+                  color: scanResult.force_refresh ? '#d29922' : theme.accent,
+                },
+                { label: 'Duration',       value: `${scanResult.scan_duration_seconds}s`, color: theme.textTertiary },
               ].map(card => (
                 <div key={card.label} style={{
                   background: card.highlight ? theme.successLight : theme.bgCard,
@@ -808,8 +1001,26 @@ export default function ScreenerPage() {
                 ))}
               </div>
 
-              <div style={{ fontSize: '11px', color: theme.textTertiary }}>
-                Showing {sortedResults.length} stocks · Scanned {new Date(scanResult.scan_timestamp).toLocaleTimeString()}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {scanResult.force_refresh && (
+                  <span style={{
+                    fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '3px',
+                    background: '#d2992218', color: '#d29922', border: '1px solid #d2992230',
+                  }}>
+                    🔄 HARD SCREEN — live data
+                  </span>
+                )}
+                {!scanResult.force_refresh && scanResult.cache_hits > 0 && (
+                  <span style={{
+                    fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '3px',
+                    background: theme.accentLight, color: theme.accent,
+                  }}>
+                    📦 {scanResult.cache_hits} from cache
+                  </span>
+                )}
+                <span style={{ fontSize: '11px', color: theme.textTertiary }}>
+                  {sortedResults.length} stocks · {new Date(scanResult.scan_timestamp).toLocaleTimeString()}
+                </span>
               </div>
             </div>
 

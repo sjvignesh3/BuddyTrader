@@ -11,6 +11,7 @@ from ..services.scanner import run_scan, get_last_scan, get_pool_scan, get_all_c
 from ..services.data_fetcher import clear_cache
 from ..services.screener_data_fetcher import (
     fetch_fundamental_data_batch, clear_fundamental_cache, get_auth_status,
+    get_persistent_cache_info,
 )
 from ..services.screener_engine import (
     get_default_rules, run_screener,
@@ -27,7 +28,8 @@ router = APIRouter()
 class ScreenerRequest(BaseModel):
     pool: str = "F40"
     symbols: Optional[List[str]] = None
-    rules: Optional[List[dict]] = None  # User-configured rules with overrides
+    rules: Optional[List[dict]] = None       # User-configured rules with overrides
+    force_refresh: bool = False              # When True, bypass persistent cache for these symbols
 
 
 @router.get("/health")
@@ -104,6 +106,17 @@ async def clear_price_cache():
 #  ADVANCED SCREENER ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════
 
+@router.get("/screener/cache-info")
+async def get_screener_cache_info():
+    """
+    Return the current state of the persistent fundamental cache.
+    Shows every cached symbol and when it was last fetched.
+    Entries have NO TTL — they remain valid until force_refresh=True is used.
+    Safe to call at any time — read-only, no side effects.
+    """
+    return get_persistent_cache_info()
+
+
 @router.get("/screener/auth-status")
 async def get_screener_auth_status():
     """
@@ -159,12 +172,32 @@ async def run_advanced_screener(request: ScreenerRequest):
     # Use user-provided rules or defaults
     rules = request.rules if request.rules else get_default_rules()
 
-    logger.info("Advanced Screener: %d stocks, %d rules, pool=%s", len(symbols), len(rules), request.pool)
+    force_refresh = request.force_refresh
+    logger.info(
+        "Advanced Screener: %d stocks, %d rules, pool=%s, force_refresh=%s",
+        len(symbols), len(rules), request.pool, force_refresh,
+    )
 
-    # Fetch fundamental data
-    fundamental_data = fetch_fundamental_data_batch(symbols)
+    # Fetch fundamental data — pass force_refresh so the batch fetcher
+    # knows which symbols to bypass the persistent cache for.
+    fundamental_data = fetch_fundamental_data_batch(symbols, force_refresh=force_refresh)
 
-    # Run screener
+    # Count cache hits vs live fetches for UI transparency.
+    # A symbol is a cache hit when it was already in screener_cache.json
+    # (i.e. force_refresh was False AND the symbol had a cached entry).
+    # When force_refresh=True every symbol is fetched live.
+    if force_refresh:
+        cache_hits = 0
+        live_fetches = len([s for s in symbols if s in fundamental_data])
+    else:
+        from ..services.screener_data_fetcher import pcache_is_valid as _pv  # noqa
+        # Re-check which symbols were already cached before this run.
+        # pcache_is_valid now returns True for ANY entry (no TTL), so this
+        # accurately reflects what was served from cache vs fetched live.
+        cache_hits = sum(1 for s in symbols if s in fundamental_data and _pv(s))
+        live_fetches = len([s for s in symbols if s in fundamental_data]) - cache_hits
+
+    # Run screener engine — pure evaluation, no network calls
     results = run_screener(symbols, rules, fundamental_data, stock_info)
 
     scan_end = datetime.now()
@@ -180,6 +213,9 @@ async def run_advanced_screener(request: ScreenerRequest):
         "total_stocks": len(symbols),
         "data_available": total_with_data,
         "passed_all": passed_count,
+        "force_refresh": force_refresh,
+        "cache_hits": cache_hits,
+        "live_fetches": live_fetches,
         "auth_status": get_auth_status(),
         "results": results,
     }

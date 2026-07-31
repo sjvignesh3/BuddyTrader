@@ -69,9 +69,9 @@ export async function getScreenerAuthStatus() {
   return res.json();
 }
 
-export async function runScreener(pool = 'F40', rules = null, symbols = null) {
-  const body = { pool };
-  if (rules) body.rules = rules;
+export async function runScreener(pool = 'F40', rules = null, symbols = null, forceRefresh = false) {
+  const body = { pool, force_refresh: forceRefresh };
+  if (rules)   body.rules   = rules;
   if (symbols) body.symbols = symbols;
 
   const res = await fetch(`${BASE_URL}/screener/run`, {
@@ -80,5 +80,11 @@ export async function runScreener(pool = 'F40', rules = null, symbols = null) {
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Screener failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getScreenerCacheInfo() {
+  const res = await fetch(`${BASE_URL}/screener/cache-info`);
+  if (!res.ok) throw new Error(`Failed to get cache info: ${res.statusText}`);
   return res.json();
 }

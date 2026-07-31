@@ -66,10 +66,147 @@ from typing import Dict, List, Optional, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-# ── Cache ────────────────────────────────────────────────────────────────────
+# ── In-memory request cache (deduplication within a single run) ───────────────
 _fundamental_cache: Dict[str, Dict] = {}   # symbol → {data, fetched_at}
 _company_id_cache: Dict[str, int] = {}     # symbol → numeric ID (permanent)
 CACHE_TTL = timedelta(hours=6)
+
+# ════════════════════════════════════════════════════════════════════════════
+#  PERSISTENT JSON CACHE  (UserData/screener_cache.json)
+#  ─────────────────────────────────────────────────────
+#  • Survives backend restarts — data is never lost on restart
+#  • Surgical updates — force_refresh only updates the requested symbols;
+#    every other symbol in the JSON is completely untouched
+#  • Atomic writes — .tmp → rename so a crash never corrupts the file
+#  • Raw fundamentals are cached (not pass/fail) so rule changes always
+#    re-evaluate against the stored data without a network call
+# ════════════════════════════════════════════════════════════════════════════
+
+_PERSISTENT_CACHE_FILE = (
+    Path(__file__).resolve().parents[4]   # Buddy/
+    / "UserData"
+    / "screener_cache.json"
+)
+# No TTL — cache entries are ALWAYS valid until explicitly force_refresh'd.
+# The only way to re-fetch a symbol is to run with force_refresh=True.
+
+_pcache_lock = threading.Lock()           # guards _pcache_memory and disk writes
+_pcache_memory: Dict[str, Dict] = {}     # symbol → {symbol, cached_at, data}
+_pcache_loaded: bool = False              # loaded from disk exactly once per process
+
+
+def _pcache_ensure_loaded() -> None:
+    """Load JSON from disk into _pcache_memory on first call. Never clears data."""
+    global _pcache_memory, _pcache_loaded
+    if _pcache_loaded:
+        return
+
+    if _PERSISTENT_CACHE_FILE.exists():
+        try:
+            raw = _PERSISTENT_CACHE_FILE.read_text(encoding="utf-8")
+            _pcache_memory = json.loads(raw)
+            logger.info(
+                "Screener persistent cache loaded: %d symbols from %s",
+                len(_pcache_memory), _PERSISTENT_CACHE_FILE,
+            )
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Screener cache file unreadable (%s) — starting with empty cache. "
+                "Existing file kept intact at %s", e, _PERSISTENT_CACHE_FILE,
+            )
+            _pcache_memory = {}
+    else:
+        logger.info(
+            "Screener cache file not found — will create on first write: %s",
+            _PERSISTENT_CACHE_FILE,
+        )
+        _pcache_memory = {}
+
+    _pcache_loaded = True
+
+
+def _pcache_flush() -> None:
+    """
+    Atomically flush _pcache_memory to disk.
+    Writes to a .tmp file then renames — crash-safe on POSIX.
+    Must be called while holding _pcache_lock.
+    """
+    tmp = _PERSISTENT_CACHE_FILE.with_suffix(".tmp")
+    try:
+        _PERSISTENT_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(
+            json.dumps(_pcache_memory, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        tmp.replace(_PERSISTENT_CACHE_FILE)   # atomic on POSIX
+        logger.debug("Screener cache flushed: %d total symbols", len(_pcache_memory))
+    except OSError as e:
+        logger.error("Failed to write screener cache to disk: %s", e)
+
+
+def pcache_get(symbol: str) -> Optional[Dict[str, Any]]:
+    """Return raw fundamental data for symbol from persistent cache, or None."""
+    with _pcache_lock:
+        _pcache_ensure_loaded()
+        entry = _pcache_memory.get(symbol.upper())
+        return entry["data"] if entry else None
+
+
+def pcache_is_valid(symbol: str) -> bool:
+    """
+    True if symbol exists in the persistent cache.
+    There is NO TTL — once cached, data is always served from cache
+    unless the caller explicitly passes force_refresh=True.
+    """
+    with _pcache_lock:
+        _pcache_ensure_loaded()
+        return symbol.upper() in _pcache_memory
+
+
+def pcache_set(symbol: str, data: Dict[str, Any]) -> None:
+    """
+    Write/update one symbol in the persistent cache.
+    ONLY this symbol is changed — all other entries are untouched.
+    """
+    sym = symbol.upper()
+    with _pcache_lock:
+        _pcache_ensure_loaded()
+        _pcache_memory[sym] = {
+            "symbol":    sym,
+            "cached_at": datetime.now().isoformat(),
+            "data":      data,
+        }
+        _pcache_flush()
+    logger.debug("Persistent cache updated: %s", sym)
+
+
+def get_persistent_cache_info() -> Dict[str, Any]:
+    """
+    Return metadata about the persistent cache (for the /screener/cache-info endpoint).
+    No TTL concept — every entry is valid until force_refresh'd.
+    """
+    with _pcache_lock:
+        _pcache_ensure_loaded()
+        now = datetime.now()
+        symbols_info = []
+        for sym, entry in sorted(_pcache_memory.items()):
+            try:
+                cached_at = datetime.fromisoformat(entry["cached_at"])
+                age_hours = round((now - cached_at).total_seconds() / 3600, 2)
+            except (KeyError, ValueError):
+                age_hours = None
+            symbols_info.append({
+                "symbol":    sym,
+                "cached_at": entry.get("cached_at"),
+                "age_hours": age_hours,
+            })
+        return {
+            "total_symbols": len(_pcache_memory),
+            "cache_file":    str(_PERSISTENT_CACHE_FILE),
+            "symbols":       symbols_info,
+        }
+
+# ════════════════════════════════════════════════════════════════════════════
 
 # ── Screener base URL ────────────────────────────────────────────────────────
 SCREENER_BASE = "https://www.screener.in"
@@ -1113,46 +1250,101 @@ def fetch_fundamental_data(symbol: str) -> Optional[Dict]:
     return data
 
 
-def fetch_fundamental_data_batch(symbols: List[str]) -> Dict[str, Dict]:
+def fetch_fundamental_data_batch(
+    symbols: List[str],
+    force_refresh: bool = False,
+) -> Dict[str, Dict]:
     """
     Fetch fundamental data for multiple symbols.
+
+    Args:
+        symbols:       List of NSE stock symbols.
+        force_refresh: When True, bypass the persistent JSON cache entirely for
+                       ALL symbols in this list, fetch fresh data from screener.in,
+                       and overwrite those entries in the cache.
+                       When False (default), check the persistent cache first;
+                       only symbols NOT yet in the cache are fetched live.
+
+    Cache hierarchy (normal run, force_refresh=False):
+      1. Persistent JSON cache (UserData/screener_cache.json) — survives restarts
+      2. In-process memory cache (deduplication within the same run)
+      3. Live fetch from screener.in  → writes result to both caches
+
+    Surgical safety guarantee:
+      A force_refresh for a subset of symbols ONLY updates those symbols.
+      Every other symbol already in the JSON cache is completely untouched.
+
     Returns {symbol: data_dict} for all symbols found.
     Rate-limited to be polite to screener.in (~1 req/sec for Tier 2).
     """
     results: Dict[str, Dict] = {}
     to_fetch: List[str] = []
+    cache_hits: int = 0
 
     for sym in symbols:
+        # ── Step 1: Skip persistent cache entirely on force_refresh ───────
+        if force_refresh:
+            to_fetch.append(sym)
+            continue
+
+        # ── Step 2: Check persistent JSON cache (no TTL — always valid) ───
+        # Data stays cached forever. The ONLY way to re-fetch is force_refresh=True.
+        if pcache_is_valid(sym):
+            cached_data = pcache_get(sym)
+            if cached_data:
+                results[sym] = cached_data
+                # Mirror into in-process cache so same-run deduplication works
+                _fundamental_cache[sym] = {
+                    "data": cached_data,
+                    "fetched_at": datetime.now(),
+                }
+                cache_hits += 1
+                logger.debug("Persistent cache HIT: %s", sym)
+                continue
+
+        # ── Step 3: Check in-process memory cache (current run only) ──────
         if sym in _fundamental_cache:
             cached = _fundamental_cache[sym]
             if datetime.now() - cached["fetched_at"] < CACHE_TTL:
                 results[sym] = cached["data"]
+                cache_hits += 1
                 continue
+
+        # ── Step 4: Not in any cache — needs live fetch ────────────────────
         to_fetch.append(sym)
 
     if not to_fetch:
-        logger.info(f"All {len(symbols)} symbols served from fundamental cache")
+        logger.info(
+            "All %d symbols served from persistent cache (no live fetch needed)",
+            len(symbols),
+        )
         return results
 
+    mode_label = "FORCE REFRESH — bypassing cache" if force_refresh else "first-time fetch (not yet cached)"
     logger.info(
-        f"Fetching fundamentals for {len(to_fetch)} stocks "
-        f"({len(symbols) - len(to_fetch)} from cache) | "
-        f"auth={'YES' if is_authenticated() else 'NO — set SCREENER_EMAIL + SCREENER_PASSWORD'}"
+        "Fetching fundamentals [%s]: %d live fetch, %d from cache | auth=%s",
+        mode_label, len(to_fetch), cache_hits,
+        "YES" if is_authenticated() else "NO — set SCREENER_EMAIL + SCREENER_PASSWORD",
     )
 
     for i, sym in enumerate(to_fetch):
         data = fetch_fundamental_data(sym)
         if data:
             results[sym] = data
+            # ── Write to persistent cache (only updates this symbol) ───────
+            pcache_set(sym, data)
 
         if (i + 1) % 5 == 0:
-            logger.info(f"  Fundamentals: {i + 1}/{len(to_fetch)}")
+            logger.info("  Fundamentals: %d/%d", i + 1, len(to_fetch))
 
-        # Rate limit: Tier 1 is fast (just chart API), Tier 2 adds HTML fetch
+        # Rate limit: Tier 1 is fast (chart API), Tier 2 adds HTML fetch
         if i < len(to_fetch) - 1:
             time.sleep(0.5 if is_authenticated() else 0.3)
 
-    logger.info(f"Fundamentals loaded: {len(results)}/{len(symbols)} stocks")
+    logger.info(
+        "Fundamentals done: %d/%d fetched live, %d from cache",
+        len(to_fetch), len(symbols), cache_hits,
+    )
     return results
 
 
