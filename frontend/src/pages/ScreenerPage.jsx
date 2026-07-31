@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
-import { getScreenerRules, getScreenerAuthStatus, runScreener, getScreenerCacheInfo } from '../services/api';
+import { getScreenerRules, getScreenerAuthStatus, runScreenerStream, getScreenerCacheInfo } from '../services/api';
 
 // ── localStorage keys ─────────────────────────────────────────────────────
 const STORAGE_KEY = 'buddy-screener-rules';
@@ -102,6 +102,13 @@ export default function ScreenerPage() {
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [error, setError] = useState(null);
+
+  // ── Streaming progress state ────────────────────────────────────────────
+  const [progressManifest, setProgressManifest] = useState(null);   // { total_symbols, cache_hits, internet_fetches, throttle_active, estimated_seconds }
+  const [progressLog, setProgressLog] = useState([]);               // [{symbol, from_cache, status}] in order
+  const [throttleCountdown, setThrottleCountdown] = useState(0);    // seconds remaining in current throttle wait
+  const [nextSymbol, setNextSymbol] = useState(null);               // next symbol queued after throttle
+  const [internetFetchesDone, setInternetFetchesDone] = useState(0);
   const [validationErrors, setValidationErrors] = useState({});
   const [authStatus, setAuthStatus] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -219,7 +226,7 @@ export default function ScreenerPage() {
     setShowCachePanel(p => !p);
   }, [showCachePanel]);
 
-  // ── Run screener ──────────────────────────────────────────────────────
+  // ── Run screener (streaming) ───────────────────────────────────────────
   const handleRun = async () => {
     // Validate all params before running
     const errors = {};
@@ -236,18 +243,76 @@ export default function ScreenerPage() {
       return;
     }
 
+    // Reset all progress state
     setScanning(true);
     setError(null);
     setScanResult(null);
     setExpandedRow(null);
     setFilterMode('all');
+    setProgressManifest(null);
+    setProgressLog([]);
+    setThrottleCountdown(0);
+    setNextSymbol(null);
+    setInternetFetchesDone(0);
 
     try {
-      const symbols = activePool === 'PlayArea' && playAreaSymbols.trim()
+      const symbolList = activePool === 'PlayArea' && playAreaSymbols.trim()
         ? playAreaSymbols.split(',').map(s => s.trim()).filter(Boolean)
         : null;
 
-      const result = await runScreener(activePool, rules, symbols, forceRefresh);
+      const result = await runScreenerStream(
+        activePool,
+        rules,
+        symbolList,
+        forceRefresh,
+        (event) => {
+          // Handle each SSE event from the backend
+          switch (event.type) {
+            case 'manifest':
+              setProgressManifest(event);
+              break;
+
+            case 'progress':
+              // Add to progress log (cap at last 60 entries to avoid DOM bloat)
+              setProgressLog(prev => {
+                const entry = {
+                  symbol: event.symbol,
+                  from_cache: event.from_cache,
+                  status: event.status,   // cache_hit | fetching | fetched
+                };
+                return [...prev.slice(-59), entry];
+              });
+              if (!event.from_cache) {
+                setInternetFetchesDone(event.internet_fetches_done ?? 0);
+              }
+              // Reset countdown when a new fetch starts
+              if (event.status === 'fetching') {
+                setThrottleCountdown(0);
+                setNextSymbol(null);
+              }
+              break;
+
+            case 'throttle_tick':
+              setThrottleCountdown(event.throttle_wait_seconds ?? 0);
+              setInternetFetchesDone(event.internet_fetches_done ?? 0);
+              setNextSymbol(event.next_symbol ?? null);
+              break;
+
+            case 'complete':
+              // Will be handled after the stream resolves
+              break;
+
+            case 'error':
+              setError(event.message || 'Unknown streaming error');
+              break;
+
+            default:
+              break;
+          }
+        },
+      );
+
+      // `result` is the final "complete" event
       setScanResult(result);
 
       // Scroll to results
@@ -258,6 +323,8 @@ export default function ScreenerPage() {
       setError(err.message);
     } finally {
       setScanning(false);
+      setThrottleCountdown(0);
+      setNextSymbol(null);
     }
   };
 
@@ -877,21 +944,193 @@ export default function ScreenerPage() {
           </div>
         )}
 
-        {/* ── Scanning State ───────────────────────────────────────────── */}
+        {/* ── Live Progress Panel (while scanning) ────────────────────── */}
         {scanning && (
-          <div style={{ textAlign: 'center', padding: '60px 24px' }}>
-            <div style={{
-              width: '40px', height: '40px',
-              border: `3px solid ${theme.border}`, borderTopColor: theme.accent,
-              borderRadius: '50%', animation: 'spin 0.7s linear infinite',
-              margin: '0 auto 14px',
-            }} />
-            <p style={{ fontSize: '14px', fontWeight: 600, color: theme.text, marginBottom: '4px' }}>
-              Fetching fundamentals from Screener.in & evaluating rules...
-            </p>
-            <p style={{ fontSize: '11px', color: theme.textTertiary }}>
-              This may take 30–90s depending on pool size
-            </p>
+          <div style={{
+            background: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: '10px',
+            padding: '20px 24px',
+            boxShadow: theme.shadow,
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+              <div style={{
+                width: '20px', height: '20px', flexShrink: 0,
+                border: `2px solid ${theme.border}`, borderTopColor: theme.accent,
+                borderRadius: '50%', animation: 'spin 0.7s linear infinite',
+              }} />
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: theme.text }}>
+                  {progressManifest?.throttle_active
+                    ? '🔬 Screening with rate-limit protection…'
+                    : '🔬 Fetching fundamentals from Screener.in…'}
+                </div>
+                {progressManifest && (
+                  <div style={{ fontSize: '11px', color: theme.textTertiary, marginTop: '2px' }}>
+                    {progressManifest.cache_hits > 0 && (
+                      <span>📦 {progressManifest.cache_hits} from cache · </span>
+                    )}
+                    <span>🌐 {progressManifest.internet_fetches} live fetch{progressManifest.internet_fetches !== 1 ? 'es' : ''}</span>
+                    {progressManifest.throttle_active && (
+                      <span style={{ color: theme.warning }}>
+                        {' '}· ⚠ 20s throttle between fetches to avoid 429
+                      </span>
+                    )}
+                    {progressManifest.estimated_seconds > 0 && (
+                      <span style={{ color: theme.textTertiary }}>
+                        {' '}· ~{Math.round(progressManifest.estimated_seconds / 60)}m estimated
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Progress bar for internet fetches */}
+            {progressManifest && progressManifest.internet_fetches > 0 && (
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: theme.textTertiary, marginBottom: '4px' }}>
+                  <span>Live Fetches</span>
+                  <span>{internetFetchesDone} / {progressManifest.internet_fetches}</span>
+                </div>
+                <div style={{ height: '6px', background: theme.bgTertiary, borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${progressManifest.internet_fetches > 0 ? (internetFetchesDone / progressManifest.internet_fetches) * 100 : 0}%`,
+                    background: theme.accent,
+                    borderRadius: '3px',
+                    transition: 'width 0.4s ease',
+                  }} />
+                </div>
+              </div>
+            )}
+
+            {/* Throttle countdown */}
+            {throttleCountdown > 0 && (
+              <div style={{
+                padding: '12px 16px',
+                background: `${theme.warning}12`,
+                border: `1px solid ${theme.warning}30`,
+                borderRadius: '8px',
+                marginBottom: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}>
+                {/* Circular countdown visual */}
+                <div style={{ position: 'relative', flexShrink: 0, width: '44px', height: '44px' }}>
+                  <svg width="44" height="44" viewBox="0 0 44 44" style={{ transform: 'rotate(-90deg)' }}>
+                    <circle cx="22" cy="22" r="18" fill="none" stroke={`${theme.warning}25`} strokeWidth="3" />
+                    <circle
+                      cx="22" cy="22" r="18"
+                      fill="none"
+                      stroke={theme.warning}
+                      strokeWidth="3"
+                      strokeDasharray={`${2 * Math.PI * 18}`}
+                      strokeDashoffset={`${2 * Math.PI * 18 * (1 - throttleCountdown / 20)}`}
+                      strokeLinecap="round"
+                      style={{ transition: 'stroke-dashoffset 0.9s linear' }}
+                    />
+                  </svg>
+                  <div style={{
+                    position: 'absolute', inset: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '13px', fontWeight: 700, color: theme.warning,
+                    fontFamily: "'SF Mono', 'Fira Code', monospace",
+                  }}>
+                    {throttleCountdown}
+                  </div>
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: theme.warning, marginBottom: '2px' }}>
+                    ⏳ Rate-limit pause — next fetch in {throttleCountdown}s
+                  </div>
+                  <div style={{ fontSize: '11px', color: theme.textSecondary }}>
+                    Waiting to avoid screener.in&apos;s 429 Too Many Requests.
+                    {nextSymbol && (
+                      <span> Next: <strong style={{ color: theme.text }}>{nextSymbol}</strong></span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Linear countdown bar */}
+                <div style={{ flexShrink: 0, width: '80px' }}>
+                  <div style={{ height: '4px', background: `${theme.warning}25`, borderRadius: '2px', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${(throttleCountdown / 20) * 100}%`,
+                      background: theme.warning,
+                      borderRadius: '2px',
+                      transition: 'width 0.9s linear',
+                    }} />
+                  </div>
+                  <div style={{ fontSize: '9px', color: theme.textTertiary, marginTop: '3px', textAlign: 'right' }}>
+                    {throttleCountdown}s / 20s
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Recent activity log */}
+            {progressLog.length > 0 && (
+              <div>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: theme.textTertiary, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>
+                  Activity
+                </div>
+                <div style={{
+                  maxHeight: '180px',
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '3px',
+                }}>
+                  {[...progressLog].reverse().map((entry, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        background: i === 0 ? theme.accentLight : 'transparent',
+                        opacity: i === 0 ? 1 : Math.max(0.35, 1 - i * 0.08),
+                      }}
+                    >
+                      <span style={{ fontSize: '11px', flexShrink: 0 }}>
+                        {entry.from_cache ? '📦' : entry.status === 'fetching' ? '🌐' : '✅'}
+                      </span>
+                      <span style={{
+                        fontSize: '11px', fontWeight: 600, color: theme.text,
+                        fontFamily: "'SF Mono', 'Fira Code', monospace",
+                        minWidth: '80px',
+                      }}>
+                        {entry.symbol}
+                      </span>
+                      <span style={{
+                        fontSize: '10px',
+                        color: entry.from_cache ? theme.accent
+                          : entry.status === 'fetching' ? theme.warning
+                          : theme.success,
+                      }}>
+                        {entry.from_cache ? 'from cache'
+                          : entry.status === 'fetching' ? 'fetching…'
+                          : 'fetched'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Empty pre-manifest state */}
+            {!progressManifest && progressLog.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '20px', color: theme.textTertiary, fontSize: '12px' }}>
+                Connecting to screener.in…
+              </div>
+            )}
           </div>
         )}
 

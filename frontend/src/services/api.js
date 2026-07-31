@@ -83,6 +83,64 @@ export async function runScreener(pool = 'F40', rules = null, symbols = null, fo
   return res.json();
 }
 
+/**
+ * Run screener with SSE streaming for live progress + throttle countdown.
+ *
+ * @param {string}   pool          - Pool code: F40, E40, S200, PlayArea
+ * @param {Array}    rules         - Rule configs (null = defaults)
+ * @param {Array}    symbols       - Custom symbols for PlayArea (null otherwise)
+ * @param {boolean}  forceRefresh  - Bypass cache
+ * @param {Function} onEvent       - Called for each SSE event object:
+ *                                   manifest | progress | throttle_tick | complete | error
+ * @returns {Promise<object>}      - Resolves with the final "complete" event payload
+ */
+export async function runScreenerStream(pool = 'F40', rules = null, symbols = null, forceRefresh = false, onEvent = null) {
+  const body = { pool, force_refresh: forceRefresh };
+  if (rules)   body.rules   = rules;
+  if (symbols) body.symbols = symbols;
+
+  const res = await fetch(`${BASE_URL}/screener/run-stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) throw new Error(`Screener stream failed: ${res.statusText}`);
+  if (!res.body) throw new Error('Streaming not supported in this browser');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResult = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE lines are delimited by "\n\n"
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop(); // keep incomplete trailing chunk
+
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const event = JSON.parse(line.slice(6));
+        if (onEvent) onEvent(event);
+        if (event.type === 'complete') finalResult = event;
+        if (event.type === 'error') throw new Error(event.message || 'Screener error');
+      } catch (e) {
+        if (e.message.startsWith('Screener')) throw e;
+        // ignore malformed lines
+      }
+    }
+  }
+
+  return finalResult;
+}
+
 export async function getScreenerCacheInfo() {
   const res = await fetch(`${BASE_URL}/screener/cache-info`);
   if (!res.ok) throw new Error(`Failed to get cache info: ${res.statusText}`);

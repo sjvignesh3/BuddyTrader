@@ -1253,98 +1253,206 @@ def fetch_fundamental_data(symbol: str) -> Optional[Dict]:
 def fetch_fundamental_data_batch(
     symbols: List[str],
     force_refresh: bool = False,
+    throttle_delay: int = 20,
+    progress_callback: Optional[Any] = None,
 ) -> Dict[str, Dict]:
     """
     Fetch fundamental data for multiple symbols.
 
     Args:
-        symbols:       List of NSE stock symbols.
-        force_refresh: When True, bypass the persistent JSON cache entirely for
-                       ALL symbols in this list, fetch fresh data from screener.in,
-                       and overwrite those entries in the cache.
-                       When False (default), check the persistent cache first;
-                       only symbols NOT yet in the cache are fetched live.
+        symbols:           List of NSE stock symbols.
+        force_refresh:     When True, bypass the persistent JSON cache entirely for
+                           ALL symbols in this list, fetch fresh data from screener.in,
+                           and overwrite those entries in the cache.
+                           When False (default), check the persistent cache first;
+                           only symbols NOT yet in the cache are fetched live.
+        throttle_delay:    Seconds to wait between internet fetches when > 5 symbols
+                           need live fetches (to avoid screener.in 429 rate limiting).
+                           Default: 20 seconds. Only applied between internet fetches,
+                           never for cache hits.
+        progress_callback: Optional callable for streaming progress to the caller.
+                           Signature: progress_callback(event: dict) -> None
+                           Called for every cache hit and every internet fetch.
 
     Cache hierarchy (normal run, force_refresh=False):
       1. Persistent JSON cache (UserData/screener_cache.json) — survives restarts
       2. In-process memory cache (deduplication within the same run)
       3. Live fetch from screener.in  → writes result to both caches
 
+    Throttle rule (internet-only, transparent to cache hits):
+      • Throttle activates ONLY when more than 5 symbols need internet fetches.
+      • Between each internet fetch, sleep throttle_delay seconds.
+      • Cache hits are always instant — zero delay regardless of throttle state.
+      • No throttle on the very last fetch (no point sleeping after finishing).
+
     Surgical safety guarantee:
       A force_refresh for a subset of symbols ONLY updates those symbols.
       Every other symbol already in the JSON cache is completely untouched.
 
     Returns {symbol: data_dict} for all symbols found.
-    Rate-limited to be polite to screener.in (~1 req/sec for Tier 2).
     """
     results: Dict[str, Dict] = {}
     to_fetch: List[str] = []
-    cache_hits: int = 0
+    cache_hits_list: List[str] = []
 
+    # ── Phase 1: Classify each symbol as cache-hit or internet-fetch ──────
     for sym in symbols:
-        # ── Step 1: Skip persistent cache entirely on force_refresh ───────
         if force_refresh:
             to_fetch.append(sym)
             continue
 
-        # ── Step 2: Check persistent JSON cache (no TTL — always valid) ───
-        # Data stays cached forever. The ONLY way to re-fetch is force_refresh=True.
         if pcache_is_valid(sym):
             cached_data = pcache_get(sym)
             if cached_data:
                 results[sym] = cached_data
-                # Mirror into in-process cache so same-run deduplication works
                 _fundamental_cache[sym] = {
                     "data": cached_data,
                     "fetched_at": datetime.now(),
                 }
-                cache_hits += 1
+                cache_hits_list.append(sym)
                 logger.debug("Persistent cache HIT: %s", sym)
                 continue
 
-        # ── Step 3: Check in-process memory cache (current run only) ──────
         if sym in _fundamental_cache:
             cached = _fundamental_cache[sym]
             if datetime.now() - cached["fetched_at"] < CACHE_TTL:
                 results[sym] = cached["data"]
-                cache_hits += 1
+                cache_hits_list.append(sym)
                 continue
 
-        # ── Step 4: Not in any cache — needs live fetch ────────────────────
         to_fetch.append(sym)
+
+    # ── Emit manifest event so the caller knows the full plan ────────────
+    use_throttle = len(to_fetch) > 5
+    if progress_callback:
+        progress_callback({
+            "type": "manifest",
+            "total_symbols": len(symbols),
+            "cache_hits": len(cache_hits_list),
+            "internet_fetches": len(to_fetch),
+            "throttle_active": use_throttle,
+            "throttle_delay_seconds": throttle_delay if use_throttle else 0,
+            "estimated_seconds": (len(to_fetch) * throttle_delay) if use_throttle else len(to_fetch) * 2,
+        })
+
+    # ── Emit a cache-hit event for each symbol already in cache ──────────
+    if progress_callback:
+        for sym in cache_hits_list:
+            progress_callback({
+                "type": "progress",
+                "symbol": sym,
+                "from_cache": True,
+                "status": "cache_hit",
+                "internet_fetches_done": 0,
+                "internet_fetches_total": len(to_fetch),
+                "throttle_wait_seconds": 0,
+            })
 
     if not to_fetch:
         logger.info(
             "All %d symbols served from persistent cache (no live fetch needed)",
             len(symbols),
         )
+        if progress_callback:
+            progress_callback({
+                "type": "complete",
+                "total_symbols": len(symbols),
+                "cache_hits": len(cache_hits_list),
+                "live_fetches": 0,
+            })
         return results
 
     mode_label = "FORCE REFRESH — bypassing cache" if force_refresh else "first-time fetch (not yet cached)"
     logger.info(
-        "Fetching fundamentals [%s]: %d live fetch, %d from cache | auth=%s",
-        mode_label, len(to_fetch), cache_hits,
+        "Fetching fundamentals [%s]: %d live fetch, %d from cache | auth=%s | throttle=%s (delay=%ds)",
+        mode_label, len(to_fetch), len(cache_hits_list),
         "YES" if is_authenticated() else "NO — set SCREENER_EMAIL + SCREENER_PASSWORD",
+        use_throttle, throttle_delay if use_throttle else 0,
     )
 
+    if use_throttle:
+        logger.info(
+            "Throttle ACTIVE: %d internet fetches > 5 threshold. "
+            "Each fetch separated by %ds to avoid screener.in 429. "
+            "Estimated total: ~%ds",
+            len(to_fetch), throttle_delay, len(to_fetch) * throttle_delay,
+        )
+
+    # ── Phase 2: Live internet fetches with throttling ────────────────────
     for i, sym in enumerate(to_fetch):
+        internet_fetches_done = i  # before this one completes
+
+        # Emit "fetching" event with countdown info
+        if progress_callback:
+            progress_callback({
+                "type": "progress",
+                "symbol": sym,
+                "from_cache": False,
+                "status": "fetching",
+                "internet_fetches_done": internet_fetches_done,
+                "internet_fetches_total": len(to_fetch),
+                "throttle_wait_seconds": 0,
+            })
+
         data = fetch_fundamental_data(sym)
         if data:
             results[sym] = data
-            # ── Write to persistent cache (only updates this symbol) ───────
             pcache_set(sym, data)
 
         if (i + 1) % 5 == 0:
             logger.info("  Fundamentals: %d/%d", i + 1, len(to_fetch))
 
-        # Rate limit: Tier 1 is fast (chart API), Tier 2 adds HTML fetch
-        if i < len(to_fetch) - 1:
-            time.sleep(0.5 if is_authenticated() else 0.3)
+        internet_fetches_done = i + 1  # this one is now done
+
+        # Emit "fetched" event
+        if progress_callback:
+            progress_callback({
+                "type": "progress",
+                "symbol": sym,
+                "from_cache": False,
+                "status": "fetched",
+                "internet_fetches_done": internet_fetches_done,
+                "internet_fetches_total": len(to_fetch),
+                "throttle_wait_seconds": 0,
+                "result_available": bool(data),
+            })
+
+        # ── Throttle: sleep between internet fetches (not after the last) ─
+        is_last_fetch = (i == len(to_fetch) - 1)
+        if not is_last_fetch:
+            if use_throttle:
+                logger.info(
+                    "Throttle: waiting %ds before next fetch (%d/%d done)...",
+                    throttle_delay, i + 1, len(to_fetch),
+                )
+                # Emit per-second countdown ticks so the caller can show a live timer
+                for remaining in range(throttle_delay, 0, -1):
+                    if progress_callback:
+                        progress_callback({
+                            "type": "throttle_tick",
+                            "throttle_wait_seconds": remaining,
+                            "internet_fetches_done": internet_fetches_done,
+                            "internet_fetches_total": len(to_fetch),
+                            "next_symbol": to_fetch[i + 1] if i + 1 < len(to_fetch) else None,
+                        })
+                    time.sleep(1)
+            else:
+                # Short polite delay for small batches (≤5 stocks)
+                time.sleep(0.5 if is_authenticated() else 0.3)
 
     logger.info(
         "Fundamentals done: %d/%d fetched live, %d from cache",
-        len(to_fetch), len(symbols), cache_hits,
+        len(to_fetch), len(symbols), len(cache_hits_list),
     )
+
+    if progress_callback:
+        progress_callback({
+            "type": "complete",
+            "total_symbols": len(symbols),
+            "cache_hits": len(cache_hits_list),
+            "live_fetches": len(to_fetch),
+        })
+
     return results
 
 

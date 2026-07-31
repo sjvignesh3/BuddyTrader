@@ -1,9 +1,15 @@
+# -*- coding: utf-8 -*-
 """
 API routes - REST endpoints for the scanner dashboard.
 """
 import logging
+import json
+import asyncio
+import queue as _queue
+import threading as _threading
 from datetime import datetime
 from fastapi import APIRouter, Query, Body
+from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -11,7 +17,7 @@ from ..services.scanner import run_scan, get_last_scan, get_pool_scan, get_all_c
 from ..services.data_fetcher import clear_cache
 from ..services.screener_data_fetcher import (
     fetch_fundamental_data_batch, clear_fundamental_cache, get_auth_status,
-    get_persistent_cache_info,
+    get_persistent_cache_info, pcache_is_valid as _pcache_is_valid,
 )
 from ..services.screener_engine import (
     get_default_rules, run_screener,
@@ -136,7 +142,7 @@ async def get_screener_rules():
 @router.post("/screener/run")
 async def run_advanced_screener(request: ScreenerRequest):
     """
-    Run the advanced fundamental screener.
+    Run the advanced fundamental screener (non-streaming POST).
 
     Body:
         pool:    Stock pool code (F40, E40, S200, PlayArea)
@@ -148,7 +154,6 @@ async def run_advanced_screener(request: ScreenerRequest):
     # Resolve symbols
     if request.pool == "PlayArea" and request.symbols:
         custom_symbols = [s.strip().upper() for s in request.symbols if s.strip()]
-        # Enrich with master CSV metadata
         universe_lookup = {s["symbol"]: s for s in get_pool_stocks("ALL")}
         pool_stocks = []
         for sym in custom_symbols:
@@ -169,35 +174,22 @@ async def run_advanced_screener(request: ScreenerRequest):
     symbols = [s["symbol"] for s in pool_stocks]
     stock_info = {s["symbol"]: s for s in pool_stocks}
 
-    # Use user-provided rules or defaults
     rules = request.rules if request.rules else get_default_rules()
-
     force_refresh = request.force_refresh
     logger.info(
-        "Advanced Screener: %d stocks, %d rules, pool=%s, force_refresh=%s",
+        "Advanced Screener (POST): %d stocks, %d rules, pool=%s, force_refresh=%s",
         len(symbols), len(rules), request.pool, force_refresh,
     )
 
-    # Fetch fundamental data — pass force_refresh so the batch fetcher
-    # knows which symbols to bypass the persistent cache for.
     fundamental_data = fetch_fundamental_data_batch(symbols, force_refresh=force_refresh)
 
-    # Count cache hits vs live fetches for UI transparency.
-    # A symbol is a cache hit when it was already in screener_cache.json
-    # (i.e. force_refresh was False AND the symbol had a cached entry).
-    # When force_refresh=True every symbol is fetched live.
     if force_refresh:
         cache_hits = 0
         live_fetches = len([s for s in symbols if s in fundamental_data])
     else:
-        from ..services.screener_data_fetcher import pcache_is_valid as _pv  # noqa
-        # Re-check which symbols were already cached before this run.
-        # pcache_is_valid now returns True for ANY entry (no TTL), so this
-        # accurately reflects what was served from cache vs fetched live.
-        cache_hits = sum(1 for s in symbols if s in fundamental_data and _pv(s))
+        cache_hits = sum(1 for s in symbols if s in fundamental_data and _pcache_is_valid(s))
         live_fetches = len([s for s in symbols if s in fundamental_data]) - cache_hits
 
-    # Run screener engine — pure evaluation, no network calls
     results = run_screener(symbols, rules, fundamental_data, stock_info)
 
     scan_end = datetime.now()
@@ -219,3 +211,137 @@ async def run_advanced_screener(request: ScreenerRequest):
         "auth_status": get_auth_status(),
         "results": results,
     }
+
+
+@router.post("/screener/run-stream")
+async def run_advanced_screener_stream(request: ScreenerRequest):
+    """
+    SSE streaming version of the screener.
+
+    Sends Server-Sent Events for every step:
+      • manifest     — full plan (cache hits vs internet fetches, ETA)
+      • progress     — per-symbol status (cache_hit | fetching | fetched)
+      • throttle_tick — countdown ticks between internet fetches
+      • complete     — final results payload
+
+    The client consumes this via fetch() + ReadableStream to show a live
+    progress panel with countdown timer during throttled fetches.
+    """
+    scan_start = datetime.now()
+
+    # ── Resolve symbols ────────────────────────────────────────────────────
+    if request.pool == "PlayArea" and request.symbols:
+        custom_symbols = [s.strip().upper() for s in request.symbols if s.strip()]
+        universe_lookup = {s["symbol"]: s for s in get_pool_stocks("ALL")}
+        pool_stocks = []
+        for sym in custom_symbols:
+            if sym in universe_lookup:
+                meta = universe_lookup[sym].copy()
+                meta["pool_code"] = "PlayArea"
+            else:
+                meta = {"symbol": sym, "sector": "", "pool_code": "PlayArea",
+                        "pool_name": "Play Area", "cap_type": ""}
+            pool_stocks.append(meta)
+    else:
+        pool_stocks = get_pool_stocks(request.pool)
+
+    if not pool_stocks:
+        async def _error_gen():
+            payload = json.dumps({"type": "error", "message": f"No stocks found for pool: {request.pool}"})
+            yield f"data: {payload}\n\n"
+        return StreamingResponse(_error_gen(), media_type="text/event-stream")
+
+    symbols = [s["symbol"] for s in pool_stocks]
+    stock_info = {s["symbol"]: s for s in pool_stocks}
+    rules = request.rules if request.rules else get_default_rules()
+    force_refresh = request.force_refresh
+
+    logger.info(
+        "Advanced Screener (SSE): %d stocks, %d rules, pool=%s, force_refresh=%s",
+        len(symbols), len(rules), request.pool, force_refresh,
+    )
+
+    # ── SSE event queue — bridge between sync fetcher thread and async gen ─
+    event_queue = _queue.Queue()  # Queue[Optional[dict]]
+
+    def _progress_callback(event: dict) -> None:
+        """Called from the sync fetcher thread; pushes into the async queue."""
+        event_queue.put(event)
+
+    # Collected fundamental data (filled by worker thread)
+    _result_holder: dict = {}
+
+    def _worker():
+        """Run the blocking fetch + screener in a background thread."""
+        try:
+            fd = fetch_fundamental_data_batch(
+                symbols,
+                force_refresh=force_refresh,
+                throttle_delay=20,
+                progress_callback=_progress_callback,
+            )
+            _result_holder["fundamental_data"] = fd
+        except Exception as e:
+            logger.error("SSE screener worker error: %s", e)
+            event_queue.put({"type": "error", "message": str(e)})
+        finally:
+            event_queue.put(None)  # sentinel — generator stops
+
+    worker_thread = _threading.Thread(target=_worker, daemon=True, name="screener-sse-worker")
+    worker_thread.start()
+
+    async def _event_generator():
+        """Async generator that yields SSE lines from the queue."""
+        fundamental_data: dict = {}
+
+        # Drain the queue until the sentinel (None) arrives
+        while True:
+            # Poll the queue without blocking the event loop
+            try:
+                event = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: event_queue.get(timeout=60)
+                )
+            except Exception:
+                break
+
+            if event is None:
+                # Worker is done — run the screener engine and emit results
+                fundamental_data = _result_holder.get("fundamental_data", {})
+                results = run_screener(symbols, rules, fundamental_data, stock_info)
+                scan_end = datetime.now()
+                scan_duration = (scan_end - scan_start).total_seconds()
+
+                passed_count = len([r for r in results if r.get("all_passed")])
+                total_with_data = len([r for r in results if not r.get("error")])
+
+                cache_hits = sum(1 for s in symbols if s in fundamental_data and _pcache_is_valid(s))
+                live_fetches = len([s for s in symbols if s in fundamental_data]) - cache_hits
+
+                complete_payload = {
+                    "type": "complete",
+                    "scan_timestamp": scan_start.isoformat(),
+                    "scan_duration_seconds": round(scan_duration, 2),
+                    "pool": request.pool,
+                    "total_stocks": len(symbols),
+                    "data_available": total_with_data,
+                    "passed_all": passed_count,
+                    "force_refresh": force_refresh,
+                    "cache_hits": cache_hits,
+                    "live_fetches": live_fetches,
+                    "auth_status": get_auth_status(),
+                    "results": results,
+                }
+                yield f"data: {json.dumps(complete_payload)}\n\n"
+                break
+
+            # Forward all other events to the client
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering
+        },
+    )
