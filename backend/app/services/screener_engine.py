@@ -101,25 +101,6 @@ DEFAULT_SCREENER_RULES = [
         "evaluator": "eval_ath_metric",
         "metric_key": "net_profit",
     },
-    {
-        "id": "ath_match_quarters",
-        "category": "ath",
-        "label": "Match for Last N Quarters",
-        "description": "The above ATH conditions must hold true for each of the last N reported quarters. Higher N = more consistent growth required.",
-        "enabled": True,
-        "params": {
-            "num_quarters": {
-                "label": "Quarters",
-                "type": "int",
-                "default": 2,
-                "min": 1,
-                "max": 8,
-                "unit": "quarters"
-            }
-        },
-        "evaluator": "eval_ath_match_quarters",
-    },
-
     # ── Valuation Filters ────────────────────────────────────────────────
     {
         "id": "pe_below_avg",
@@ -156,6 +137,25 @@ DEFAULT_SCREENER_RULES = [
             }
         },
         "evaluator": "eval_pb_below_avg",
+    },
+
+    {
+        "id": "net_debt_to_equity_max",
+        "category": "valuation",
+        "label": "Net Debt to Equity",
+        "description": "Net Debt to Equity ratio must be less than the threshold. Lower ratio means the company is less leveraged and financially healthier.",
+        "enabled": True,
+        "params": {
+            "max_value": {
+                "label": "Max Ratio",
+                "type": "float",
+                "default": 0.30,
+                "min": -10,
+                "max": 20,
+                "unit": "x"
+            }
+        },
+        "evaluator": "eval_net_debt_to_equity",
     },
 
     # ── Quality Filters ──────────────────────────────────────────────────
@@ -355,14 +355,28 @@ def eval_pe_below_avg(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
     """
     Evaluate if current PE is below its N-year historical average.
 
-    Uses daily PE data from screener.in's public chart API (no login required).
-    The 'valuation' dict contains pre-computed averages and the raw daily series.
+    SOURCE CONSISTENCY RULE:
+    ─────────────────────────────────────────────────────────────────────────
+    Current PE and the 5yr average PE MUST come from the same source.
+    Screener page → Stock P/E (TTM-based, live)
+    Quick-ratio   → 5Yrs PE  (5yr average of TTM PE, same methodology)
+
+    The chart API uses a different PE calculation (closing price / adjusted EPS)
+    that does NOT match the TTM-based quick-ratio average. Using chart current PE
+    with page 5yr avg (or vice versa) produces wrong PASS/FAIL outcomes.
+
+    Priority:
+      1. ratios["current_pe"]  — page TTM PE (set from screener page in fetcher)
+      2. valuation["current_pe"] — chart API fallback (only if page unavailable)
     """
     lookback_years = int(params.get("lookback_years", 5))
     ratios = fundamental_data.get("ratios", {})
     valuation = fundamental_data.get("valuation", {})
 
-    current_pe = ratios.get("current_pe") or valuation.get("current_pe")
+    # Prefer page-sourced TTM PE; fall back to chart only if page value missing
+    current_pe = ratios.get("current_pe")
+    if current_pe is None:
+        current_pe = valuation.get("current_pe")
 
     if current_pe is None:
         return {
@@ -372,11 +386,11 @@ def eval_pe_below_avg(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
             "avg_pe": None,
         }
 
-    # Try pre-computed average first
+    # Try pre-computed average first (page quick-ratio wins, then chart-computed)
     avg_key = f"pe_avg_{lookback_years}yr"
     avg_pe = valuation.get(avg_key)
 
-    # Fallback: compute from raw series
+    # Fallback: compute from raw chart series (only when page quick-ratio absent)
     if avg_pe is None:
         pe_series = valuation.get("pe_series", [])
         if pe_series:
@@ -409,13 +423,24 @@ def eval_pb_below_avg(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
     """
     Evaluate if current PB is below its N-year historical average.
 
-    Uses daily PB data from screener.in's public chart API (no login required).
+    SOURCE CONSISTENCY RULE:
+    ─────────────────────────────────────────────────────────────────────────
+    Current PB and the 5yr average PB MUST come from the same source.
+    Screener page → Price / Book Value (TTM-based, live)
+    Quick-ratio   → 5Yrs PBV  (5yr average of TTM PBV, same methodology)
+
+    Priority:
+      1. ratios["current_pb"]  — page TTM PB (computed from Current Price / Book Value)
+      2. valuation["current_pb"] — chart API fallback (only if page unavailable)
     """
     lookback_years = int(params.get("lookback_years", 5))
     ratios = fundamental_data.get("ratios", {})
     valuation = fundamental_data.get("valuation", {})
 
-    current_pb = ratios.get("current_pb") or valuation.get("current_pb")
+    # Prefer page-sourced TTM PB; fall back to chart only if page value missing
+    current_pb = ratios.get("current_pb")
+    if current_pb is None:
+        current_pb = valuation.get("current_pb")
 
     if current_pb is None:
         return {
@@ -425,11 +450,11 @@ def eval_pb_below_avg(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
             "avg_pb": None,
         }
 
-    # Try pre-computed average
+    # Try pre-computed average (page quick-ratio wins, then chart-computed)
     avg_key = f"pb_avg_{lookback_years}yr"
     avg_pb = valuation.get(avg_key)
 
-    # Fallback: compute from raw series
+    # Fallback: compute from raw chart series (only when page quick-ratio absent)
     if avg_pb is None:
         pb_series = valuation.get("pb_series", [])
         if pb_series:
@@ -500,12 +525,14 @@ def eval_pledging(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
     shareholding = fundamental_data.get("shareholding", {})
     pledging = shareholding.get("promoter_pledging_pct")
 
+    # None means data was not found/parsed — do NOT assume 0.
+    # Screener.in shows explicit pledging rows even when 0%.
+    # A None here means the page didn't load or the row was absent.
     if pledging is None:
-        # No pledging data could mean 0% pledging (common for good companies)
         return {
-            "passed": True,
-            "reason": "Pledging data not found — assumed 0%",
-            "value": 0,
+            "passed": False,
+            "reason": "Pledging data not found — cannot verify (treated as fail for safety)",
+            "value": None,
             "threshold": max_value,
         }
 
@@ -519,17 +546,48 @@ def eval_pledging(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
     }
 
 
+def eval_net_debt_to_equity(fundamental_data: Dict, rule: Dict, params: Dict) -> Dict:
+    """
+    Evaluate Net Debt to Equity ratio.
+    Fetched from screener.in's key ratios section (authenticated page).
+    """
+    max_value = params.get("max_value", 0.30)
+    ratios = fundamental_data.get("ratios", {})
+    net_debt_to_equity = ratios.get("net_debt_to_equity")
+
+    if net_debt_to_equity is None:
+        return {
+            "passed": False,
+            "reason": "Net Debt to Equity not available (requires authenticated data)",
+            "value": None,
+            "threshold": max_value,
+        }
+
+    passed = net_debt_to_equity < max_value
+
+    return {
+        "passed": passed,
+        "reason": (
+            f"Net Debt/Equity: {net_debt_to_equity:.2f} "
+            f"(threshold: < {max_value:.2f})"
+        ),
+        "value": round(net_debt_to_equity, 2),
+        "threshold": max_value,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  EVALUATOR REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════
 
 EVALUATOR_REGISTRY: Dict[str, Callable] = {
-    "eval_ath_metric":         eval_ath_metric,
-    "eval_ath_match_quarters": eval_ath_match_quarters,
-    "eval_pe_below_avg":       eval_pe_below_avg,
-    "eval_pb_below_avg":       eval_pb_below_avg,
-    "eval_quality_metric":     eval_quality_metric,
-    "eval_pledging":           eval_pledging,
+    "eval_ath_metric":           eval_ath_metric,
+    "eval_ath_match_quarters":   eval_ath_match_quarters,
+    "eval_pe_below_avg":         eval_pe_below_avg,
+    "eval_pb_below_avg":         eval_pb_below_avg,
+    "eval_quality_metric":       eval_quality_metric,
+    "eval_pledging":             eval_pledging,
+    "eval_net_debt_to_equity":   eval_net_debt_to_equity,
 }
 
 
@@ -660,7 +718,8 @@ def evaluate_stock(fundamental_data: Dict, rules: List[Dict]) -> Dict:
         "current_pb": ratios.get("current_pb"),
         "roce": ratios.get("roce"),
         "roe": ratios.get("roe"),
-        "promoter_pledging_pct": shareholding.get("promoter_pledging_pct", 0),
+        "promoter_pledging_pct": shareholding.get("promoter_pledging_pct"),
+        "net_debt_to_equity": ratios.get("net_debt_to_equity"),
         "latest_sales": latest_q.get("sales"),
         "latest_pbt": latest_q.get("pbt"),
         "latest_net_profit": latest_q.get("net_profit"),

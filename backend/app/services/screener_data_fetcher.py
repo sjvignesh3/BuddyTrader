@@ -633,80 +633,340 @@ def _extract_quarterly_results(html: str) -> List[Dict]:
     return quarters
 
 
-def _extract_ratios(html: str) -> Dict[str, Any]:
+def _strip_html_get_text(html_fragment: str) -> str:
+    """
+    Strip ALL HTML tags from a fragment and collapse whitespace.
+    Used to cleanly extract text content from complex nested tag structures.
+    """
+    text = re.sub(r'<[^>]+>', ' ', html_fragment)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _fetch_quick_ratios_html(warehouse_id: str, opener: urllib.request.OpenerDirector, symbol: str) -> Optional[str]:
+    """
+    Fetch the quick-ratio <li> HTML fragment from the authenticated API.
+
+    ROOT CAUSE (confirmed from JS source at company.customisation.js):
+    ──────────────────────────────────────────────────────────────────
+    Screener.in loads user-added custom ratios (Net Debt to Equity, Pledged %,
+    5Yrs PE, 5Yrs PBV etc.) via a SEPARATE Ajax call AFTER the page loads:
+
+        GET /api/company/{warehouseId}/quick_ratios/
+
+    The warehouseId is different from the companyId and lives in:
+        <div data-warehouse-id="150476773" data-company-id="3730" ...>
+
+    This endpoint returns raw HTML <li> fragments which JS inserts into #top-ratios.
+    This is why the initial HTML fetch only has 9 default <li> items — the quick-ratio
+    items are never in the server-rendered HTML, they're injected client-side.
+
+    This function replicates that Ajax call so we get the same data the browser sees.
+    """
+    if not warehouse_id:
+        return None
+    url = f"{SCREENER_BASE}/api/company/{warehouse_id}/quick_ratios/"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                **_HEADERS_BASE,
+                "Accept": "text/html, */*",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": f"{SCREENER_BASE}/company/{urllib.parse.quote(symbol)}/consolidated/",
+            }
+        )
+        with opener.open(req, timeout=15) as r:
+            html_fragment = r.read().decode("utf-8")
+        lis = re.findall(r'<li[^>]*>', html_fragment)
+        logger.debug(
+            "%s: quick_ratios API returned %d <li> items (warehouseId=%s)",
+            symbol, len(lis), warehouse_id
+        )
+        return html_fragment
+    except Exception as e:
+        logger.debug("%s: quick_ratios API failed (warehouseId=%s): %s", symbol, warehouse_id, e)
+        return None
+
+
+def _extract_ratios(html: str, opener: Optional[urllib.request.OpenerDirector] = None, symbol: str = "") -> Dict[str, Any]:
     """
     Extract key ratios from the authenticated company page.
-    Parses each <li> in the #top-ratios section individually.
-    Returns: {current_pe, current_pb, roce, roe}
+
+    FIX: Quick-ratios (Net Debt to Equity, Pledged %, 5Yrs PE, 5Yrs PBV) are
+    NOT in the initial page HTML — they are loaded via a separate Ajax call to
+    /api/company/{warehouseId}/quick_ratios/ by company.customisation.js.
+    We replicate that call and merge the result into ratio_map.
+
+    Returns: {current_pe, current_pb, roce, roe, net_debt_to_equity,
+              pe_5yr_avg (from page), pb_5yr_avg (from page), pledged_pct}
     """
     ratios: Dict[str, Any] = {
         "current_pe": None, "current_pb": None,
         "roce": None, "roe": None,
+        "net_debt_to_equity": None,
+        "pe_5yr_avg": None,
+        "pb_5yr_avg": None,
+        "pledged_pct": None,
     }
 
-    # Parse each <li> into {label: value}
-    ratio_map: Dict[str, float] = {}
-    for li in re.findall(r'<li[^>]*>(.*?)</li>', html, re.DOTALL):
-        name_m = re.search(r'class="name"[^>]*>(.*?)</span>', li, re.DOTALL)
-        num_m = re.search(r'class="number">([\d,.\-]+)</span>', li)
-        if name_m and num_m:
-            label = re.sub(r'<[^>]+>', '', name_m.group(1)).strip()
-            value = _parse_number(num_m.group(1))
-            if label and value is not None:
-                ratio_map[label] = value
+    ratio_map: Dict[str, str] = {}   # cleaned_label -> raw numeric string
 
-    ratios["current_pe"] = ratio_map.get("Stock P/E")
-    ratios["roce"] = ratio_map.get("ROCE")
-    ratios["roe"] = ratio_map.get("ROE")
+    def _parse_ratio_lis(source_html: str) -> None:
+        """
+        Parse <li> items from source_html into ratio_map.
+        Handles both default and quick-ratio <li> structures —
+        all use <span class="number"> for the value.
+        """
+        tag_re = re.compile(r'<(/?)span(?:\s[^>]*)?>',  re.IGNORECASE)
 
-    # PB = Current Price / Book Value
-    price = ratio_map.get("Current Price")
-    book = ratio_map.get("Book Value")
+        for li in re.findall(r'<li[^>]*>(.*?)</li>', source_html, re.DOTALL):
+            # ── Numeric value: always inside <span class="number"> ────────
+            num_m = re.search(r'class=["\']number["\'][^>]*>([\d,.\-]+)<', li)
+            if not num_m:
+                continue
+            raw_val = num_m.group(1).strip()
+
+            # ── Label from <span class="name">…</span> ───────────────────
+            name_open_m = re.search(
+                r'<span[^>]*class=["\'][^"\']*name[^"\']*["\'][^>]*>', li
+            )
+            if not name_open_m:
+                continue
+
+            after_open = li[name_open_m.end():]
+
+            # Walk to find matching closing </span>
+            depth = 1
+            content_end = len(after_open)
+            for m in tag_re.finditer(after_open):
+                if m.group(1) == '/':
+                    depth -= 1
+                    if depth == 0:
+                        content_end = m.start()
+                        break
+                else:
+                    depth += 1
+
+            inner_html = after_open[:content_end]
+            # Remove nested child spans entirely (e.g. <span class="sub">avg</span>)
+            label_html = re.sub(r'<span[^>]*>.*?</span>', '', inner_html, flags=re.DOTALL)
+            label = _strip_html_get_text(label_html)
+            if label:
+                ratio_map[label] = raw_val
+                logger.debug("  ratio_map[%r] = %r", label, raw_val)
+
+    # ── Step 1: Parse default ratios from #top-ratios in the page HTML ───
+    top_ratios_m = re.search(
+        r'<ul[^>]*id=["\']top-ratios["\'][^>]*>(.*?)</ul>',
+        html, re.DOTALL
+    )
+    if top_ratios_m:
+        _parse_ratio_lis(top_ratios_m.group(1))
+        logger.info("Default ratios from #top-ratios — keys: %s", list(ratio_map.keys()))
+    else:
+        _parse_ratio_lis(html)
+        logger.info("Default ratios from full page (no #top-ratios) — keys: %s", list(ratio_map.keys()))
+
+    # ── Step 2: Fetch quick-ratios via the dedicated Ajax API ─────────────
+    # Extract warehouseId from the page HTML
+    wh_m = re.search(r'data-warehouse-id=["\'](\d+)["\']', html)
+    warehouse_id = wh_m.group(1) if wh_m else None
+
+    if opener and warehouse_id:
+        quick_html = _fetch_quick_ratios_html(warehouse_id, opener, symbol)
+        if quick_html:
+            _parse_ratio_lis(quick_html)
+            logger.info(
+                "Quick-ratios merged — all keys now: %s", list(ratio_map.keys())
+            )
+    else:
+        logger.warning(
+            "%s: Cannot fetch quick-ratios — opener=%s, warehouseId=%s",
+            symbol, bool(opener), warehouse_id
+        )
+
+    logger.info("Full ratio_map: %s", dict(ratio_map))
+
+    # ── Lookup helpers ─────────────────────────────────────────────────────
+    def _get(key: str) -> Optional[float]:
+        val = ratio_map.get(key)
+        return _parse_number(val) if val is not None else None
+
+    def _get_fuzzy(candidates: List[str]) -> Optional[float]:
+        """
+        Try each candidate label exactly, then case-insensitively,
+        then as a substring of any key in ratio_map.
+        """
+        # 1. Exact match
+        for key in candidates:
+            v = _get(key)
+            if v is not None:
+                return v
+        # 2. Case-insensitive exact match
+        lc_map = {k.lower(): v for k, v in ratio_map.items()}
+        for key in candidates:
+            v = lc_map.get(key.lower())
+            if v is not None:
+                return _parse_number(v)
+        # 3. Substring: any ratio_map key that STARTS WITH the candidate
+        for key in candidates:
+            kl = key.lower()
+            for rk, rv in ratio_map.items():
+                if rk.lower().startswith(kl):
+                    parsed = _parse_number(rv)
+                    if parsed is not None:
+                        logger.debug("Fuzzy match: %r → %r = %s", key, rk, parsed)
+                        return parsed
+        return None
+
+    # ── Map to structured output ───────────────────────────────────────────
+    ratios["current_pe"]         = _get_fuzzy(["Stock P/E", "P/E", "PE"])
+    ratios["roce"]               = _get_fuzzy(["ROCE"])
+    ratios["roe"]                = _get_fuzzy(["ROE"])
+    ratios["net_debt_to_equity"] = _get_fuzzy([
+        "Net Debt to Equity", "Net Debt / Equity",
+        "Debt to Equity", "Net Debt/Equity",
+    ])
+
+    # Pledging — user-added quick ratio; label shown as "Pledged percentage"
+    # Pulled here so _extract_shareholding can use it as a fallback
+    ratios["pledged_pct"] = _get_fuzzy([
+        "Pledged percentage", "Pledging %", "Pledged %",
+        "Promoter Pledging", "% Pledged",
+    ])
+
+    # 5-year historical averages — user-added quick ratios
+    # Label shown in DevTools: "5Yrs PE" and "5Yrs PBV"
+    ratios["pe_5yr_avg"] = _get_fuzzy(["5Yrs PE", "5 Yr PE", "5Yrs P/E", "5 Yr P/E", "5Yr PE"])
+    ratios["pb_5yr_avg"] = _get_fuzzy([
+        "5Yrs PBV", "5 Yr PBV", "5Yrs P/BV", "5Yrs P/B",
+        "5 Yr PBV", "5 Yr P/B", "5Yr PBV",
+    ])
+
+    # Current PB = Current Price / Book Value
+    price = _get_fuzzy(["Current Price"])
+    book  = _get_fuzzy(["Book Value"])
     if price and book and book > 0:
         ratios["current_pb"] = round(price / book, 2)
+
+    logger.debug(
+        "Extracted ratios — PE=%s, ROCE=%s, ROE=%s, NDE=%s, 5yrPE=%s, 5yrPBV=%s, PB=%s",
+        ratios["current_pe"], ratios["roce"], ratios["roe"],
+        ratios["net_debt_to_equity"], ratios["pe_5yr_avg"],
+        ratios["pb_5yr_avg"], ratios["current_pb"],
+    )
 
     return ratios
 
 
-def _extract_shareholding(html: str) -> Dict[str, Any]:
+def _extract_pledging_from_analysis(html: str) -> Optional[float]:
     """
-    Extract promoter holding % and pledging % from the shareholding section.
-    Returns defaults (None / 0.0) when section or data is absent.
+    Extract promoter pledging % from the #analysis section's cons list.
+
+    ROOT CAUSE (confirmed from live HTML inspection):
+    ─────────────────────────────────────────────────
+    Screener.in does NOT render pledging inside the #shareholding table.
+    The pledging percentage is only visible in TWO places in the page HTML:
+
+      1. <meta name="description"> in <head>:
+           "Promoters have pledged 89.4% of their holding."
+
+      2. The #analysis section <div class="cons"> bullet list:
+           <li>Promoters have pledged 89.4% of their holding.</li>
+
+    Neither of these is inside the #shareholding <section>.
+    All previous strategies (table parser, raw <tr> scan, regex on section_html)
+    were all looking in the wrong place — the shareholding section simply
+    does not contain the pledging number.
+
+    This function searches BOTH correct locations and returns the value.
+    Returns None only if no pledging sentence is found anywhere (0% pledging
+    stocks do not emit this sentence at all — so None = 0% OR data missing).
+    """
+    # Strategy A: search the analysis section cons list
+    analysis_m = re.search(
+        r'<section[^>]*id="analysis"[^>]*>(.*?)</section>',
+        html, re.DOTALL
+    )
+    if analysis_m:
+        pledge_m = re.search(
+            r'pledged\s+([\d]+(?:\.\d+)?)\s*%',
+            analysis_m.group(1), re.IGNORECASE
+        )
+        if pledge_m:
+            val = _parse_number(pledge_m.group(1))
+            if val is not None:
+                logger.debug("Pledging from #analysis cons: %.2f%%", val)
+                return val
+
+    # Strategy B: search the <meta name="description"> in <head>
+    # Only search the first 5000 chars (where <head> lives)
+    meta_m = re.search(
+        r'pledged\s+([\d]+(?:\.\d+)?)\s*%',
+        html[:5000], re.IGNORECASE
+    )
+    if meta_m:
+        val = _parse_number(meta_m.group(1))
+        if val is not None:
+            logger.debug("Pledging from meta description: %.2f%%", val)
+            return val
+
+    # Not found → pledging is likely 0% (screener only mentions it when > 0)
+    # Return None to distinguish "found=0" from "not found" for safety
+    return None
+
+
+def _extract_shareholding(html: str, ratios_pledged_pct: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Extract promoter holding % and pledging % from the page.
+
+    Promoter holding → #shareholding table (Promoters row, latest quarter).
+    Pledging %       → Priority order:
+                         1. #top-ratios "Pledged percentage" quick-ratio (most reliable)
+                         2. #analysis cons list sentence
+                         3. <meta name="description"> in <head>
     """
     result = {"promoter_holding_pct": None, "promoter_pledging_pct": None}
 
-    rows = _parse_section_table(html, "shareholding")
-    for row in rows:
-        if not row:
-            continue
-        label = row[0].lower().replace("\xa0", " ").strip()
-        if "promoter" in label and "pledge" not in label and result["promoter_holding_pct"] is None:
-            for val in reversed(row[1:]):
-                v = _parse_number(val)
-                if v is not None:
-                    result["promoter_holding_pct"] = v
-                    break
-        if "pledge" in label and result["promoter_pledging_pct"] is None:
-            for val in reversed(row[1:]):
-                v = _parse_number(val)
-                if v is not None:
-                    result["promoter_pledging_pct"] = v
+    # ── Pledging: Priority 1 — already extracted from #top-ratios ────────
+    if ratios_pledged_pct is not None:
+        result["promoter_pledging_pct"] = ratios_pledged_pct
+        logger.debug("Pledging from #top-ratios quick-ratio: %.2f%%", ratios_pledged_pct)
+    else:
+        # Priority 2 & 3: analysis section / meta description
+        result["promoter_pledging_pct"] = _extract_pledging_from_analysis(html)
+
+    # ── Promoter holding: from shareholding table ─────────────────────────
+    sh_m = re.search(  # noqa: E501
+        r'<section[^>]*id="shareholding"[^>]*>(.*?)</section>',
+        html, re.DOTALL
+    )
+    if sh_m:
+        section_html = sh_m.group(0)
+        # Scan all <tr> rows; find the "Promoters" row
+        for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', section_html, re.DOTALL):
+            cells = re.findall(r'<td[^>]*>(.*?)</td>', tr, re.DOTALL)
+            if not cells:
+                continue
+            label = _strip_html_get_text(cells[0]).lower().replace("\xa0", " ").strip()
+            if "promoter" in label and "pledge" not in label and "no." not in label:
+                # Values like "26.76%" — strip % and parse
+                values = []
+                for c in cells[1:]:
+                    raw = _strip_html_get_text(c).replace("%", "").strip()
+                    v = _parse_number(raw)
+                    if v is not None:
+                        values.append(v)
+                if values:
+                    result["promoter_holding_pct"] = values[-1]  # most recent quarter
+                    logger.debug("Promoter holding: %.2f%%", values[-1])
                     break
 
-    # Regex fallback for pledging (sometimes in a sub-row not captured by table parser)
-    if result["promoter_pledging_pct"] is None:
-        sh_m = re.search(r'id="shareholding".*?</section>', html, re.DOTALL)
-        if sh_m:
-            pledge_m = re.search(
-                r'[Pp]ledg(?:ed?|ing)[^<]*?(?:<[^>]*>)*\s*([\d.,]+)\s*%',
-                sh_m.group(), re.DOTALL
-            )
-            if pledge_m:
-                result["promoter_pledging_pct"] = _parse_number(pledge_m.group(1))
-
-    # Default 0 when no pledging row exists (common for zero-pledge companies)
-    if result["promoter_pledging_pct"] is None:
-        result["promoter_pledging_pct"] = 0.0
+    # ── Logging ──────────────────────────────────────────────────────────
+    if result["promoter_pledging_pct"] is not None:
+        logger.info("Pledging extracted: %.2f%%", result["promoter_pledging_pct"])
+    else:
+        logger.warning("Pledging could not be extracted from shareholding section")
 
     return result
 
@@ -749,8 +1009,13 @@ def fetch_fundamental_data(symbol: str) -> Optional[Dict]:
     # ── TIER 2: Authenticated page (quarterly + ratios + shareholding) ────
     quarterly: List[Dict] = []
     ratios: Dict = {
-        "current_pe": valuation["current_pe"],   # prefer chart-derived (more up-to-date)
-        "current_pb": valuation["current_pb"],
+        # NOTE: current_pe / current_pb start as None here.
+        # They are filled from the PAGE (TTM-based) first, then fall back
+        # to chart API only if the page value is unavailable.
+        # This ensures current PE/PB and their 5yr averages always come from
+        # the SAME source (screener's TTM calculation), making comparisons valid.
+        "current_pe": None,
+        "current_pb": None,
         "roce": None,
         "roe": None,
     }
@@ -758,6 +1023,7 @@ def fetch_fundamental_data(symbol: str) -> Optional[Dict]:
     auth_available = False
 
     opener = _get_session()
+    active_opener = None   # track the opener that successfully fetched the page
     if opener:
         html = _fetch_company_page(symbol, opener)
         if html is None:
@@ -767,21 +1033,54 @@ def fetch_fundamental_data(symbol: str) -> Optional[Dict]:
             opener2 = _get_session()
             if opener2:
                 html = _fetch_company_page(symbol, opener2)
+                active_opener = opener2
+        else:
+            active_opener = opener
 
         if html:
             quarterly = _extract_quarterly_results(html)
-            page_ratios = _extract_ratios(html)
-            shareholding = _extract_shareholding(html)
+            page_ratios = _extract_ratios(html, opener=active_opener, symbol=symbol)
+            shareholding = _extract_shareholding(html, ratios_pledged_pct=page_ratios.get("pledged_pct"))
             auth_available = True
 
-            # Use page ratios for ROCE/ROE; keep chart PE/PB (more accurate)
-            ratios["roce"] = page_ratios.get("roce")
-            ratios["roe"] = page_ratios.get("roe")
-            # Fallback: if chart PE/PB failed, use page values
+            # ── PE / PB: PAGE values take absolute priority ───────────────
+            # The screener page shows TTM (Trailing Twelve Month) PE/PB.
+            # The 5yr historical averages (quick-ratios) are also TTM-based.
+            # Mixing the chart API's PE (uses closing price / adjusted EPS) with
+            # the page's 5yr TTM average causes wrong PASS/FAIL results.
+            # We MUST use the same source for both current and historical values.
+            ratios["current_pe"] = page_ratios.get("current_pe")
+            ratios["current_pb"] = page_ratios.get("current_pb")
+
+            # Fall back to chart API only if the page failed to provide values
             if ratios["current_pe"] is None:
-                ratios["current_pe"] = page_ratios.get("current_pe")
+                ratios["current_pe"] = valuation.get("current_pe")
+                logger.debug("%s: current_pe not on page — falling back to chart API", symbol)
             if ratios["current_pb"] is None:
-                ratios["current_pb"] = page_ratios.get("current_pb")
+                ratios["current_pb"] = valuation.get("current_pb")
+                logger.debug("%s: current_pb not on page — falling back to chart API", symbol)
+
+            # ── Other ratios from page ────────────────────────────────────
+            ratios["roce"]               = page_ratios.get("roce")
+            ratios["roe"]                = page_ratios.get("roe")
+            ratios["net_debt_to_equity"] = page_ratios.get("net_debt_to_equity")
+
+            # Inject page-sourced 5yr averages into ratios for direct access
+            ratios["pe_5yr_avg_page"]    = page_ratios.get("pe_5yr_avg")
+            ratios["pb_5yr_avg_page"]    = page_ratios.get("pb_5yr_avg")
+
+            # ── Sync valuation dict so eval_pe_below_avg / eval_pb_below_avg
+            # always compare apples-to-apples (both values TTM-sourced from page).
+            # If the page quick-ratio is available, it wins over chart-computed avg.
+            if page_ratios.get("pe_5yr_avg") is not None:
+                valuation["pe_avg_5yr"] = page_ratios["pe_5yr_avg"]
+            if page_ratios.get("pb_5yr_avg") is not None:
+                valuation["pb_avg_5yr"] = page_ratios["pb_5yr_avg"]
+
+            # Also sync current values in valuation so the chart series is
+            # still available for fallback and display purposes.
+            valuation["current_pe_page"] = ratios["current_pe"]
+            valuation["current_pb_page"] = ratios["current_pb"]
 
     data = {
         "symbol": symbol,
@@ -803,8 +1102,11 @@ def fetch_fundamental_data(symbol: str) -> Optional[Dict]:
         f"quarters={len(quarterly)}, "
         f"PE={ratios.get('current_pe')}, "
         f"PB={ratios.get('current_pb')}, "
+        f"5yrPE(page)={ratios.get('pe_5yr_avg_page')}, "
+        f"5yrPBV(page)={ratios.get('pb_5yr_avg_page')}, "
         f"ROCE={ratios.get('roce')}, "
         f"ROE={ratios.get('roe')}, "
+        f"NetDebt/Eq={ratios.get('net_debt_to_equity')}, "
         f"pledging={shareholding.get('promoter_pledging_pct')}%"
     )
 

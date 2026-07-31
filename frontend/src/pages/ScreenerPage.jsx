@@ -5,6 +5,10 @@ import { getScreenerRules, getScreenerAuthStatus, runScreener } from '../service
 // ── localStorage keys ─────────────────────────────────────────────────────
 const STORAGE_KEY = 'buddy-screener-rules';
 const STORAGE_POOL_KEY = 'buddy-screener-pool';
+// Bump this version whenever DEFAULT_SCREENER_RULES change structurally
+// (rules added/removed). Triggers auto-reset of stale localStorage.
+const RULES_VERSION = '2'; // v2: removed ath_match_quarters, added net_debt_to_equity
+const STORAGE_VERSION_KEY = 'buddy-screener-rules-version';
 
 // ── Category metadata for grouping ────────────────────────────────────────
 const CATEGORY_META = {
@@ -34,11 +38,19 @@ function saveRulesToStorage(rules) {
       ),
     }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
+    localStorage.setItem(STORAGE_VERSION_KEY, RULES_VERSION);
   } catch (e) { /* ignore */ }
 }
 
 function loadRulesFromStorage() {
   try {
+    // Version guard: if rules schema changed, drop stale localStorage
+    const storedVersion = localStorage.getItem(STORAGE_VERSION_KEY);
+    if (storedVersion !== RULES_VERSION) {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(STORAGE_VERSION_KEY, RULES_VERSION);
+      return null;
+    }
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
@@ -824,8 +836,9 @@ export default function ScreenerPage() {
                         { key: 'current_pb',     label: 'PB',        align: 'right',  w: '60px'  },
                         { key: 'roce',           label: 'ROCE %',    align: 'right',  w: '65px'  },
                         { key: 'roe',            label: 'ROE %',     align: 'right',  w: '65px'  },
-                        { key: 'pledging',       label: 'Pledge %',  align: 'right',  w: '65px'  },
-                        { key: 'latest_sales',   label: 'Q Sales',   align: 'right',  w: '80px'  },
+                        { key: 'pledging',           label: 'Pledge %',    align: 'right',  w: '65px'  },
+                        { key: 'net_debt_to_equity', label: 'ND/Eq',       align: 'right',  w: '65px'  },
+                        { key: 'latest_sales',       label: 'Q Sales',     align: 'right',  w: '80px'  },
                         { key: 'latest_net_profit', label: 'Q Profit', align: 'right', w: '80px'  },
                       ].map(col => (
                         <th
@@ -938,9 +951,24 @@ export default function ScreenerPage() {
                             <td style={{
                               padding: '8px 10px', textAlign: 'right', ...monoStyle,
                               fontWeight: 600,
-                              color: (fs.promoter_pledging_pct || 0) <= 5 ? theme.success : theme.danger,
+                              color: fs.promoter_pledging_pct == null
+                                ? theme.textTertiary
+                                : fs.promoter_pledging_pct <= 5
+                                  ? theme.success
+                                  : theme.danger,
                             }}>
-                              {fs.promoter_pledging_pct != null ? `${fs.promoter_pledging_pct.toFixed(1)}` : '0'}
+                              {fs.promoter_pledging_pct != null ? `${fs.promoter_pledging_pct.toFixed(1)}` : '—'}
+                            </td>
+                            <td style={{
+                              padding: '8px 10px', textAlign: 'right', ...monoStyle,
+                              fontWeight: 600,
+                              color: fs.net_debt_to_equity == null
+                                ? theme.textTertiary
+                                : fs.net_debt_to_equity < 0.30
+                                  ? theme.success
+                                  : theme.danger,
+                            }}>
+                              {fs.net_debt_to_equity != null ? fs.net_debt_to_equity.toFixed(2) : '—'}
                             </td>
                             <td style={{ padding: '8px 10px', textAlign: 'right', color: theme.textSecondary, ...monoStyle }}>
                               {fs.latest_sales != null ? fs.latest_sales.toLocaleString() : '—'}
@@ -953,7 +981,7 @@ export default function ScreenerPage() {
                           {/* ── Expanded Rule Details ─────────────────────── */}
                           {isExpanded && (
                             <tr>
-                              <td colSpan={13} style={{ padding: 0, borderBottom: `2px solid ${theme.accent}30` }}>
+                              <td colSpan={14} style={{ padding: 0, borderBottom: `2px solid ${theme.accent}30` }}>
                                 <div style={{ padding: '12px 16px', background: theme.bgTertiary }}>
                                   <div style={{
                                     fontSize: '10px', fontWeight: 700, color: theme.textTertiary,
