@@ -146,3 +146,18 @@ export async function getScreenerCacheInfo() {
   if (!res.ok) throw new Error(`Failed to get cache info: ${res.statusText}`);
   return res.json();
 }
+
+/**
+ * Fetch fundamental data for given symbols ONLY from the persistent cache.
+ * Makes NO internet calls. Returns points (out of 9) and check details.
+ *
+ * @param {string[]} symbols - Array of NSE symbols
+ * @returns {Promise<{results: Object}>}
+ */
+export async function getFundamentalsFromCache(symbols) {
+  if (!symbols || symbols.length === 0) return { results: {} };
+  const params = new URLSearchParams({ symbols: symbols.join(',') });
+  const res = await fetch(`${BASE_URL}/screener/fundamentals-from-cache?${params}`);
+  if (!res.ok) throw new Error(`Failed to get fundamentals from cache: ${res.statusText}`);
+  return res.json();
+}
