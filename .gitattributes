@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Buddy — Git line-ending normalisation
+#
+#  WHY THIS FILE EXISTS:
+#  Without it, git on Windows (core.autocrlf=true) converts LF → CRLF on
+#  checkout. Python on Windows can handle CRLF in .py files, BUT compiled
+#  .pyc files are binary-matched to the exact source bytes. If Windows git
+#  changes line endings after the IDE generated the .pyc, the checksum
+#  mismatches and Python falls back to recompiling — which is fine, BUT
+#  if the .pyc itself was committed (as happened here), Windows would get
+#  a Linux-generated .pyc that doesn't match the CRLF source → import errors.
+#
+#  SOLUTION:
+#  1. Always store files in the repo with LF (eol=lf).
+#  2. Never commit .pyc / __pycache__ (enforced by .gitignore).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Default: normalise all text files to LF in the repo
+* text=auto eol=lf
+
+# Python source — always LF
+*.py    text eol=lf
+
+# Web / config files — always LF
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.env   text eol=lf
+*.env.* text eol=lf
+*.txt   text eol=lf
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+
+# Binary — never touch line endings
+*.pyc   binary
+*.pyd   binary
+*.pyo   binary
+*.pkl   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary

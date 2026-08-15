@@ -52,6 +52,10 @@ uvicorn.log
 backend/data/
 !backend/data/.gitkeep
 
+# Screener session pickle — runtime auth cache, never commit
+screener_session.pkl
+*.pkl
+
 # Never commit raw market data CSVs (large files)
 *.csv
 # Exception – keep the master universe template tracked
