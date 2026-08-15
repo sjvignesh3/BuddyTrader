@@ -4,51 +4,87 @@
 
 const BASE_URL = '/api';
 
+/**
+ * Internal fetch wrapper that gives meaningful errors instead of
+ * browser-generated "Not Found" / "" statusText values.
+ *
+ * When the Vite proxy can't reach the backend (backend not running), it
+ * returns HTTP 502/500 with no body. `res.statusText` in those cases is
+ * either empty or misleadingly shows "Not Found". This wrapper replaces
+ * that with actionable messages.
+ */
+async function apiFetch(url, options = {}) {
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (networkErr) {
+    // fetch() itself threw — complete network failure (CORS, no connection, etc.)
+    throw new Error(`Backend unreachable — is the FastAPI server running on port 8000? (${networkErr.message})`);
+  }
+
+  if (!res.ok) {
+    // Try to get a useful message from the JSON body first
+    let detail = '';
+    try {
+      const body = await res.clone().json();
+      detail = body?.detail || body?.message || '';
+    } catch {
+      try { detail = await res.clone().text(); } catch { /* ignore */ }
+    }
+
+    // Map proxy error codes to actionable messages
+    if (res.status === 500 || res.status === 502 || res.status === 503 || res.status === 504) {
+      const bodyHint = detail ? `: ${detail.slice(0, 120)}` : '';
+      throw new Error(
+        `Backend proxy error (HTTP ${res.status}) — FastAPI is not running on port 8000, or crashed${bodyHint}`
+      );
+    }
+
+    const statusLabel = detail || res.statusText || `HTTP ${res.status}`;
+    throw Object.assign(new Error(statusLabel), { status: res.status, response: res });
+  }
+
+  return res;
+}
+
 export async function triggerScan(pool = 'F40', strategies = null, symbols = null) {
   const params = new URLSearchParams({ pool });
   if (strategies) params.append('strategies', strategies);
   if (symbols) params.append('symbols', symbols);
 
-  const res = await fetch(`${BASE_URL}/scan?${params}`, { method: 'POST' });
-  if (!res.ok) throw new Error(`Scan failed: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/scan?${params}`, { method: 'POST' });
   return res.json();
 }
 
 export async function getLastScan() {
-  const res = await fetch(`${BASE_URL}/scan/last`);
-  if (!res.ok) throw new Error(`Failed to get last scan: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/scan/last`);
   return res.json();
 }
 
 export async function getCachedScan(poolCode) {
-  const res = await fetch(`${BASE_URL}/scan/${poolCode}`);
-  if (!res.ok) throw new Error(`Failed to get cached scan: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/scan/${poolCode}`);
   const data = await res.json();
   if (data.message) return null; // "No cached scan" message
   return data;
 }
 
 export async function getScanStatuses() {
-  const res = await fetch(`${BASE_URL}/scans/status`);
-  if (!res.ok) throw new Error(`Failed to get scan statuses: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/scans/status`);
   return res.json();
 }
 
 export async function getPools() {
-  const res = await fetch(`${BASE_URL}/pools`);
-  if (!res.ok) throw new Error(`Failed to get pools: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/pools`);
   return res.json();
 }
 
 export async function getStrategies() {
-  const res = await fetch(`${BASE_URL}/strategies`);
-  if (!res.ok) throw new Error(`Failed to get strategies: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/strategies`);
   return res.json();
 }
 
 export async function clearCache() {
-  const res = await fetch(`${BASE_URL}/cache/clear`, { method: 'POST' });
-  if (!res.ok) throw new Error(`Failed to clear cache: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/cache/clear`, { method: 'POST' });
   return res.json();
 }
 
@@ -58,14 +94,12 @@ export async function clearCache() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function getScreenerRules() {
-  const res = await fetch(`${BASE_URL}/screener/rules`);
-  if (!res.ok) throw new Error(`Failed to get screener rules: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/screener/rules`);
   return res.json();
 }
 
 export async function getScreenerAuthStatus() {
-  const res = await fetch(`${BASE_URL}/screener/auth-status`);
-  if (!res.ok) throw new Error(`Failed to get auth status: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/screener/auth-status`);
   return res.json();
 }
 
@@ -74,12 +108,11 @@ export async function runScreener(pool = 'F40', rules = null, symbols = null, fo
   if (rules)   body.rules   = rules;
   if (symbols) body.symbols = symbols;
 
-  const res = await fetch(`${BASE_URL}/screener/run`, {
+  const res = await apiFetch(`${BASE_URL}/screener/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Screener failed: ${res.statusText}`);
   return res.json();
 }
 
@@ -99,14 +132,12 @@ export async function runScreenerStream(pool = 'F40', rules = null, symbols = nu
   if (rules)   body.rules   = rules;
   if (symbols) body.symbols = symbols;
 
-  const res = await fetch(`${BASE_URL}/screener/run-stream`, {
+  const res = await apiFetch(`${BASE_URL}/screener/run-stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-
-  if (!res.ok) throw new Error(`Screener stream failed: ${res.statusText}`);
-  if (!res.body) throw new Error('Streaming not supported in this browser');
+  if (!res.body) throw new Error('Streaming not supported — try a modern browser (Chrome/Edge/Firefox)');
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -142,8 +173,7 @@ export async function runScreenerStream(pool = 'F40', rules = null, symbols = nu
 }
 
 export async function getScreenerCacheInfo() {
-  const res = await fetch(`${BASE_URL}/screener/cache-info`);
-  if (!res.ok) throw new Error(`Failed to get cache info: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/screener/cache-info`);
   return res.json();
 }
 
@@ -157,7 +187,6 @@ export async function getScreenerCacheInfo() {
 export async function getFundamentalsFromCache(symbols) {
   if (!symbols || symbols.length === 0) return { results: {} };
   const params = new URLSearchParams({ symbols: symbols.join(',') });
-  const res = await fetch(`${BASE_URL}/screener/fundamentals-from-cache?${params}`);
-  if (!res.ok) throw new Error(`Failed to get fundamentals from cache: ${res.statusText}`);
+  const res = await apiFetch(`${BASE_URL}/screener/fundamentals-from-cache?${params}`);
   return res.json();
 }

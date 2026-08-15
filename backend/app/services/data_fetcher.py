@@ -46,6 +46,7 @@ import time
 try:
     import urllib.request
     import urllib.error
+    import urllib.parse
     HAS_URLLIB = True
 except ImportError:
     HAS_URLLIB = False
@@ -58,10 +59,80 @@ _ath_cache:   Dict[str, float] = {}  # symbol -> ATH (max adjclose from 5y daily
 CACHE_TTL = timedelta(hours=1)
 
 YF_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
+YF_CRUMB_URL = "https://query1.finance.yahoo.com/v1/test/getcrumb"
+YF_CONSENT_URL = "https://guce.yahoo.com/consent"
+
+# Crumb + cookie cache (refreshed when stale/invalid)
+_yf_crumb: Optional[str] = None
+_yf_cookie: Optional[str] = None
+_yf_crumb_fetched_at: Optional[datetime] = None
+_YF_CRUMB_TTL = timedelta(hours=6)
 
 
 def _nse_ticker(symbol: str) -> str:
     return f"{symbol}.NS"
+
+
+def _get_yf_crumb() -> Optional[str]:
+    """
+    Fetch and cache a Yahoo Finance crumb token.
+
+    Yahoo Finance v8 API (since ~2024) requires:
+      1. A valid `A3` cookie (obtained by hitting the consent/auth endpoint)
+      2. A crumb token passed as ?crumb=... in every chart request
+
+    Without these, Yahoo returns HTTP 404 for all symbols.
+    """
+    global _yf_crumb, _yf_cookie, _yf_crumb_fetched_at
+
+    # Return cached crumb if still valid
+    if _yf_crumb and _yf_crumb_fetched_at:
+        if datetime.now() - _yf_crumb_fetched_at < _YF_CRUMB_TTL:
+            return _yf_crumb
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    try:
+        # Step 1: Hit Yahoo Finance home to get the A3 session cookie
+        cj = urllib.request.HTTPCookieProcessor()
+        opener = urllib.request.build_opener(cj)
+        req = urllib.request.Request("https://finance.yahoo.com/", headers=headers)
+        with opener.open(req, timeout=10) as r:
+            r.read()  # consume response
+
+        # Step 2: Fetch the crumb using the session cookie
+        crumb_req = urllib.request.Request(YF_CRUMB_URL, headers={
+            **headers,
+            "Accept": "*/*",
+            "Referer": "https://finance.yahoo.com/",
+        })
+        with opener.open(crumb_req, timeout=10) as r:
+            crumb = r.read().decode("utf-8").strip()
+
+        if crumb and crumb != "":
+            _yf_crumb = crumb
+            # Extract and store cookies for reuse
+            cookie_header = "; ".join(
+                f"{c.name}={c.value}"
+                for c in cj.cookiejar
+            )
+            _yf_cookie = cookie_header
+            _yf_crumb_fetched_at = datetime.now()
+            logger.info("Yahoo Finance crumb acquired: %s...", crumb[:8])
+            return _yf_crumb
+
+    except Exception as e:
+        logger.warning("Yahoo Finance crumb fetch failed: %s", e)
+
+    return None
 
 
 def _fetch_from_yahoo_api(symbol: str, period: str = "1y") -> Optional[Tuple[pd.DataFrame, dict]]:
@@ -72,7 +143,13 @@ def _fetch_from_yahoo_api(symbol: str, period: str = "1y") -> Optional[Tuple[pd.
     meta dict keys of interest: fiftyTwoWeekHigh, fiftyTwoWeekLow, regularMarketPrice
 
     Returns (df, meta) or None on failure.
+
+    NOTE: Yahoo Finance v8 API now requires a crumb token + session cookie.
+    Without these, all requests return HTTP 404. _get_yf_crumb() handles
+    the auth dance automatically.
     """
+    global _yf_crumb, _yf_cookie, _yf_crumb_fetched_at  # needed for invalidation in except block
+
     if not HAS_URLLIB:
         return None
 
@@ -80,17 +157,37 @@ def _fetch_from_yahoo_api(symbol: str, period: str = "1y") -> Optional[Tuple[pd.
     period_map = {"5y": "5y", "2y": "2y", "1y": "1y", "6mo": "6mo", "1mo": "1mo", "5d": "5d"}
     yf_range = period_map.get(period, "1y")
 
-    url = f"{YF_BASE_URL}{ticker}?range={yf_range}&interval=1d&includePrePost=false"
+    # Get crumb (with auto-refresh)
+    crumb = _get_yf_crumb()
+    crumb_param = f"&crumb={urllib.parse.quote(crumb)}" if crumb else ""
+
+    url = f"{YF_BASE_URL}{ticker}?range={yf_range}&interval=1d&includePrePost=false{crumb_param}"
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://finance.yahoo.com/",
+    }
+    if _yf_cookie:
+        headers["Cookie"] = _yf_cookie
 
     try:
-        req = urllib.request.Request(url)
-        req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        req = urllib.request.Request(url, headers=headers)
 
         with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode())
 
         chart = data.get("chart", {}).get("result", [])
         if not chart:
+            # If we got an empty result, the crumb may be stale — invalidate it
+            error_code = data.get("chart", {}).get("error", {})
+            if error_code:
+                logger.warning(f"{symbol}: Yahoo chart error: {error_code}")
             return None
 
         result    = chart[0]
@@ -128,7 +225,17 @@ def _fetch_from_yahoo_api(symbol: str, period: str = "1y") -> Optional[Tuple[pd.
         return df, meta
 
     except urllib.error.HTTPError as e:
-        logger.warning(f"Yahoo API HTTP error for {symbol} (period={period}): {e.code}")
+        if e.code in (401, 403, 404):
+            # Crumb/cookie likely expired — invalidate so next call re-fetches
+            logger.warning(
+                f"Yahoo API HTTP {e.code} for {symbol} (period={period}) — "
+                "crumb may be stale, will refresh on next request"
+            )
+            _yf_crumb = None
+            _yf_cookie = None
+            _yf_crumb_fetched_at = None
+        else:
+            logger.warning(f"Yahoo API HTTP error for {symbol} (period={period}): {e.code}")
     except urllib.error.URLError as e:
         logger.warning(f"Yahoo API URL error for {symbol}: {e.reason}")
     except Exception as e:
@@ -409,8 +516,11 @@ def load_sample_data(symbols: List[str]) -> Dict[str, pd.DataFrame]:
 
 
 def clear_cache():
-    """Clear the price cache and ATH cache."""
-    global _price_cache, _ath_cache
+    """Clear the price cache, ATH cache, and Yahoo Finance crumb."""
+    global _price_cache, _ath_cache, _yf_crumb, _yf_cookie, _yf_crumb_fetched_at
     _price_cache = {}
     _ath_cache = {}
-    logger.info("Price cache and ATH cache cleared")
+    _yf_crumb = None
+    _yf_cookie = None
+    _yf_crumb_fetched_at = None
+    logger.info("Price cache, ATH cache, and YF crumb cleared")
