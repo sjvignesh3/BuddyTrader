@@ -12,6 +12,10 @@
         "rally_lookback_days": 189
     }
   },
+  "trend_settings": {
+    "trend_days": 7,
+    "_comment": "Number of calendar-equivalent trading days to look back for the 'Last Week Trend' column. Change this to 14 for 2-week trend, 30 for monthly, etc. Uses trading days (approx 5 per week). Default 7 ≈ last 5 trading days."
+  },
   "stock_pools": {
     "F40": {
       "name": "Flagship 40",

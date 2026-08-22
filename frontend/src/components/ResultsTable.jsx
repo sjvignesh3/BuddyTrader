@@ -422,17 +422,25 @@ export default function ResultsTable({ allResults, errors, pool }) {
 
   // ── Column definitions ────────────────────────────────────────────────────
   const BASE_COLS = [
-    { key: 'symbol',                    label: 'Symbol',      align: 'left',   w: '90px'  },
-    { key: 'sector',                    label: 'Sector',      align: 'left',   w: '100px' },
-    { key: 'cap_type',                  label: 'Cap',         align: 'center', w: '50px'  },
-    { key: 'close',                     label: 'Close ₹',     align: 'right',  w: '80px'  },
-    { key: 'dma_200',                   label: '200 DMA',     align: 'right',  w: '80px'  },
-    { key: 'below_200dma_pct',          label: '% Below DMA', align: 'right',  w: '85px'  },
-    { key: 'low_52w',                   label: '52W Low',     align: 'right',  w: '75px'  },
-    { key: 'high_52w',                  label: '52W High',    align: 'right',  w: '75px'  },
-    { key: 'distance_from_52w_low_pct', label: '% From Low',  align: 'right',  w: '75px'  },
-    { key: 'ath',                       label: 'ATH',         align: 'right',  w: '75px'  },
-    { key: 'down_from_ath_pct',         label: '% ↓ ATH',     align: 'right',  w: '70px'  },
+    { key: 'symbol',                    label: 'Symbol',           align: 'left',   w: '90px'  },
+    { key: 'sector',                    label: 'Sector',           align: 'left',   w: '100px' },
+    { key: 'cap_type',                  label: 'Cap',              align: 'center', w: '50px'  },
+    { key: 'close',                     label: 'Close ₹',          align: 'right',  w: '80px'  },
+    { key: 'dma_200',                   label: '200 DMA',          align: 'right',  w: '80px'  },
+    { key: 'below_200dma_pct',          label: '% Below DMA',      align: 'right',  w: '85px'  },
+    { key: 'low_52w',                   label: '52W Low',          align: 'right',  w: '75px'  },
+    { key: 'high_52w',                  label: '52W High',         align: 'right',  w: '75px'  },
+    { key: 'distance_from_52w_low_pct', label: '% From Low',       align: 'right',  w: '75px'  },
+    { key: 'ath',                       label: 'ATH',              align: 'right',  w: '75px'  },
+    { key: 'down_from_ath_pct',         label: '% ↓ ATH',          align: 'right',  w: '70px'  },
+    // Last N-Day Trend column
+    {
+      key:   'price_change_nd_pct',
+      label: 'Last Week Trend',
+      align: 'right',
+      w:     '105px',
+      tip:   'Price % change over the configured trend window (default 7 trading days). Green = gainer, Red = loser. Sort to find Top Gainers / Top Losers.',
+    },
     // Score column
     {
       key:   'fundamental_points',
@@ -593,6 +601,28 @@ export default function ResultsTable({ allResults, errors, pool }) {
         }}>
           {row.down_from_ath_pct?.toFixed(1)}%
         </td>
+        {/* Last Week Trend */}
+        <td style={{ padding: '8px 10px', textAlign: 'right', ...monoStyle }}>
+          {row.price_change_nd_pct != null ? (
+            <span style={{
+              fontWeight: 700,
+              color: row.price_change_nd_pct > 3  ? theme.success
+                   : row.price_change_nd_pct > 0  ? '#3fb95099'
+                   : row.price_change_nd_pct > -3 ? '#f8514999'
+                   : theme.danger,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '2px',
+            }}>
+              <span style={{ fontSize: '9px' }}>
+                {row.price_change_nd_pct > 0 ? '▲' : row.price_change_nd_pct < 0 ? '▼' : '▶'}
+              </span>
+              {row.price_change_nd_pct > 0 ? '+' : ''}{row.price_change_nd_pct.toFixed(2)}%
+            </span>
+          ) : (
+            <span style={{ color: theme.textTertiary }}>—</span>
+          )}
+        </td>
         {/* Score (out of 11) */}
         <td style={{ padding: '8px 10px', textAlign: 'center' }}>
           <ScoreBadge
@@ -734,6 +764,10 @@ export default function ResultsTable({ allResults, errors, pool }) {
           <span>
             <span style={{ fontWeight: 700, color: '#58a6ff' }}>Score (out of 11)</span>
             {' '}— fundamental score from screener cache · <span style={{ color: theme.textTertiary }}>— = not cached</span>
+          </span>
+          <span>
+            <span style={{ color: theme.success, fontWeight: 700 }}>▲ Last Week Trend</span>
+            {' '}— % price move vs N trading days ago · sort ▲▼ to find Top Gainers / Top Losers
           </span>
         </div>
       )}
@@ -919,7 +953,7 @@ export default function ResultsTable({ allResults, errors, pool }) {
         )}
       </div>
 
-      {/* ── Score legend ── */}
+      {/* ── Score + Trend legend ── */}
       <div style={{
         marginTop: '8px', fontSize: '10px', color: theme.textTertiary,
         display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap',
@@ -944,6 +978,12 @@ export default function ResultsTable({ allResults, errors, pool }) {
         <span>
           <span style={{ fontWeight: 700 }}>—</span>
           {' '}= Not in screener cache · run Screener to populate
+        </span>
+        <span style={{ borderLeft: '1px solid rgba(88,166,255,0.2)', paddingLeft: '10px' }}>
+          <span style={{ fontWeight: 700, color: '#58a6ff' }}>Last Week Trend:</span>
+          {' '}
+          <span style={{ color: '#3fb950', fontWeight: 700 }}>▲ green</span> = gainer ·{' '}
+          <span style={{ color: '#f85149', fontWeight: 700 }}>▼ red</span> = loser · sort to find Top Gainers / Top Losers
         </span>
         <span style={{ marginLeft: 'auto', color: '#58a6ff', fontWeight: 600 }}>
           ↕ Click column header to sort
