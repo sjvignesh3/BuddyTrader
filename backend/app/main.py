@@ -19,6 +19,13 @@ from .api.routes import router
 from .services.screener_data_fetcher import _login, _get_credentials
 import threading
 
+# Mangum wraps FastAPI for Vercel/AWS Lambda serverless environments
+try:
+    from mangum import Mangum
+    _mangum_available = True
+except ImportError:
+    _mangum_available = False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -69,3 +76,7 @@ async def startup_event():
 async def serve_dashboard():
     """Serve the scanner dashboard."""
     return FileResponse(STATIC_DIR / "index.html")
+
+
+# Vercel / AWS Lambda handler — Mangum bridges ASGI ↔ serverless
+handler = Mangum(app, lifespan="off") if _mangum_available else None
