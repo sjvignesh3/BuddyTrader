@@ -60,6 +60,7 @@ screener_session.pkl
 *.csv
 # Exception – keep the master universe template tracked
 !UserData/Vicky - Master Template - Master.csv
+!backend/UserData/Vicky - Master Template - Master.csv
 
 
 # ── Frontend (React / Vite) ───────────────────

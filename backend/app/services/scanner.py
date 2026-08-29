@@ -81,6 +81,9 @@ def run_scan(pool_code: str = "F40", strategy_ids: Optional[List[str]] = None,
     rules = load_strategy_rules()
     strategies_config = {s["id"]: s for s in rules.get("strategies", [])}
 
+    # Load configurable trend look-back window (default 7 trading days)
+    trend_days = rules.get("trend_settings", {}).get("trend_days", 7)
+
     # Step 3: Determine applicable strategies
     if strategy_ids:
         applicable = strategy_ids
@@ -166,6 +169,23 @@ def run_scan(pool_code: str = "F40", strategy_ids: Optional[List[str]] = None,
         else:
             pct_to_next_buy = None
 
+        # ── Last N-Day Trend ─────────────────────────────────────────────────
+        # Uses the SAME 1y OHLCV data already in memory — no extra fetch.
+        # Look back `trend_days` rows in the DataFrame to find the close price
+        # N trading days ago, then compute % change vs today's close.
+        # Positive = stock gained, Negative = stock fell (Top Losers / Gainers).
+        price_change_nd_pct = None
+        try:
+            sym_df = price_data.get(symbol)
+            if sym_df is not None and len(sym_df) > trend_days:
+                # Use AdjClose for a fair comparison (handles dividends/splits)
+                close_series = sym_df["AdjClose"] if "AdjClose" in sym_df.columns else sym_df["Close"]
+                past_close = float(close_series.iloc[-(trend_days + 1)])  # price N days ago
+                if past_close > 0:
+                    price_change_nd_pct = round(((curr_close - past_close) / past_close) * 100, 2)
+        except Exception as _trend_err:
+            logger.debug(f"Trend calc error for {symbol}: {_trend_err}")
+
         stock_result = {
             "symbol": symbol,
             "sector": stock_info[symbol].get("sector", ""),
@@ -190,6 +210,9 @@ def run_scan(pool_code: str = "F40", strategy_ids: Optional[List[str]] = None,
             "days_since_last_rally":         metrics.get("days_since_last_rally"),
             "total_valid_rallies_in_window": metrics.get("total_valid_rallies_in_window", 0),
             "pct_to_next_buy":               pct_to_next_buy,
+            # ── Last N-Day Trend ──────────────────────────────────────────────────
+            "price_change_nd_pct":           price_change_nd_pct,  # % change vs N trading days ago
+            "trend_days":                    trend_days,           # configured look-back window
             # ──────────────────────────────────────────────────────────────────────
             "strategy_results": [],
             "best_status": "NO_SIGNAL",

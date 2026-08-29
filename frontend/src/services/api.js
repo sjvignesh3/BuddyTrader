@@ -2,7 +2,12 @@
  * API service - communicates with the FastAPI backend.
  */
 
-const BASE_URL = '/api';
+// In production (Render), VITE_API_URL points to the deployed backend.
+// e.g. https://buddy-backend.onrender.com
+// In local dev, leave VITE_API_URL unset and the Vite proxy handles /api → localhost:8000.
+const BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api';
 
 /**
  * Internal fetch wrapper that gives meaningful errors instead of
