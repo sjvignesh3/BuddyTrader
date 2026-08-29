@@ -523,7 +523,7 @@ kill -9 $(lsof -ti :3000) 2>/dev/null && echo "Port 3000 cleared" || echo "Port 
 
 ```bash
 cd /home/workspace/Buddy/backend
-python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+py -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
 ```
 
 **Expected output:**

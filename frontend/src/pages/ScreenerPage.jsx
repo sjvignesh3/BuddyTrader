@@ -506,7 +506,7 @@ export default function ScreenerPage() {
             }}
           >
             <span style={{ fontSize: '13px' }}>{forceRefresh ? '🔄' : '📦'}</span>
-            {forceRefresh ? 'Force Refresh: ON' : 'Use Cache'}
+            {forceRefresh ? 'Force Refresh: ON' : 'Hard Refresh'}
           </button>
 
           {/* ── Run Screener button ───────────────────────────────── */}
