@@ -139,11 +139,11 @@ def fetch_yfinance(symbol: str, yf_ticker: str) -> dict:
         try:
             hist = ticker.history(period="5y", interval="1d", auto_adjust=True)
             if not hist.empty:
-                # ATH = max adjusted high over 5y
-                out["ath_5y"]  = round(float(hist["High"].max()), 2)
-                # 200 DMA
+                # ATH = max adjusted high over 5y (skip NaN tail rows)
+                out["ath_5y"]  = round(float(hist["High"].dropna().max()), 2)
+                # 200 DMA — use dropna() because last row may be NaN on non-trading days
                 if len(hist) >= 200:
-                    out["dma_200"] = round(float(hist["Close"].rolling(200).mean().iloc[-1]), 2)
+                    out["dma_200"] = round(float(hist["Close"].rolling(200).mean().dropna().iloc[-1]), 2)
 
                 # 5Y avg PE reconstruction:
                 # We have daily Close. We need historical EPS.
