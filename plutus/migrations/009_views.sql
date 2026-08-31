@@ -30,12 +30,24 @@ SELECT DISTINCT ON (s.id)
        ds.price_change_nd_pct,
        (SELECT COUNT(*) FROM trades t
           WHERE t.symbol = s.symbol AND t.status = 'OPEN') AS open_positions
+-- Join by symbol: the sync worker upserts snapshots keyed by symbol and
+-- does not resolve stock_id, so an id join would never match a row.
 FROM   stocks s
-LEFT JOIN daily_snapshots ds ON ds.stock_id = s.id
+LEFT JOIN daily_snapshots ds ON ds.symbol = s.symbol
 ORDER BY s.id, ds.snapshot_date DESC NULLS LAST;
 
 -- Latest fundamental per stock --------------------------------------
+-- Keyed by symbol (stock_id is nullable — the worker writes by symbol).
 CREATE OR REPLACE VIEW v_fundamentals_latest AS
-SELECT DISTINCT ON (stock_id) *
+SELECT DISTINCT ON (symbol) *
 FROM   fundamentals
-ORDER BY stock_id, quarter_end_date DESC;
+ORDER BY symbol, quarter_end_date DESC;
+
+-- ---------------------------------------------------------------
+-- Views must run with the CALLER's privileges, not the owner's.
+-- Without security_invoker, Postgres executes the view as its
+-- (superuser) owner and SKIPS base-table RLS — the trades subquery
+-- in v_stocks_latest would leak open-position counts to anon.
+-- ---------------------------------------------------------------
+ALTER VIEW v_stocks_latest       SET (security_invoker = true);
+ALTER VIEW v_fundamentals_latest SET (security_invoker = true);

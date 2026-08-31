@@ -13,7 +13,6 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Dict
 
-from plutus.registry.types import to_decimal
 from plutus.scan.base import (
     STATUS_BUY_ZONE,
     STATUS_ERROR,
@@ -21,6 +20,7 @@ from plutus.scan.base import (
     STATUS_OPPORTUNITY,
     Strategy,
     StrategyResult,
+    dec_or_default,
 )
 
 
@@ -82,12 +82,10 @@ class EnvelopeStrategy(Strategy):
 
         # -- resolve thresholds ---------------------------------------------
         inputs = (config or {}).get("inputs", {}) or {}
-        buy_zone_pct = to_decimal(
-            inputs.get("buy_zone_below_dma_pct")
-        ) or DEFAULT_BUY_ZONE_PCT
-        opportunity_pct = to_decimal(
-            inputs.get("opportunity_below_dma_pct")
-        ) or DEFAULT_OPPORTUNITY_PCT
+        buy_zone_pct = dec_or_default(
+            inputs.get("buy_zone_below_dma_pct"), DEFAULT_BUY_ZONE_PCT)
+        opportunity_pct = dec_or_default(
+            inputs.get("opportunity_below_dma_pct"), DEFAULT_OPPORTUNITY_PCT)
         score_map = (config or {}).get("score_map") or DEFAULT_SCORE_MAP
 
         # -- decision -------------------------------------------------------

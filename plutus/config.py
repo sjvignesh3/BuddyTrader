@@ -75,6 +75,32 @@ class Settings:
     log_level: str
 
 
+def _load_dotenv_files() -> None:
+    """Load ``plutus/.env`` (and a repo-root ``.env`` if present).
+
+    Real environment variables always win (``override=False``) so CI and
+    GitHub Actions secrets are never shadowed by a stray local file.
+    python-dotenv is a hard dependency (see requirements.txt), but we
+    degrade gracefully if it is absent so minimal images still boot.
+
+    Set PLUTUS_SKIP_DOTENV=1 to disable file loading entirely (used by
+    tests that assert fail-fast behaviour on a machine with a real .env).
+    """
+    if os.environ.get("PLUTUS_SKIP_DOTENV"):
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # pragma: no cover - dotenv is in requirements
+        return
+    package_dir = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (
+        os.path.join(package_dir, ".env"),
+        os.path.join(os.path.dirname(package_dir), ".env"),
+    ):
+        if os.path.isfile(candidate):
+            load_dotenv(candidate, override=False)
+
+
 def _load() -> Settings:
     """Build the ``Settings`` singleton from the environment.
 
@@ -84,6 +110,7 @@ def _load() -> Settings:
     Tests can construct their own ``Settings`` and monkey-patch
     ``plutus.config.settings`` — do not call ``_load`` in tests.
     """
+    _load_dotenv_files()
     return Settings(
         supabase_url=_require("PLUTUS_SUPABASE_URL"),
         supabase_service_key=_require("PLUTUS_SUPABASE_SERVICE_KEY"),

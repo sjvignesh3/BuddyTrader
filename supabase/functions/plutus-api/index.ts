@@ -26,19 +26,23 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 // loss. We stringify every value we know is money/ratio. Booleans and
 // integers pass through untouched.
 
+// Exact NUMERIC column names from plutus/migrations/003, 004 and 006.
 const MONEY_KEYS = new Set<string>([
   "open", "high", "low", "close", "adj_close",
+  "market_cap", "pe_current", "forward_pe", "pb_current",
+  "debt_to_equity_pct", "ebitda_ttm", "revenue_ttm", "profit_margin_pct",
+  "high_52w", "low_52w",
   "dma_200", "below_200dma_pct",
-  "week_52_high", "week_52_low",
-  "distance_from_52w_high_pct", "distance_from_52w_low_pct",
-  "ath_price", "gap_from_ath_pct",
-  "rally_pct", "rally_low", "rally_high",
-  "pe", "pb", "pe_5yr_avg", "pb_5yr_avg",
-  "market_cap_cr",
-  "score",
-  "roce", "roe", "promoter_holding_pct", "institutional_holding_pct",
-  "public_holding_pct", "promoter_pledging_pct",
-  "eps_ttm", "book_value_per_share", "net_income", "shares_outstanding",
+  "ath", "fall_from_ath_pct",
+  "distance_from_52w_low_pct", "distance_from_52w_high_pct",
+  "last_rally_pct", "last_rally_low", "last_rally_high",
+  "price_change_nd_pct",
+  "sales", "pbt", "net_profit", "operating_margin_pct",
+  "promoter_holding_pct", "institutional_pct", "public_holding_pct",
+  "promoter_pledging_pct",
+  "roce", "roe", "net_debt_to_equity",
+  "pe_5y_avg", "pb_5y_avg",
+  "score", "best_score", "duration_seconds",
 ]);
 
 function toWire(value: unknown): unknown {
@@ -85,11 +89,15 @@ function error(status: number, detail: string): Response {
   return json({ error: detail }, status);
 }
 
-// ─── Supabase client (service role — reads only, RLS still applies) ────────
+// ─── Supabase client (anon key — RLS-enforced, read-only) ──────────────────
+// This is a public read-only endpoint, so we prefer the anon key: RLS
+// policies apply and only whitelisted reads succeed. The service-role key
+// (which BYPASSES RLS) is used only as a last-resort fallback for
+// environments where the anon key is not injected.
 function getClient(): SupabaseClient {
   const url = Deno.env.get("SUPABASE_URL");
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
-    ?? Deno.env.get("SUPABASE_ANON_KEY");
+  const key = Deno.env.get("SUPABASE_ANON_KEY")
+    ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) throw new Error("Supabase env not configured");
   return createClient(url, key, { auth: { persistSession: false } });
 }
@@ -113,13 +121,12 @@ async function listStocks(
     "id,symbol,name,sector,industry,exchange,active,pools,cap_type_manual,metadata",
   );
   if (opts.activeOnly) q = q.eq("active", true);
+  // Filter in the DB (PostgREST `pools=cs.{<pool>}`) BEFORE applying the
+  // limit — client-side filtering after `.limit()` would silently drop rows.
+  if (opts.pool) q = q.contains("pools", [opts.pool]);
   const { data, error: err } = await q.limit(opts.limit);
   if (err) throw err;
-  let rows = data ?? [];
-  if (opts.pool) {
-    rows = rows.filter((r: any) => (r.pools ?? []).includes(opts.pool));
-  }
-  return rows;
+  return data ?? [];
 }
 
 async function getStock(cli: SupabaseClient, symbol: string) {
@@ -220,16 +227,26 @@ async function latestFundamentals(cli: SupabaseClient, symbol: string) {
 }
 
 // ─── Router ─────────────────────────────────────────────────────────────────
-// The Edge Function runtime mounts this handler at
-// `/functions/v1/plutus-api/*`. We strip that prefix and treat what remains
-// as the API path, so URLs match the FastAPI version 1-for-1.
+// The handler is reachable under different mount prefixes depending on the
+// entry point:
+//   local CLI          : /functions/v1/plutus-api/api/...
+//   prod functions host: /plutus-api/api/...   (https://<ref>.functions.supabase.co)
+//   prod gateway       : /functions/v1/plutus-api/api/...
+// Rather than stripping a hard-coded prefix, we locate the first "/api/"
+// segment and route on everything from there, so URLs match the FastAPI
+// version 1-for-1 in every environment. A pathname with no "/api/" segment
+// is treated as the function root (health) when it reduces to "" or
+// "/health" after removing the known mount prefixes.
 
-const MOUNT_PREFIX = "/functions/v1/plutus-api";
-
-function stripMount(pathname: string): string {
-  return pathname.startsWith(MOUNT_PREFIX)
-    ? pathname.slice(MOUNT_PREFIX.length) || "/"
-    : pathname;
+function apiPath(pathname: string): string {
+  const idx = pathname.indexOf("/api/");
+  if (idx !== -1) return pathname.slice(idx);
+  const tail = pathname
+    .replace(/^\/functions\/v1(?=\/|$)/, "")
+    .replace(/^\/plutus-api(?=\/|$)/, "")
+    .replace(/\/+$/, "");
+  if (tail === "" || tail === "/health") return "/";
+  return pathname; // unknown → falls through to 404 with the original path
 }
 
 function intParam(url: URL, key: string, dflt: number, min: number, max: number): number {
@@ -255,10 +272,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   const url = new URL(req.url);
-  const path = stripMount(url.pathname);
+  const path = apiPath(url.pathname);
 
   // ── Health (no DB call) ──────────────────────────────────────────────
-  if (path === "/api/health" || path === "/health" || path === "/") {
+  if (path === "/api/health" || path === "/") {
     return json({ status: "ok", service: "plutus-api", version: "0.7.0" });
   }
 

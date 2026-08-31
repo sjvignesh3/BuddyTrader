@@ -77,7 +77,11 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
 
 def _resolve_as_of(raw: Optional[str]) -> date:
     if raw is None:
-        return date.today()
+        # "Today" in IST — the market's calendar — regardless of runner TZ
+        # (GitHub Actions runs in UTC; 18:30+ IST would otherwise date-shift).
+        from datetime import timedelta, timezone
+        ist = timezone(timedelta(hours=5, minutes=30))
+        return datetime.now(tz=ist).date()
     return datetime.strptime(raw, "%Y-%m-%d").date()
 
 
@@ -95,6 +99,8 @@ def main(
 
     if args.symbols:
         symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+        if args.limit is not None:
+            symbols = symbols[:args.limit]
     else:
         loader = load_symbols or _load_symbols_from_db
         try:
@@ -109,6 +115,16 @@ def main(
         return 2
 
     as_of = _resolve_as_of(args.as_of)
+
+    # Wire PLUTUS_YF_TIMEOUT_SECONDS into yfinance's HTTP session so a hung
+    # Yahoo socket cannot stall the whole run. Best-effort — a failure here
+    # must not block the sync.
+    try:
+        from plutus.adapters.yf_client import apply_session_timeout
+        apply_session_timeout()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not apply yfinance session timeout: %s", exc)
+
     w = worker or DailySyncWorker()
     report = w.run_all(symbols, as_of=as_of, dry_run=args.dry_run)
 

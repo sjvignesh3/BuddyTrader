@@ -138,6 +138,41 @@ def extract_holdings(major_holders_df: Any) -> Dict[str, Optional[Decimal]]:
     }
     if major_holders_df is None:
         return out
+
+    # ---- Label-aware path (yfinance >= 0.2.x): DataFrame indexed by
+    # 'insidersPercentHeld' / 'institutionsPercentHeld' with fraction values.
+    # Positional access is version-fragile; prefer labels when present.
+    index_labels = []
+    try:
+        index_labels = [str(x) for x in list(major_holders_df.index)]
+    except Exception:
+        index_labels = []
+    if "insidersPercentHeld" in index_labels or "institutionsPercentHeld" in index_labels:
+        def _by_label(label: str) -> Optional[Decimal]:
+            try:
+                row = major_holders_df.loc[label]
+            except Exception:
+                return None
+            try:
+                cell = row.iloc[0] if hasattr(row, "iloc") else row[0]
+            except Exception:
+                cell = row
+            d = _to_dec_money(cell)
+            if d is None:
+                return None
+            # This yfinance shape is ALWAYS a 0..1 fraction — scale
+            # unconditionally (the [-1,1] heuristic misreads e.g. 0.75%).
+            return round_half_up(d * Decimal(100), _PCT)
+
+        out["promoter_holding_pct"] = _by_label("insidersPercentHeld")
+        out["institutional_pct"] = _by_label("institutionsPercentHeld")
+        p0, i0 = out["promoter_holding_pct"], out["institutional_pct"]
+        if p0 is not None and i0 is not None:
+            pub = Decimal(100) - p0 - i0
+            if Decimal(0) <= pub <= Decimal(100):
+                out["public_holding_pct"] = round_half_up(pub, _PCT)
+        return out
+
     rows: List[Any] = []
     # Duck-type: use iterrows if it's a DataFrame, else assume iterable of rows.
     if hasattr(major_holders_df, "iterrows"):
@@ -275,20 +310,24 @@ def compute_pe_5yr_avg(
         shares = to_decimal(shares_outstanding)
     except Exception:
         return None
-    if shares <= 0:
+    if shares is None or shares <= 0:
         return None
 
-    last_4 = [q for q in list(quarterly_net_income)[:4] if q is not None]
+    # Route every cell through to_decimal — the only sanctioned conversion —
+    # so float NaN cells become None instead of Decimal('NaN').
+    last_4 = [d for d in (_to_dec_money(q) for q in list(quarterly_net_income)[:4])
+              if d is not None]
     if len(last_4) < 4:
         return None
-    ttm_ni = sum((Decimal(str(q)) for q in last_4), Decimal(0))
+    ttm_ni = sum(last_4, Decimal(0))
     if ttm_ni <= 0:
         return None
     ttm_eps = ttm_ni / shares
 
     # Take up to 1260 most-recent closes (approx 5Y trading days).
-    closes = [to_decimal(c) for c in list(daily_closes)[-1260:]
-              if c is not None]
+    closes = [d for d in (to_decimal(c) if c is not None else None
+                          for c in list(daily_closes)[-1260:])
+              if d is not None]
     if not closes:
         return None
     pe_series = [c / ttm_eps for c in closes if c > 0 and ttm_eps > 0]
@@ -309,10 +348,11 @@ def compute_pb_5yr_avg(
         bvps = to_decimal(book_value_per_share)
     except Exception:
         return None
-    if bvps <= 0:
+    if bvps is None or bvps <= 0:
         return None
-    closes = [to_decimal(c) for c in list(daily_closes)[-1260:]
-              if c is not None]
+    closes = [d for d in (to_decimal(c) if c is not None else None
+                          for c in list(daily_closes)[-1260:])
+              if d is not None]
     if not closes:
         return None
     pb_series = [c / bvps for c in closes if c > 0]

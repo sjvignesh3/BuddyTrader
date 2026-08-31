@@ -18,9 +18,20 @@ export default function PoolDetailPage() {
   const scanId = scan.data?.scan?.id;
   const results = useScanResults(scanId, strategy);
 
+  // With "All strategies" a symbol has one result PER strategy — show the
+  // strongest signal, not whichever row happened to arrive last.
   const bySymbol = useMemo(() => {
+    const rank: Record<string, number> = {
+      BUY_ZONE: 7, OPPORTUNITY: 6, VALID: 5, PASS: 4,
+      NO_SIGNAL: 3, INVALID: 2, FAIL: 1, ERROR: 0,
+    };
     const m = new Map<string, ScanResult>();
-    for (const r of results.data?.results ?? []) m.set(r.symbol, r);
+    for (const r of results.data?.results ?? []) {
+      const prev = m.get(r.symbol);
+      if (!prev || (rank[r.status] ?? 0) > (rank[prev.status] ?? 0)) {
+        m.set(r.symbol, r);
+      }
+    }
     return m;
   }, [results.data]);
 
@@ -45,8 +56,8 @@ export default function PoolDetailPage() {
           className="bg-brand-panel ring-1 ring-brand-border rounded-md px-2 py-1 text-sm"
         >
           <option value="">All strategies</option>
-          <option value="envelope">Envelope</option>
-          <option value="week52">52W High/Low</option>
+          <option value="envelope_200dma">Envelope</option>
+          <option value="week52_high_low">52W High/Low</option>
           <option value="rally_20_percent">20% Rally</option>
           <option value="fundamental_screener">Fundamentals</option>
         </select>

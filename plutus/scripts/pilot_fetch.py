@@ -39,10 +39,6 @@ def _serialise_history(df) -> Dict[str, Any]:
     if df is None:
         return {}
     records = []
-    for idx, row in df.reset_index().to_dict(orient="records"):
-        # DataFrame.to_dict(orient="records") returns list already; adapt:
-        pass
-    # Simpler & robust approach:
     reset = df.reset_index()
     for _, row in reset.iterrows():
         rec = {}

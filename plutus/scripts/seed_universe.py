@@ -6,11 +6,17 @@ Usage:
 
 CONTRACT:
   - Idempotent — re-running with the same CSV produces zero net changes.
-  - Pool tags are parsed from the CSV's "Flagship 40 (F40)", "Emerging 40 (E40)",
-    "Smartpick 200 (S200)" and "PlayArea" columns (any non-empty cell = member).
-  - Symbols are read from the *right-hand* Ticker column of the master CSV,
-    because the leftmost column is the display-list (contains cosmetic entries).
-  - `metadata` JSONB captures the remaining CSV columns for lossless round-trip.
+  - The master template holds THREE side-by-side tables. The curated
+    universe is the LEFT-HAND table (columns 0-5):
+        0 List (symbol) | 1 Sector | 2 Short Form (pool code) |
+        3 Category (pool name) | 4 For TV | 5 Market Cap (cap type)
+    This matches the legacy loader `backend/app/core/universe.py`. The
+    right-hand "Ticker" column is the ALL-LISTED NSE dump (~4800 rows) and
+    the "Flagship 40 (F40)"/"Emerging 40 (E40)"/... marker columns belong
+    to the strategy × pool matrix — neither describes the curated universe.
+  - A symbol appearing under several pools gets ALL of them merged into
+    its `pools` array.
+  - `metadata` JSONB captures the remaining left-table columns.
 """
 from __future__ import annotations
 
@@ -20,20 +26,23 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from plutus.adapters.supabase_client import bulk_upsert
 from plutus.adapters.validators import sanity_check_symbol
 
 logger = logging.getLogger("plutus.seed_universe")
 
-# CSV column names as they appear in the master template.
-COL_TICKER = "Ticker"
-COL_CAP_TYPE = "Cap Type"
-COL_POOL_F40 = "Flagship 40 (F40)"
-COL_POOL_E40 = "Emerging 40 (E40)"
-COL_POOL_S200 = "Smartpick 200 (S200)"
-COL_POOL_PLAY = "All listed"  # PlayArea membership column
+# Left-table positional columns (the header names collide across the three
+# side-by-side tables, so positional access is the only reliable parse).
+IDX_SYMBOL = 0     # "List"
+IDX_SECTOR = 1     # "Sector"
+IDX_POOL = 2       # "Short Form"  — F40 / E40 / S200
+IDX_POOL_NAME = 3  # "Category"
+IDX_FOR_TV = 4     # "For TV"
+IDX_CAP_TYPE = 5   # "Market Cap"  — manual cap classification
+
+KNOWN_POOLS = {"F40", "E40", "S200", "PlayArea"}
 
 
 def _clean(value: Optional[str]) -> Optional[str]:
@@ -43,21 +52,20 @@ def _clean(value: Optional[str]) -> Optional[str]:
     return v or None
 
 
-def _bool_marker(value: Optional[str]) -> bool:
-    """CSV marker cells ('X', 'x', '1', 'yes') mean membership."""
-    v = _clean(value)
-    if not v:
-        return False
-    return v.lower() in {"x", "1", "y", "yes", "true"}
-
-
-def parse_row(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def parse_row(cells: Sequence[str]) -> Optional[Dict[str, Any]]:
     """
-    Convert a CSV row into a `stocks` row dict.
-    Returns None for rows with no ticker (blank filler rows in the template).
+    Convert one positional CSV row (left table) into a `stocks` row dict.
+    Returns None for blank filler rows or rows without a pool code.
     """
-    ticker_raw = _clean(raw.get(COL_TICKER))
-    if not ticker_raw:
+    if len(cells) < 6:
+        return None
+    ticker_raw = _clean(cells[IDX_SYMBOL])
+    pool_code = _clean(cells[IDX_POOL])
+    if not ticker_raw or not pool_code:
+        return None
+    if pool_code not in KNOWN_POOLS:
+        logger.warning("skipping row with unknown pool code %r (symbol %r)",
+                       pool_code, ticker_raw)
         return None
 
     # Accept 'RELIANCE' or 'RELIANCE.NS' from CSV; store canonical (with .NS)
@@ -71,48 +79,50 @@ def parse_row(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         logger.warning("skipping invalid ticker %r: %s", ticker_raw, exc)
         return None
 
-    pools: List[str] = []
-    if _bool_marker(raw.get(COL_POOL_F40)):
-        pools.append("F40")
-    if _bool_marker(raw.get(COL_POOL_E40)):
-        pools.append("E40")
-    if _bool_marker(raw.get(COL_POOL_S200)):
-        pools.append("S200")
-    if _bool_marker(raw.get(COL_POOL_PLAY)):
-        pools.append("PlayArea")
-
-    metadata = {
-        k: v for k, v in raw.items()
-        if k not in {COL_TICKER, COL_CAP_TYPE,
-                     COL_POOL_F40, COL_POOL_E40,
-                     COL_POOL_S200, COL_POOL_PLAY}
-        and _clean(v) is not None
-    }
+    metadata: Dict[str, Any] = {}
+    pool_name = _clean(cells[IDX_POOL_NAME])
+    if pool_name:
+        metadata["pool_name"] = pool_name
+    for_tv = _clean(cells[IDX_FOR_TV])
+    if for_tv:
+        metadata["for_tv"] = for_tv
 
     return {
         "symbol": symbol,
+        "sector": _clean(cells[IDX_SECTOR]),
         "exchange": "NSE" if symbol.endswith(".NS") else "BSE",
         "active": True,
-        "pools": pools,
-        "cap_type_manual": _clean(raw.get(COL_CAP_TYPE)),
+        "pools": [pool_code],
+        "cap_type_manual": _clean(cells[IDX_CAP_TYPE]),
         "metadata": metadata,
     }
 
 
 def load_csv(path: Path) -> List[Dict[str, Any]]:
-    """Read master CSV, return list of parsed stock rows (deduped by symbol)."""
+    """Read master CSV, return list of parsed stock rows.
+
+    Duplicate symbols MERGE their pool arrays (a stock can belong to several
+    pools); the latest row wins for the scalar columns.
+    """
     if not path.exists():
         raise FileNotFoundError(path)
 
     seen: Dict[str, Dict[str, Any]] = {}
     with path.open(encoding="utf-8-sig", newline="") as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
-            parsed = parse_row(row)
+        reader = csv.reader(fh)
+        next(reader, None)  # header row
+        for cells in reader:
+            parsed = parse_row(cells)
             if parsed is None:
                 continue
-            # Later duplicates overwrite earlier — CSV is authoritative bottom-up.
-            seen[parsed["symbol"]] = parsed
+            prior = seen.get(parsed["symbol"])
+            if prior is not None:
+                # Merge pools; keep the FIRST row's scalar columns — the
+                # earlier (F40/E40) sections carry the curated sector names,
+                # later S200 rows hold volatility labels in that column.
+                prior["pools"] = list(dict.fromkeys(prior["pools"] + parsed["pools"]))
+            else:
+                seen[parsed["symbol"]] = parsed
     return list(seen.values())
 
 

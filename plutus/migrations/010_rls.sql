@@ -14,7 +14,22 @@
 -- Idempotent: safe to re-apply. Every policy is dropped before recreation.
 -- =============================================================
 
--- Enable RLS on every persistent table. Views inherit from their base tables.
+-- Portability guard: `anon` / `service_role` exist on every Supabase
+-- database but not on a bare Postgres. Create them (NOLOGIN) if absent
+-- so this file also applies cleanly to scratch/CI databases.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+        CREATE ROLE anon NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE ROLE service_role NOLOGIN BYPASSRLS;
+    END IF;
+END $$;
+
+-- Enable RLS on every persistent table.
+-- NOTE: views do NOT inherit RLS by default — they run as their owner.
+-- 009_views.sql sets security_invoker=true on both views for that reason.
 ALTER TABLE stocks           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pools            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE daily_snapshots  ENABLE ROW LEVEL SECURITY;
@@ -82,6 +97,30 @@ CREATE POLICY sj_service_write ON sync_jobs  FOR ALL    TO service_role USING (t
 -- Authenticated admin write policies are added in Stage 8 with the journal.
 DROP POLICY IF EXISTS trades_service_write ON trades;
 CREATE POLICY trades_service_write ON trades  FOR ALL    TO service_role USING (true) WITH CHECK (true);
+
+-- -----------------------------------------------------------------
+-- Table privileges. Newer Supabase projects (cloud and CLI) no longer
+-- auto-grant privileges on new public tables to the API roles — RLS
+-- policies alone are not enough; without these GRANTs every request
+-- fails with 42501 "permission denied".
+-- RLS still governs row visibility on top of these grants.
+-- -----------------------------------------------------------------
+GRANT USAGE ON SCHEMA public TO anon, service_role;
+
+-- anon: read-only on the read tables (trades intentionally excluded).
+GRANT SELECT ON stocks, pools, daily_snapshots, fundamentals,
+                strategy_configs, scans, scan_results, sync_jobs
+    TO anon;
+
+-- service_role: full read/write everywhere + sequence access for BIGSERIAL.
+GRANT SELECT, INSERT, UPDATE, DELETE ON stocks, pools, daily_snapshots,
+    fundamentals, strategy_configs, scans, scan_results, sync_jobs, trades
+    TO service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
+
+-- Views (recreated by 009; grants must be re-applied after each recreate,
+-- so 009 is always followed by 010 in the apply order).
+GRANT SELECT ON v_stocks_latest, v_fundamentals_latest TO anon, service_role;
 
 -- =============================================================
 -- Verification (non-destructive): count policies per table.

@@ -10,10 +10,12 @@ DESIGN CONTRACT:
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import logging
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from plutus.adapters.result import Result
@@ -83,6 +85,28 @@ def _chunked(rows: Sequence[Dict[str, Any]], size: int) -> Iterable[List[Dict[st
 
 
 # -----------------------------------------------------------------------------
+# Wire coercion — PostgREST bodies go through json.dumps, which cannot
+# serialise Decimal / date / datetime. Money-safety contract: Decimals are
+# sent as STRINGS (Postgres casts them to NUMERIC losslessly); dates as ISO.
+# -----------------------------------------------------------------------------
+
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (_dt.datetime, _dt.date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json_safe_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(v) for v in value]
+    return value
+
+
+def _json_safe_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [{k: _json_safe_value(v) for k, v in row.items()} for row in rows]
+
+
+# -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
 
@@ -115,6 +139,7 @@ def bulk_upsert(table: str,
 
     cli = client if client is not None else get_client()
     conflict_str = ",".join(conflict_cols)
+    rows = _json_safe_rows(rows)
     started = time.monotonic()
     succeeded = 0
     failed = 0
@@ -158,7 +183,12 @@ def _upsert_chunk_with_retry(client: Any, table: str,
             err = f"{type(exc).__name__}: {exc}"
             _log("supabase.upsert_err", table=table, attempt=attempt,
                  chunk_size=len(chunk), error=err)
-            if attempt >= MAX_UPSERT_ATTEMPTS:
+            # Schema/constraint errors (PG class 42/23, e.g. 42P10 bad
+            # ON CONFLICT, 23502 NOT NULL) are permanent — retrying only
+            # burns time. Fail the chunk immediately.
+            code = str(getattr(exc, "code", "") or "")
+            permanent = code[:2] in ("42", "23", "22")
+            if permanent or attempt >= MAX_UPSERT_ATTEMPTS:
                 errors.append(err)
                 return False
             time.sleep(BACKOFF_SECONDS * attempt)

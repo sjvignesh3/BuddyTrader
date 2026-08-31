@@ -62,7 +62,8 @@ def _resolve_as_of(raw):
 
 
 def _load_csv(path: str) -> List[dict]:
-    with open(path, newline="") as fh:
+    # utf-8-sig: consistent with seed_universe; never locale-dependent.
+    with open(path, newline="", encoding="utf-8-sig") as fh:
         return list(csv.DictReader(fh))
 
 
@@ -108,6 +109,14 @@ def main(
         return 2
 
     as_of = _resolve_as_of(args.as_of)
+
+    # Clamp yfinance's HTTP session timeout (PLUTUS_YF_TIMEOUT_SECONDS).
+    try:
+        from plutus.adapters.yf_client import apply_session_timeout
+        apply_session_timeout()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not apply yfinance session timeout: %s", exc)
+
     w = worker or QuarterlySyncWorker()
     report = w.run_all(symbols, as_of=as_of, dry_run=args.dry_run)
 

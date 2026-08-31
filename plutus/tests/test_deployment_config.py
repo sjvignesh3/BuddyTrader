@@ -89,10 +89,27 @@ class TestEdgeFunction:
         assert r"\/api\/fundamentals\/" in edge_src  # /:symbol/latest
 
     def test_money_keys_stringified(self, edge_src):
-        # Money-safety: MONEY_KEYS set must include the critical numerics.
-        for key in ("close", "score", "pe", "roce", "market_cap_cr"):
+        # Money-safety: MONEY_KEYS must name REAL schema columns
+        # (migrations 003/004/006) — not the legacy field names.
+        for key in (
+            "close", "adj_close", "market_cap",
+            "pe_current", "forward_pe", "pb_current",
+            "high_52w", "low_52w", "dma_200", "below_200dma_pct",
+            "ath", "fall_from_ath_pct",
+            "distance_from_52w_low_pct", "distance_from_52w_high_pct",
+            "last_rally_pct", "last_rally_low", "last_rally_high",
+            "sales", "pbt", "net_profit", "roce", "roe",
+            "net_debt_to_equity", "pe_5y_avg", "pb_5y_avg",
+            "score", "best_score",
+        ):
             assert f'"{key}"' in edge_src, \
                 f"MONEY_KEYS missing critical field: {key}"
+        # Stale names from a schema that never shipped must be gone.
+        for stale in ("market_cap_cr", "week_52_high", "ath_price",
+                      "gap_from_ath_pct", "rally_pct", "pe_5yr_avg",
+                      "eps_ttm", "book_value_per_share"):
+            assert f'"{stale}"' not in edge_src, \
+                f"MONEY_KEYS contains stale non-column name: {stale}"
 
 
 class TestGithubActionsCron:

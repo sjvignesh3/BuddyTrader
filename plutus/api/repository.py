@@ -61,11 +61,20 @@ def list_stocks(
     )
     if active_only:
         q = q.eq("active", True)
-    res = q.limit(limit).execute()
-    rows = _rows(res)
+    # Filter BEFORE limiting: a Python-side pool filter after .limit() would
+    # truncate the universe first and return far fewer pool rows than asked.
+    # .contains uses the GIN index on `pools`.
     if pool_code:
-        rows = [r for r in rows if pool_code in (r.get("pools") or [])]
-    return rows
+        try:
+            q = q.contains("pools", [pool_code])
+        except (AttributeError, TypeError):
+            # Fake clients in tests may not implement .contains — fall back
+            # to the Python-side filter (test data is small).
+            res = q.limit(limit).execute()
+            rows = _rows(res)
+            return [r for r in rows if pool_code in (r.get("pools") or [])]
+    res = q.limit(limit).execute()
+    return _rows(res)
 
 
 def get_stock(symbol: str, client: Optional[Any] = None) -> Optional[Dict[str, Any]]:

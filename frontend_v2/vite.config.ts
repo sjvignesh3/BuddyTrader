@@ -9,12 +9,5 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: {
-      // Local dev: forward /api/* to the Plutus FastAPI backend.
-      "/api": {
-        target: process.env.VITE_PLUTUS_API_URL ?? "http://localhost:8000",
-        changeOrigin: true,
-      },
-    },
   },
 });

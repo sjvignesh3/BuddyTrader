@@ -31,7 +31,11 @@ def _severity_for(run_report_json: Dict[str, Any]) -> Optional[str]:
     # Total failure — nothing landed.
     if total > 0 and failed >= total:
         return "error"
-    # Partial failure.
+    # Upsert errors mean computed data did NOT land in the DB — that is an
+    # error, not a degradation (Stage 8 spec: non-empty upsert_errors ⇒ error).
+    if upsert_errors:
+        return "error"
+    # Partial symbol failure.
     return "warning"
 
 
@@ -42,7 +46,8 @@ def _summary_lines(run_report_json: Dict[str, Any]) -> list[str]:
         f"total:    {run_report_json.get('symbols_total')}",
         f"ok:       {run_report_json.get('symbols_ok')}",
         f"failed:   {run_report_json.get('symbols_failed')}",
-        f"written:  {run_report_json.get('snapshots_written')}",
+        # Daily reports use 'snapshots_written'; quarterly uses 'rows_written'.
+        f"written:  {run_report_json.get('snapshots_written', run_report_json.get('rows_written'))}",
         f"duration: {run_report_json.get('duration_ms')} ms",
     ]
     upsert = run_report_json.get("upsert_errors") or []

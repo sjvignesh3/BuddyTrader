@@ -11,8 +11,11 @@ pandas>=2.0,<3.0
 requests>=2.31,<3.0
 
 # Supabase client
+# NOTE: postgrest's upper bound must track supabase's own requirement —
+# supabase >= 2.15 needs postgrest >= 1.0 (the old `<0.20` pin broke every
+# live upsert with "unexpected keyword argument 'http_client'").
 supabase>=2.5.0,<3.0
-postgrest>=0.16.0,<0.20
+postgrest>=0.16.0,<2.0
 
 # Local API (dev + tests only in prod topology)
 fastapi>=0.100,<0.120

@@ -1,5 +1,5 @@
 """
-20% Rally Strategy — bit-for-bit port of
+20% Rally Strategy ??? bit-for-bit port of
 backend/app/strategies/rally_20_percent.py.
 
 The heavy lifting (streak detection, pivot picking) is done upstream in
@@ -16,7 +16,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Dict
 
-from plutus.registry.types import to_decimal
+from plutus.scan.base import dec_or_default
 from plutus.scan.base import (
     STATUS_ERROR,
     STATUS_INVALID,
@@ -44,7 +44,7 @@ class Rally20PercentStrategy(Strategy):
         symbol = snapshot.get("symbol", "?")
         errors: list[str] = []
 
-        # Rally block is optional on the snapshot — if the metrics pipeline
+        # Rally block is optional on the snapshot ??? if the metrics pipeline
         # could not build it (e.g. short history), we return INVALID with a
         # clean note rather than an error.
         try:
@@ -68,9 +68,8 @@ class Rally20PercentStrategy(Strategy):
         days_since = snapshot.get("days_since_last_rally")
 
         inputs = (config or {}).get("inputs", {}) or {}
-        threshold = to_decimal(
-            inputs.get("movement_threshold_pct")
-        ) or DEFAULT_THRESHOLD_PCT
+        threshold = dec_or_default(
+            inputs.get("movement_threshold_pct"), DEFAULT_THRESHOLD_PCT)
         window_days = int(
             inputs.get("validity_window_days", DEFAULT_WINDOW_DAYS)
         )

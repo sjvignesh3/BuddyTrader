@@ -241,7 +241,15 @@ python -m pytest plutus/ --collect-only -q 2>/dev/null | tail -1
 
 ### 4.3 Start the local Supabase stack
 
-The `supabase/` directory at repo root is already initialised. You **do not** need to run `supabase init`.
+The `supabase/` directory at repo root is initialised (`supabase/config.toml`,
+project id `plutus`). You **do not** need to run `supabase init`.
+
+> ⚠️ **Port remap:** this repo's local stack runs on **55321–55329**
+> (API 55321, DB 55322, Studio 55323, Mailpit 55324) instead of the CLI
+> defaults 54321–54324, so it can coexist with other Supabase projects on
+> the same machine. Wherever this runbook or the Supabase docs mention a
+> `54xxx` port, substitute the matching `55xxx` port. The `plutus/.env`
+> and `frontend_v2/.env.local` examples below already use 55xxx.
 
 ```bash
 supabase start
@@ -538,8 +546,8 @@ python -m plutus.scripts.seed_universe \
 ```json
 {
   "dry_run": false,
-  "row_count": 247,
-  "succeeded": 247,
+  "row_count": 442,
+  "succeeded": 442,
   "failed": 0,
   "errors": [],
   "latency_ms": 312
@@ -705,7 +713,7 @@ Exit code 0 = success. Exit code 1 = partial errors. Exit code 2 = no snapshots 
 - `envelope_200dma` — buy zone when price is between 200-DMA and envelope
 - `week52_high_low` — breakout/breakdown relative to 52-week range
 - `rally_20_percent` — validates a ≥20% rally with pullback structure
-- `fundamental_filter` — ROCE / ROE / pledging screen
+- `fundamental_screener` — ROCE / ROE / pledging screen
 
 Run all four pools sequentially:
 
@@ -977,11 +985,22 @@ python -m plutus.scripts.run_quarterly_sync \
 
 The quarterly sync fetches ROCE, ROE, promoter pledging, and EPS from yfinance's `.info` dict and upserts into `fundamentals`. It is slower than the daily sync (one HTTP call per symbol with a heavier payload).
 
-**Manual overrides (CSV upload for screener.in corrections):**
+**Manual overrides (CSV upload for ROCE / ROE / pledging corrections):**
+
+The overrides CSV is NOT the master template — it must carry `symbol` and
+`quarter_end_date` columns plus any of `roce`, `roe`,
+`promoter_pledging_pct`, `promoter_holding_pct`. Example
+`UserData/fundamental_overrides.csv`:
+
+```csv
+symbol,quarter_end_date,roce,roe,promoter_pledging_pct
+RELIANCE.NS,2026-06-30,9.8,8.5,0.0
+TCS.NS,2026-06-30,64.6,52.4,0.0
+```
 
 ```bash
 python -m plutus.scripts.run_quarterly_sync \
-  --overrides-csv "UserData/Vicky - Master Template - Master.csv"
+  --overrides-csv "UserData/fundamental_overrides.csv"
 ```
 
 ---
@@ -1601,7 +1620,7 @@ curl -s "$BASE/api/pools"
 # ──────────────────────────────────────────────
 # 3. List all active stocks
 curl -s "$BASE/api/stocks"
-# Response: {"stocks":[...],"count":247}
+# Response: {"stocks":[...],"count":442}
 
 # 4. Filter stocks by pool
 curl -s "$BASE/api/stocks?pool=F40"

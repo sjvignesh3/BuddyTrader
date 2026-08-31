@@ -89,4 +89,5 @@ class TestRlsMigration:
 
     def test_no_public_grant_anywhere(self, sql):
         # PUBLIC role is a common footgun — must never be granted here.
-        assert "TO public" not in sql.lower(), "public role must never be granted"
+        # (Case-insensitive: compare lowered needle against lowered haystack.)
+        assert "to public" not in sql.lower(), "public role must never be granted"

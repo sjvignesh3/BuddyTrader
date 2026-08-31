@@ -101,14 +101,16 @@ def test_total_failure_is_error() -> None:
     assert "+290 more" in body
 
 
-def test_upsert_errors_alone_trigger_warning() -> None:
+def test_upsert_errors_alone_trigger_error() -> None:
+    # Stage 8 spec: non-empty upsert_errors ⇒ ERROR — computed data did not
+    # land in the DB, which is worse than a partial fetch failure.
     rec = _Recorder()
     report = _base_report(
         upsert_errors=["timeout on batch 3"],
     )
     out = maybe_alert_on_run_report(report, dispatcher=rec)
     assert out is not None
-    assert rec.calls[0].severity == "warning"
+    assert rec.calls[0].severity == "error"
     assert "upsert_errors" in rec.calls[0].body
 
 

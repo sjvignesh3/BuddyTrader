@@ -28,12 +28,17 @@ def _is_nan(value: Any) -> bool:
 
 
 def _coerce_date(value: Any) -> Optional[date]:
-    """DataFrame index rows come as pandas.Timestamp; normalise to date."""
+    """DataFrame index rows come as pandas.Timestamp; normalise to date.
+
+    NOTE: pandas.Timestamp subclasses datetime (and datetime subclasses
+    date), so a plain `isinstance(value, date)` check would return the
+    Timestamp UNCONVERTED — which later breaks `bar.d <= snapshot_date`
+    comparisons. Only a bare `date` passes through as-is.
+    """
     if value is None:
         return None
-    # duck-type: pandas.Timestamp has .date(); python date is already date.
-    if isinstance(value, date):
-        return value
+    if isinstance(value, date) and not hasattr(value, "hour"):
+        return value  # a true datetime.date (datetimes/Timestamps have .hour)
     to_date = getattr(value, "date", None)
     if callable(to_date):
         try:
@@ -70,6 +75,9 @@ def bars_from_df(df: Any) -> List[OHLCVBar]:
     except Exception:
         pass
 
+    has_adj = "Adj Close" in cols
+    has_vol = "Volume" in cols
+
     bars: List[OHLCVBar] = []
     for idx, row in df.iterrows():
         d = _coerce_date(idx)
@@ -81,8 +89,16 @@ def bars_from_df(df: Any) -> List[OHLCVBar]:
         c = row.get("Close") if hasattr(row, "get") else row["Close"]
         if any(v is None or _is_nan(v) for v in (o, h, low, c)):
             continue
+        adj = row.get("Adj Close") if has_adj else None
+        if adj is None or _is_nan(adj):
+            adj = c  # no adjustment data -> adjusted == raw
+        vol_raw = row.get("Volume") if has_vol else None
         try:
-            bars.append(OHLCVBar.make(d, o, h, low, c))
+            vol = int(vol_raw) if vol_raw is not None and not _is_nan(vol_raw) else None
+        except (TypeError, ValueError):
+            vol = None
+        try:
+            bars.append(OHLCVBar.make(d, o, h, low, c, adj_c=adj, volume=vol))
         except Exception:
             # Individual row conversion problem — skip that row, keep rest.
             continue

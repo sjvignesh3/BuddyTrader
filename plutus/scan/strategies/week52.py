@@ -1,5 +1,5 @@
 """
-52 Week High Low Strategy — bit-for-bit port of
+52 Week High Low Strategy ??? bit-for-bit port of
 backend/app/strategies/week52_high_low.py.
 
 Rules (from UserData/strategy_rules.json):
@@ -14,7 +14,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Dict
 
-from plutus.registry.types import to_decimal
+from plutus.scan.base import dec_or_default
 from plutus.scan.base import (
     STATUS_BUY_ZONE,
     STATUS_ERROR,
@@ -66,7 +66,7 @@ class Week52HighLowStrategy(Strategy):
 
         if dist_from_low is None:
             errors.append(
-                "distance_from_52w_low_pct missing — cannot evaluate 52W High/Low"
+                "distance_from_52w_low_pct missing ??? cannot evaluate 52W High/Low"
             )
             return StrategyResult(
                 strategy_id=self.strategy_id,
@@ -86,12 +86,10 @@ class Week52HighLowStrategy(Strategy):
             )
 
         inputs = (config or {}).get("inputs", {}) or {}
-        buy_zone_tolerance = to_decimal(
-            inputs.get("buy_zone_tolerance_pct")
-        ) or DEFAULT_BUY_ZONE_TOL_PCT
-        opportunity_above_low = to_decimal(
-            inputs.get("opportunity_above_52w_low_pct")
-        ) or DEFAULT_OPPORTUNITY_ABOVE_LOW_PCT
+        buy_zone_tolerance = dec_or_default(
+            inputs.get("buy_zone_tolerance_pct"), DEFAULT_BUY_ZONE_TOL_PCT)
+        opportunity_above_low = dec_or_default(
+            inputs.get("opportunity_above_52w_low_pct"), DEFAULT_OPPORTUNITY_ABOVE_LOW_PCT)
         score_map = (config or {}).get("score_map") or DEFAULT_SCORE_MAP
 
         if dist_from_low <= buy_zone_tolerance:

@@ -42,6 +42,10 @@ def main(argv: Optional[Sequence[str]] = None,
         logging.error("canary orchestration failed: %s", exc)
         return 2
     print(json.dumps(report.as_json(), indent=2, default=str))
+    # Fixtures could not be loaded at all — the canary guarded nothing.
+    if getattr(report, "load_error", None):
+        logging.error("canary fixture load failed: %s", report.load_error)
+        return 2
     if report.drift or report.missing or report.error:
         return 1
     return 0

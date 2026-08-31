@@ -55,3 +55,14 @@ jobs:
           if [ -n "$POOL" ]; then ARGS="$ARGS --pool $POOL"; fi
           if [ "$DRY" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           python -m plutus.scripts.run_quarterly_sync $ARGS
+
+      - name: Notify on workflow failure
+        # Backstop for hard crashes the in-process alerter can't catch —
+        # parity with the daily and backup workflows.
+        if: failure() && env.PLUTUS_ALERT_WEBHOOK != ''
+        env:
+          PAYLOAD: |
+            {"text":"🚨 *Plutus quarterly sync workflow failed*\nrun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+        run: |
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            --data "$PAYLOAD" "$PLUTUS_ALERT_WEBHOOK" || true

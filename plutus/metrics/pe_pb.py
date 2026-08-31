@@ -51,6 +51,14 @@ def pick_pb(info: dict) -> Optional[Decimal]:
     return _pick(info, ("priceToBook",), field="pb")
 
 
+def pick_forward_pe(info: dict) -> Optional[Decimal]:
+    """Forward PE only — stored in its own column so consumers can always
+    tell it apart from trailing PE."""
+    if not info:
+        return None
+    return _pick(info, ("forwardPE",), field="forward_pe")
+
+
 def pe_5yr_avg(
     quarterly_net_income: Optional[Sequence[Optional[Decimal]]] = None,
     shares_outstanding: Optional[Decimal] = None,

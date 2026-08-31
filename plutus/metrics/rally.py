@@ -25,21 +25,32 @@ _DEFAULT_WINDOW = 189   # ~9 months of trading days
 
 @dataclass(frozen=True)
 class OHLCVBar:
-    """One trading day. All prices are Decimals; date is a python date."""
+    """One trading day. All prices are Decimals; date is a python date.
+
+    ``adj_close`` is the dividend/split-adjusted close (yfinance ``Adj Close``
+    with ``auto_adjust=False``). It defaults to ``close`` when the source has
+    no adjustment column. ``volume`` is the session's traded volume.
+    """
     d: date
     open: Decimal
     high: Decimal
     low: Decimal
     close: Decimal
+    adj_close: Optional[Decimal] = None
+    volume: Optional[int] = None
 
     @staticmethod
-    def make(d: date, o, h, l, c) -> "OHLCVBar":
+    def make(d: date, o, h, l, c, adj_c=None, volume=None) -> "OHLCVBar":
+        close = to_decimal(c)
+        adj = to_decimal(adj_c) if adj_c is not None else None
         return OHLCVBar(
             d=d,
             open=to_decimal(o),
             high=to_decimal(h),
             low=to_decimal(l),
-            close=to_decimal(c),
+            close=close,
+            adj_close=adj if adj is not None else close,
+            volume=volume,
         )
 
 

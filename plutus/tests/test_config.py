@@ -16,6 +16,9 @@ def clean_env(monkeypatch):
     for k in list(os_environ_snapshot()):
         if k.startswith("PLUTUS_"):
             monkeypatch.delenv(k, raising=False)
+    # A developer machine may carry a real plutus/.env — these tests assert
+    # behaviour of the ENVIRONMENT alone, so disable dotenv loading.
+    monkeypatch.setenv("PLUTUS_SKIP_DOTENV", "1")
     # Reset the module-level cache so ``get_settings`` re-reads.
     config._cached = None
     yield

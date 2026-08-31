@@ -47,11 +47,19 @@ def _default_fetch_quarterly(symbol: str) -> Result[Dict[str, Any]]:
 
     def _do() -> Dict[str, Any]:
         ticker = _yf().Ticker(sym)
-        return {
+        payload: Dict[str, Any] = {
             "info": dict(ticker.info) if ticker.info else {},
             "quarterly_financials": ticker.quarterly_financials,
             "major_holders": ticker.major_holders,
         }
+        # 5y daily closes power pe_5y_avg / pb_5y_avg. Best-effort — the
+        # quarterly row is still valuable without the averages.
+        try:
+            payload["history"] = ticker.history(
+                period="5y", interval="1d", auto_adjust=False, actions=False)
+        except Exception:  # noqa: BLE001
+            payload["history"] = None
+        return payload
 
     return _retry(_do, symbol=sym, op="quarterly")
 
@@ -154,6 +162,7 @@ class QuarterlySyncWorker:
             if not rows:
                 rep.error = "no quarterly rows extracted"
                 return rep, []
+            self._attach_5y_averages(rows, payload, rep)
             projected = [_project_row(symbol, r) for r in rows]
             rep.ok = True
             rep.rows_extracted = len(projected)
@@ -161,6 +170,42 @@ class QuarterlySyncWorker:
         except Exception as exc:  # noqa: BLE001
             rep.error = f"{type(exc).__name__}: {exc}"
             return rep, []
+
+    @staticmethod
+    def _attach_5y_averages(rows: List[Dict[str, Any]],
+                            payload: Dict[str, Any],
+                            rep: SymbolReport) -> None:
+        """Compute pe_5y_avg / pb_5y_avg and set them on the NEWEST quarter.
+
+        Best-effort: any missing input leaves the columns None and adds a
+        warning. Never raises.
+        """
+        try:
+            from plutus.fundamentals.quarterly import (
+                compute_pb_5yr_avg,
+                compute_pe_5yr_avg,
+            )
+            from plutus.registry.types import to_decimal
+            from plutus.sync.history_builder import bars_from_df
+
+            bars = bars_from_df(payload.get("history"))
+            closes = [b.adj_close if b.adj_close is not None else b.close
+                      for b in bars]
+            info = payload.get("info") or {}
+            ni_series = [r.get("net_profit") for r in rows]  # newest first
+            shares = to_decimal(info.get("sharesOutstanding"))
+            bvps = to_decimal(info.get("bookValue"))
+
+            pe5 = compute_pe_5yr_avg(ni_series, shares, closes) if closes else None
+            pb5 = compute_pb_5yr_avg(bvps, closes) if closes else None
+            rows[0]["pe_5y_avg"] = pe5
+            rows[0]["pb_5y_avg"] = pb5
+            if pe5 is None:
+                rep.warnings.append("pe_5y_avg: insufficient inputs")
+            if pb5 is None:
+                rep.warnings.append("pb_5y_avg: insufficient inputs")
+        except Exception as exc:  # noqa: BLE001
+            rep.warnings.append(f"5y averages skipped: {type(exc).__name__}: {exc}")
 
     def run_all(
         self,

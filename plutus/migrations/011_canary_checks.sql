@@ -48,3 +48,7 @@ DROP POLICY IF EXISTS canary_anon_read     ON canary_checks;
 DROP POLICY IF EXISTS canary_service_write ON canary_checks;
 CREATE POLICY canary_anon_read     ON canary_checks FOR SELECT TO anon         USING (true);
 CREATE POLICY canary_service_write ON canary_checks FOR ALL    TO service_role USING (true) WITH CHECK (true);
+
+-- Explicit privileges (newer Supabase no longer auto-grants — see 010).
+GRANT SELECT ON canary_checks TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON canary_checks TO service_role;

@@ -10,7 +10,7 @@ export const qk = {
   stocks: (pool?: string) => ["stocks", pool ?? "all"] as const,
   snapshots: (pool: string, date?: string) => ["snapshots", pool, date ?? "latest"] as const,
   scan: (pool: string) => ["scan", pool] as const,
-  scanResults: (scanId: string | undefined, strategy?: string) =>
+  scanResults: (scanId: number | undefined, strategy?: string) =>
     ["scan_results", scanId ?? "none", strategy ?? "all"] as const,
   syncJobs: (jobType?: string) => ["sync_jobs", jobType ?? "all"] as const,
   history: (symbol: string, days: number) => ["history", symbol, days] as const,
@@ -43,11 +43,11 @@ export function useLatestScan(pool: string) {
   });
 }
 
-export function useScanResults(scanId: string | undefined, strategy?: string) {
+export function useScanResults(scanId: number | undefined, strategy?: string) {
   return useQuery({
     queryKey: qk.scanResults(scanId, strategy),
     queryFn: () => api.scanResults(scanId!, { strategy }),
-    enabled: Boolean(scanId),
+    enabled: scanId !== undefined,
   });
 }
 

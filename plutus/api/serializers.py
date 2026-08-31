@@ -25,7 +25,16 @@ def to_wire(value: Any) -> Any:
     if isinstance(value, Decimal):
         # Keep full precision; frontend parses as string or Number.
         return str(value)
-    if isinstance(value, (int, float, str)):
+    if isinstance(value, float):
+        # PostgREST NUMERIC columns arrive as JSON numbers, which the
+        # Supabase client parses into float. Stringify via shortest-repr so
+        # the wire contract ("money is a string") holds for live data too,
+        # not only for hand-seeded Decimal fixtures.
+        import math
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return str(value)
+    if isinstance(value, (int, str)):
         return value
     if isinstance(value, (date, datetime)):
         return value.isoformat()

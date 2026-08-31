@@ -49,6 +49,8 @@ def sanity_check_price(value: Any, *, field: str = "price") -> Optional[Decimal]
     if isinstance(value, float) and math.isnan(value):
         raise ValueError(f"{field}: got NaN")
     d = to_decimal(value)  # type/range gate: rejects Inf, NaN, bool
+    if d is None:
+        raise ValueError(f"{field}: not numeric ({value!r})")
     if d <= 0:
         raise ValueError(f"{field}: must be > 0, got {d}")
     if d > _PRICE_MAX:
@@ -70,6 +72,8 @@ def sanity_check_ratio(value: Any, *, field: str = "ratio") -> Optional[Decimal]
     if isinstance(value, float) and math.isnan(value):
         return None
     d = to_decimal(value)
+    if d is None:
+        raise ValueError(f"{field}: not numeric ({value!r})")
     if d < _RATIO_MIN or d > _RATIO_MAX:
         raise ValueError(f"{field}: {d} outside sanity band [{_RATIO_MIN}, {_RATIO_MAX}]")
     return d

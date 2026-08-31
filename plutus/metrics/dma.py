@@ -46,11 +46,13 @@ def compute_below_dma_pct(close: Decimal, dma: Optional[Decimal]) -> Optional[De
 
     Returns None if dma is missing or non-positive.
     """
-    if dma is None:
+    if dma is None or close is None:
         return None
     dma_d = to_decimal(dma)
-    if dma_d <= 0:
+    if dma_d is None or dma_d <= 0:
         return None
     close_d = to_decimal(close)
+    if close_d is None:
+        return None
     pct = (dma_d - close_d) / dma_d * Decimal(100)
     return round_half_up(pct, _TWO)

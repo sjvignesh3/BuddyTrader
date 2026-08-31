@@ -5,7 +5,9 @@
 
 CREATE TABLE IF NOT EXISTS daily_snapshots (
     id                          BIGSERIAL PRIMARY KEY,
-    stock_id                    BIGINT       NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+    -- Nullable by design (Plan §5.3): the sync worker upserts by
+    -- (symbol, snapshot_date) and does not resolve the FK first.
+    stock_id                    BIGINT       REFERENCES stocks(id) ON DELETE CASCADE,
     symbol                      VARCHAR(20)  NOT NULL,
     snapshot_date               DATE         NOT NULL,
 
@@ -68,3 +70,18 @@ CREATE TABLE IF NOT EXISTS daily_snapshots (
 CREATE INDEX IF NOT EXISTS idx_snap_date   ON daily_snapshots (snapshot_date DESC);
 CREATE INDEX IF NOT EXISTS idx_snap_symbol ON daily_snapshots (symbol, snapshot_date DESC);
 CREATE INDEX IF NOT EXISTS idx_snap_cap    ON daily_snapshots (cap_bucket, snapshot_date DESC);
+
+-- ---------------------------------------------------------------
+-- Idempotent evolution (safe to re-run against an existing DB).
+-- 1) stock_id must be nullable: the worker upserts by symbol and
+--    never resolves the FK (Plan §5.3 declares it nullable).
+-- 2) Widen unbounded percent columns: NUMERIC(6,2) caps at 9999.99
+--    and a single overflowing symbol rejects its whole upsert chunk.
+-- ---------------------------------------------------------------
+ALTER TABLE daily_snapshots ALTER COLUMN stock_id DROP NOT NULL;
+-- Views block ALTER TYPE on their columns; 009 recreates them.
+DROP VIEW IF EXISTS v_stocks_latest;
+ALTER TABLE daily_snapshots ALTER COLUMN distance_from_52w_low_pct TYPE NUMERIC(10,2);
+ALTER TABLE daily_snapshots ALTER COLUMN last_rally_pct            TYPE NUMERIC(10,2);
+ALTER TABLE daily_snapshots ALTER COLUMN price_change_nd_pct       TYPE NUMERIC(10,2);
+ALTER TABLE daily_snapshots ALTER COLUMN profit_margin_pct         TYPE NUMERIC(10,2);

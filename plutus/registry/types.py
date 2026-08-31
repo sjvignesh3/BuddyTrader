@@ -85,7 +85,19 @@ def to_decimal(value: Numeric, *, allow_negative: bool = True) -> Optional[Decim
         except InvalidOperation:
             return None
     else:
-        raise TypeError(f"Unsupported type for to_decimal: {type(value).__name__}")
+        # numpy scalar support without importing numpy: np.int64 is a
+        # numbers.Integral (not an int subclass), np.float64 subclasses
+        # float and is caught above. Route integrals through int().
+        import numbers
+        if isinstance(value, numbers.Integral):
+            result = Decimal(int(value))
+        elif isinstance(value, numbers.Real):
+            as_float = float(value)  # noqa: PLW1633 — geometry-safe bridge, str'd below
+            if as_float != as_float or as_float in (float("inf"), float("-inf")):
+                return None
+            result = Decimal(str(as_float))
+        else:
+            raise TypeError(f"Unsupported type for to_decimal: {type(value).__name__}")
 
     # Reject NaN/Inf that snuck through.
     if not result.is_finite():

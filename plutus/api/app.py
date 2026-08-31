@@ -59,6 +59,15 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
     def cli() -> Any:
         return app.state.supabase_client
 
+    # Error envelope parity with the Edge Function: {"error": "..."} —
+    # FastAPI's default HTTPException body is {"detail": "..."}.
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(HTTPException)
+    async def _error_envelope(request: Any, exc: HTTPException) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code,
+                            content={"error": str(exc.detail)})
+
     # -- Health ------------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict:

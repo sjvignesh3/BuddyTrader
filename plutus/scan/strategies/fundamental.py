@@ -1,5 +1,5 @@
 """
-Fundamental Screener Strategy — Plutus port of the essence of
+Fundamental Screener Strategy ??? Plutus port of the essence of
 backend/app/services/screener_engine.py.
 
 The legacy screener runs many rules against Buddy's screener.in scraper.
@@ -23,7 +23,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from plutus.registry.types import to_decimal
+from plutus.scan.base import dec_or_default
 from plutus.scan.base import (
     STATUS_ERROR,
     STATUS_FAIL,
@@ -69,7 +69,7 @@ class FundamentalScreenerStrategy(Strategy):
         if pe_avg is None:
             return False, f"5yr avg PE not available (current PE: {pe})", {"pe_current": pe, "pe_5y_avg": None}
         passed = pe < pe_avg
-        reason = f"Current PE {pe} vs 5yr Avg PE {pe_avg} — {'below' if passed else 'above'} average"
+        reason = f"Current PE {pe} vs 5yr Avg PE {pe_avg} ??? {'below' if passed else 'above'} average"
         return passed, reason, {"pe_current": pe, "pe_5y_avg": pe_avg}
 
     def _rule_pb_below_avg(
@@ -82,14 +82,14 @@ class FundamentalScreenerStrategy(Strategy):
         if pb_avg is None:
             return False, f"5yr avg PB not available (current PB: {pb})", {"pb_current": pb, "pb_5y_avg": None}
         passed = pb < pb_avg
-        reason = f"Current PB {pb} vs 5yr Avg PB {pb_avg} — {'below' if passed else 'above'} average"
+        reason = f"Current PB {pb} vs 5yr Avg PB {pb_avg} ??? {'below' if passed else 'above'} average"
         return passed, reason, {"pb_current": pb, "pb_5y_avg": pb_avg}
 
     def _rule_roce_min(
         self, snap: Dict[str, Any], cfg: Dict[str, Any]
     ) -> Tuple[bool, str, Dict[str, Any]]:
         roce = self._get_decimal(snap, "roce")
-        threshold = to_decimal(cfg.get("roce_min")) or DEFAULTS["roce_min"]
+        threshold = dec_or_default(cfg.get("roce_min"), DEFAULTS["roce_min"])
         if roce is None:
             return False, "ROCE not available", {"roce": None, "threshold": threshold}
         passed = roce >= threshold
@@ -100,7 +100,7 @@ class FundamentalScreenerStrategy(Strategy):
         self, snap: Dict[str, Any], cfg: Dict[str, Any]
     ) -> Tuple[bool, str, Dict[str, Any]]:
         roe = self._get_decimal(snap, "roe")
-        threshold = to_decimal(cfg.get("roe_min")) or DEFAULTS["roe_min"]
+        threshold = dec_or_default(cfg.get("roe_min"), DEFAULTS["roe_min"])
         if roe is None:
             return False, "ROE not available", {"roe": None, "threshold": threshold}
         passed = roe >= threshold
@@ -111,9 +111,8 @@ class FundamentalScreenerStrategy(Strategy):
         self, snap: Dict[str, Any], cfg: Dict[str, Any]
     ) -> Tuple[bool, str, Dict[str, Any]]:
         de = self._get_decimal(snap, "net_debt_to_equity")
-        threshold = to_decimal(
-            cfg.get("net_debt_to_equity_max")
-        ) or DEFAULTS["net_debt_to_equity_max"]
+        threshold = dec_or_default(
+            cfg.get("net_debt_to_equity_max"), DEFAULTS["net_debt_to_equity_max"])
         if de is None:
             return False, "Net Debt/Equity not available", {"net_debt_to_equity": None, "threshold": threshold}
         passed = de <= threshold
@@ -124,9 +123,9 @@ class FundamentalScreenerStrategy(Strategy):
         self, snap: Dict[str, Any], cfg: Dict[str, Any]
     ) -> Tuple[bool, str, Dict[str, Any]]:
         pledge = self._get_decimal(snap, "promoter_pledging_pct")
-        threshold = to_decimal(cfg.get("pledging_max")) or DEFAULTS["pledging_max"]
+        threshold = dec_or_default(cfg.get("pledging_max"), DEFAULTS["pledging_max"])
         if pledge is None:
-            return False, "Pledging data not found — treated as fail for safety", {"promoter_pledging_pct": None, "threshold": threshold}
+            return False, "Pledging data not found ??? treated as fail for safety", {"promoter_pledging_pct": None, "threshold": threshold}
         passed = pledge <= threshold
         reason = f"Promoter Pledging {pledge}% vs max {threshold}%"
         return passed, reason, {"promoter_pledging_pct": pledge, "threshold": threshold}
@@ -169,7 +168,7 @@ class FundamentalScreenerStrategy(Strategy):
             try:
                 ok, reason, details = method(snapshot, thresholds)
             except TypeError as exc:
-                # Bad snapshot type — surface as error and skip.
+                # Bad snapshot type ??? surface as error and skip.
                 errors.append(f"{rule_id}: {exc}")
                 rule_results.append({
                     "rule_id": rule_id, "enabled": True,
@@ -190,10 +189,10 @@ class FundamentalScreenerStrategy(Strategy):
                 failed_count += 1
                 reasons.append(f"[FAIL] {reason}")
 
-        # Overall verdict — same as legacy: pass only if every enabled rule passed.
+        # Overall verdict ??? same as legacy: pass only if every enabled rule passed.
         total_enabled = passed_count + failed_count
         if total_enabled == 0:
-            # Every rule was disabled or errored — cannot judge.
+            # Every rule was disabled or errored ??? cannot judge.
             status = STATUS_ERROR
             score = 0
             reasons.insert(0, "No rules could be evaluated")

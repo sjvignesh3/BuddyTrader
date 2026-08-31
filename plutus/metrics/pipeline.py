@@ -26,7 +26,7 @@ from plutus.adapters.validators import (
 from plutus.metrics.ath import compute_ath, gap_from_ath_pct
 from plutus.metrics.cap_bucket import classify_market_cap
 from plutus.metrics.dma import compute_below_dma_pct, compute_dma
-from plutus.metrics.pe_pb import pick_pb, pick_pe
+from plutus.metrics.pe_pb import pick_forward_pe, pick_pb, pick_pe
 from plutus.metrics.rally import OHLCVBar, compute_rally_metrics
 from plutus.metrics.week52 import (
     compute_52w_high,
@@ -34,7 +34,7 @@ from plutus.metrics.week52 import (
     distance_from_52w_high_pct,
     distance_from_52w_low_pct,
 )
-from plutus.registry.types import to_decimal
+from plutus.registry.types import round_half_up, to_decimal
 
 
 @dataclass
@@ -46,6 +46,7 @@ class SnapshotInputs:
     bars: Sequence[OHLCVBar]                # sorted oldest → newest
     info: Dict[str, Any]                    # yfinance .info payload
     meta: Dict[str, Any] = field(default_factory=dict)
+    trend_days: int = 7                     # look-back for price_change_nd_pct
 
 
 def _safe(callable_, *args, errors: List[str], label: str, **kwargs):
@@ -78,7 +79,10 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
         "adj_close": None, "volume": None,
         # Derived
         "market_cap": None, "cap_bucket": None,
-        "pe_current": None, "pb_current": None,
+        "pe_current": None, "forward_pe": None, "pb_current": None,
+        "debt_to_equity_pct": None, "ebitda_ttm": None,
+        "revenue_ttm": None, "profit_margin_pct": None,
+        "price_change_nd_pct": None,
         "dma_200": None, "below_200dma_pct": None,
         "high_52w": None, "low_52w": None,
         "distance_from_52w_high_pct": None, "distance_from_52w_low_pct": None,
@@ -97,6 +101,13 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
         errors.append("no OHLCV bars supplied")
         return row
 
+    # As-of correctness: never look at bars newer than the snapshot date, so
+    # a backfill run (--as-of) reproduces that session instead of today's.
+    bars = [b for b in bars if b.d <= inp.snapshot_date]
+    if not bars:
+        errors.append(f"no OHLCV bars on or before {inp.snapshot_date}")
+        return row
+
     latest = bars[-1]
     row["open"] = _safe(sanity_check_price, latest.open,
                         errors=errors, label="open", field="open")
@@ -107,24 +118,38 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
     row["close"] = _safe(sanity_check_price, latest.close,
                          errors=errors, label="close", field="close")
 
-    # Meta close (regularMarketPrice) preferred for the "current" price if given
-    meta_close = inp.meta.get("regularMarketPrice") if inp.meta else None
-    if meta_close:
-        try:
-            row["close"] = sanity_check_price(meta_close, field="close")
-        except ValueError as exc:
-            errors.append(f"meta.regularMarketPrice invalid: {exc}")
+    # The session bar is the single source of truth for `close` so the whole
+    # row is internally consistent. The live quote (regularMarketPrice) is
+    # only a FALLBACK when the bar itself is unusable.
+    if row["close"] is None:
+        meta_close = inp.meta.get("regularMarketPrice") if inp.meta else None
+        if meta_close:
+            try:
+                row["close"] = sanity_check_price(meta_close, field="close")
+            except ValueError as exc:
+                errors.append(f"meta.regularMarketPrice invalid: {exc}")
 
-    row["adj_close"] = row["close"]   # yfinance normalisation handled upstream
+    # Adjusted close of the session bar (== close when no adjustment data).
+    adj_latest = latest.adj_close if latest.adj_close is not None else latest.close
+    row["adj_close"] = _safe(sanity_check_price, adj_latest,
+                             errors=errors, label="adj_close", field="adj_close")
 
-    # Volume
-    vol = inp.info.get("volume") if inp.info else None
+    # Volume: the session bar's traded volume; .info["volume"] (an intraday
+    # figure) only as fallback.
+    vol = latest.volume
+    if vol is None and inp.info:
+        vol = inp.info.get("volume")
     row["volume"] = _safe(sanity_check_count, vol,
                           errors=errors, label="volume", field="volume")
 
-    # ----- DMA -----
+    # ----- DMA (on ADJUSTED closes — matches TradingView across splits) -----
     closes = [b.close for b in bars]
-    dma = _safe(compute_dma, closes, errors=errors, label="dma_200", window=200)
+    adj_series = [b.adj_close if b.adj_close is not None else b.close for b in bars]
+    if len(bars) >= 200:
+        dma = _safe(compute_dma, adj_series, errors=errors, label="dma_200", window=200)
+    else:
+        dma = None
+        errors.append(f"dma_200: insufficient history ({len(bars)} < 200 bars)")
     row["dma_200"] = dma
     row["below_200dma_pct"] = _safe(
         compute_below_dma_pct, row["close"], dma,
@@ -147,10 +172,7 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
         errors=errors, label="distance_from_52w_low_pct",
     )
 
-    # ----- ATH -----
-    # No adj_close per bar in this simple model — use close as fallback (=> no
-    # dividend adjustment); Stage 4 wires real adj_close from yfinance.
-    adj_series = [b.close for b in bars]
+    # ----- ATH (adjusted: max of High × (AdjClose/Close) per bar) -----
     row["ath"] = _safe(compute_ath, highs, closes, adj_series,
                        errors=errors, label="ath")
     row["fall_from_ath_pct"] = _safe(
@@ -173,8 +195,36 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
     # ----- PE / PB -----
     row["pe_current"] = _safe(pick_pe, inp.info,
                               errors=errors, label="pe_current")
+    row["forward_pe"] = _safe(pick_forward_pe, inp.info,
+                              errors=errors, label="forward_pe")
     row["pb_current"] = _safe(pick_pb, inp.info,
                               errors=errors, label="pb_current")
+
+    # ----- Other .info-sourced Tier-A fields -----
+    if inp.info:
+        row["debt_to_equity_pct"] = _safe(
+            sanity_check_ratio, inp.info.get("debtToEquity"),
+            errors=errors, label="debt_to_equity_pct", field="debt_to_equity_pct")
+        row["ebitda_ttm"] = _safe(
+            to_decimal, inp.info.get("ebitda"),
+            errors=errors, label="ebitda_ttm")
+        row["revenue_ttm"] = _safe(
+            to_decimal, inp.info.get("totalRevenue"),
+            errors=errors, label="revenue_ttm")
+        margins = _safe(to_decimal, inp.info.get("profitMargins"),
+                        errors=errors, label="profit_margin_pct")
+        if margins is not None:
+            # yfinance returns a 0..1 fraction; the registry stores percent.
+            row["profit_margin_pct"] = round_half_up(margins * Decimal(100), 2)
+
+    # ----- Trend: % change vs N trading days ago (adjusted closes) -----
+    n = inp.trend_days
+    if n > 0 and len(adj_series) > n:
+        past = adj_series[-(n + 1)]
+        curr = adj_series[-1]
+        if past is not None and past > 0 and curr is not None:
+            row["price_change_nd_pct"] = round_half_up(
+                (curr - past) / past * Decimal(100), 2)
 
     # ----- Rally -----
     rally = _safe(compute_rally_metrics, bars,

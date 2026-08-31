@@ -13,7 +13,6 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase, realtimeEnabled } from "../lib/supabase";
-import { qk } from "./usePlutus";
 
 export interface RealtimeStatus {
   enabled: boolean;      // client configured
@@ -30,16 +29,20 @@ export function useSyncJobsRealtime(): RealtimeStatus {
   });
 
   useEffect(() => {
-    if (!supabase) return;
+    // Capture into a local so TypeScript can narrow the null check across
+    // the cleanup closure below (imported bindings are not narrowed there).
+    const client = supabase;
+    if (!client) return;
 
-    const channel = supabase
+    const channel = client
       .channel("sync-jobs-pill")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "sync_jobs" },
         () => {
-          // Invalidate every sync-jobs query variant.
-          qc.invalidateQueries({ queryKey: qk.syncJobs() });
+          // Invalidate every sync-jobs query variant (prefix match — the
+          // exact key `qk.syncJobs()` would only hit the "all" variant).
+          qc.invalidateQueries({ queryKey: ["sync_jobs"] });
         }
       )
       .subscribe((state, err) => {
@@ -57,7 +60,7 @@ export function useSyncJobsRealtime(): RealtimeStatus {
       });
 
     return () => {
-      supabase.removeChannel(channel).catch(() => {
+      client.removeChannel(channel).catch(() => {
         /* swallow — teardown must be silent */
       });
     };

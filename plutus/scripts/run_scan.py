@@ -26,11 +26,15 @@ from plutus.scan.registry import list_strategy_ids
 
 logger = logging.getLogger("plutus.run_scan")
 
+# The four canonical pools (matches migrations/002_pools.sql seed).
+ALL_POOLS = ("F40", "E40", "S200", "PlayArea")
+
 
 def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="run_scan", description="Plutus scan engine CLI.")
     ap.add_argument("--pool", required=True,
-                    help="Pool code (F40, E40, S200, PlayArea).")
+                    help="Pool code (F40, E40, S200, PlayArea) or ALL "
+                         "to scan every pool in sequence.")
     ap.add_argument("--as-of", required=True,
                     help="Snapshot date (YYYY-MM-DD).")
     ap.add_argument("--strategies", default=None,
@@ -70,25 +74,38 @@ def main(
         strategy_ids = [s.strip() for s in args.strategies.split(",") if s.strip()]
 
     eng = engine or ScanEngine()
-    report = eng.run(
-        pool_code=args.pool,
-        snapshot_date=as_of,
-        strategy_ids=strategy_ids,
-        triggered_by=args.triggered_by,
-        dry_run=args.dry_run,
-    )
 
-    print(json.dumps(report.as_json(), indent=2, default=str))
+    # `--pool ALL` (the workflow's cron default) fans out over every pool.
+    # A pool with zero snapshots is skipped with a warning; the run only
+    # fails hard (exit 2) when NO pool had anything to scan.
+    pools = ALL_POOLS if args.pool.upper() == "ALL" else [args.pool]
 
-    if report.total_stocks == 0:
-        logger.warning("no snapshots found for pool=%s date=%s", args.pool, as_of)
+    exit_code = 0
+    scanned_any = False
+    reports = []
+    for pool in pools:
+        report = eng.run(
+            pool_code=pool,
+            snapshot_date=as_of,
+            strategy_ids=strategy_ids,
+            triggered_by=args.triggered_by,
+            dry_run=args.dry_run,
+        )
+        reports.append(report.as_json())
+
+        if report.total_stocks == 0:
+            logger.warning("no snapshots found for pool=%s date=%s", pool, as_of)
+            continue
+        scanned_any = True
+        if report.upsert_errors or any(r.error for r in report.per_result):
+            exit_code = 1
+
+    print(json.dumps(reports if len(reports) > 1 else reports[0],
+                     indent=2, default=str))
+
+    if not scanned_any:
         return 2
-    if report.upsert_errors:
-        return 1
-    per_result_errors = [r for r in report.per_result if r.error]
-    if per_result_errors:
-        return 1
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":  # pragma: no cover

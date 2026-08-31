@@ -5,7 +5,9 @@
 
 CREATE TABLE IF NOT EXISTS fundamentals (
     id                        BIGSERIAL PRIMARY KEY,
-    stock_id                  BIGINT       NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+    -- Nullable by design (Plan §5.4): the quarterly worker upserts by
+    -- (symbol, quarter_end_date) and does not resolve the FK first.
+    stock_id                  BIGINT       REFERENCES stocks(id) ON DELETE CASCADE,
     symbol                    VARCHAR(20)  NOT NULL,
     quarter_end_date          DATE         NOT NULL,
     quarter_label             VARCHAR(20),
@@ -42,3 +44,16 @@ CREATE TABLE IF NOT EXISTS fundamentals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fund_symbol_q ON fundamentals (symbol, quarter_end_date DESC);
+
+-- ---------------------------------------------------------------
+-- Idempotent evolution (safe to re-run against an existing DB).
+-- The quarterly worker's ON CONFLICT tuple is (symbol, quarter_end_date)
+-- (see plutus/sync/quarterly.py FUNDAMENTALS_CONFLICT) — it needs a
+-- matching unique index or every upsert fails with 42P10.
+-- ---------------------------------------------------------------
+ALTER TABLE fundamentals ALTER COLUMN stock_id DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_fund_symbol_quarter
+    ON fundamentals (symbol, quarter_end_date);
+-- Views block ALTER TYPE on their columns; 009 recreates them.
+DROP VIEW IF EXISTS v_fundamentals_latest;
+ALTER TABLE fundamentals ALTER COLUMN operating_margin_pct TYPE NUMERIC(10,2);

@@ -14,7 +14,9 @@ class TestPipelineHappy:
         bars = flat_series(price="100.00", n=210)
         inp = SnapshotInputs(
             symbol="TEST.NS",
-            snapshot_date=date(2024, 7, 15),
+            # As-of the newest bar — the pipeline drops bars newer than the
+            # snapshot date, and the 200-DMA needs the full window intact.
+            snapshot_date=bars[-1].d,
             bars=bars,
             info={"marketCap": 60_000 * 10_000_000,
                   "trailingPE": 25.0, "priceToBook": 3.0,
@@ -25,7 +27,7 @@ class TestPipelineHappy:
         row = compute_snapshot(inp)
 
         assert row["symbol"] == "TEST.NS"
-        assert row["snapshot_date"] == date(2024, 7, 15)
+        assert row["snapshot_date"] == bars[-1].d
         assert row["close"] == Decimal("100.00")
         assert row["dma_200"] == Decimal("100.00")
         assert row["below_200dma_pct"] == Decimal("0.00")
@@ -68,8 +70,11 @@ class TestPipelinePartialFailure:
         row = compute_snapshot(inp)
         assert row["market_cap"] is None
         assert row["cap_bucket"] is None
-        # Other fields still computed cleanly
-        assert row["dma_200"] == Decimal("50.00")
+        # Other fields still computed cleanly. (dma_200 is None here by
+        # design: 5 bars < the 200-bar window — a fake DMA must not ship.)
+        assert row["close"] == Decimal("50.00")
+        assert row["dma_200"] is None
+        assert any("dma_200" in e for e in row["errors"])
 
     def test_type_error_market_cap_is_recorded(self) -> None:
         # A bool triggers TypeError inside to_decimal — pipeline must catch.

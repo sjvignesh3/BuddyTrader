@@ -60,6 +60,10 @@ class CanaryRunReport:
     missing: int
     error: int
     outcomes: List[CanaryOutcome] = field(default_factory=list)
+    # Set when the fixtures could not be loaded at all (DB down, bad creds,
+    # missing table). Distinct from per-fixture errors — the canary was
+    # unable to guard anything and the CLI must exit 2, not 0.
+    load_error: Optional[str] = None
 
     def as_json(self) -> Dict[str, Any]:
         return {
@@ -70,20 +74,28 @@ class CanaryRunReport:
             "drift": self.drift,
             "missing": self.missing,
             "error": self.error,
+            "load_error": self.load_error,
             "outcomes": [o.as_json() for o in self.outcomes],
         }
 
 
 def _as_decimal(v: Any) -> Optional[Decimal]:
-    """Precision-safe cast. Refuses to bind a ``float`` — money-safety gate."""
+    """Precision-safe cast for values read back from PostgREST.
+
+    NUMERIC columns arrive as JSON numbers → Python float; the shortest-
+    repr str() round-trip is exact for our NUMERIC(18,4) fixtures, so a
+    float here is converted, not refused (refusing made every live canary
+    read report 'missing'). NaN/Inf still map to None.
+    """
     if v is None:
         return None
     if isinstance(v, Decimal):
         return v
     if isinstance(v, float):
-        # This branch is a defensive guard, not a conversion path.
-        # If any caller passes a float we treat it as an error.
-        return None
+        import math
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return Decimal(str(v))
     try:
         return Decimal(str(v))
     except (InvalidOperation, ValueError):
@@ -160,17 +172,23 @@ class CanaryRunner:
         outcomes: List[CanaryOutcome] = []
         counts = {STATUS_OK: 0, STATUS_DRIFT: 0, STATUS_MISSING: 0, STATUS_ERROR: 0}
 
+        load_error: Optional[str] = None
         try:
             fixtures = self._load_fixtures()
         except Exception as exc:  # noqa: BLE001
-            _log("canary.load_failed", error=f"{type(exc).__name__}: {exc}")
+            load_error = f"{type(exc).__name__}: {exc}"
+            _log("canary.load_failed", error=load_error)
             fixtures = []
 
         for fx in fixtures:
             sym = fx.get("symbol") or ""
             check_date = str(fx.get("check_date") or "")
             expected = _as_decimal(fx.get("expected_close"))
-            tolerance = _as_decimal(fx.get("tolerance_pct")) or Decimal("0.005")
+            # Explicit None check — `or` would silently replace a deliberate
+            # zero-tolerance fixture (Decimal("0") is falsy) with the default.
+            tolerance = _as_decimal(fx.get("tolerance_pct"))
+            if tolerance is None:
+                tolerance = Decimal("0.005")
             fx_id = fx.get("id")
 
             if expected is None or not sym or not check_date or not fx_id:
@@ -224,6 +242,7 @@ class CanaryRunner:
             missing=counts[STATUS_MISSING],
             error=counts[STATUS_ERROR],
             outcomes=outcomes,
+            load_error=load_error,
         )
 
         if alert and (report.drift > 0 or report.error > 0 or report.missing > 0):

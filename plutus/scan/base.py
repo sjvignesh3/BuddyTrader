@@ -36,6 +36,19 @@ ZONE_STATUSES = frozenset({STATUS_BUY_ZONE, STATUS_OPPORTUNITY, STATUS_NO_SIGNAL
 PATTERN_STATUSES = frozenset({STATUS_VALID, STATUS_INVALID})
 
 
+def dec_or_default(value: Any, default: Decimal) -> Decimal:
+    """Coerce a config threshold to Decimal, falling back to `default`
+    ONLY when missing/invalid. An explicit zero is a legal threshold —
+    never use `to_decimal(x) or default` (Decimal("0") is falsy).
+    """
+    from plutus.registry.types import to_decimal
+    try:
+        d = to_decimal(value)
+    except Exception:  # noqa: BLE001 — config values are untrusted
+        return default
+    return d if d is not None else default
+
+
 @dataclass(frozen=True)
 class StrategyResult:
     """One strategy's verdict on one symbol.

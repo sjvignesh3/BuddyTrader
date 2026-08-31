@@ -10,8 +10,8 @@
 # Money-safety guarantees:
 #   * `pip install` is version-pinned via `plutus/requirements.txt`.
 #   * The daily sync writes to `sync_jobs` even on failure (partial audit).
-#   * The scan is chained with `&&` so a failed sync short-circuits it —
-#     never let a partial sync feed a scan.
+#   * The scan step runs with `if: success()` so a failed sync
+#     short-circuits it — never let a partial sync feed a scan.
 #
 name: plutus-daily-sync
 

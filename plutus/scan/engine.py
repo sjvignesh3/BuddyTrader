@@ -233,13 +233,25 @@ class ScanEngine:
 
     @staticmethod
     def _normalise_decimals(row: Dict[str, Any]) -> None:
-        """Coerce numeric-ish fields to Decimal in place."""
-        # Money-safety: every column whose registry dtype is DECIMAL comes
-        # back from Supabase as `str` — convert once, up-front.
+        """Coerce numeric-ish fields to Decimal in place.
+
+        Money-safety boundary: PostgREST serialises NUMERIC as a JSON
+        number, which the supabase client parses into FLOAT (older
+        stacks returned str — handle both). Floats are converted via
+        Decimal(str(x)) — the shortest-repr round-trip is exact for
+        every NUMERIC(p<=15) value we store. Strategies refuse raw
+        floats, so this is the one sanctioned conversion point.
+        """
         for k, v in list(row.items()):
             if v is None or isinstance(v, (Decimal, bool)):
                 continue
-            if isinstance(v, str) and _looks_numeric(v):
+            if isinstance(v, float):
+                dec = to_decimal(v)
+                if dec is not None:
+                    row[k] = dec
+                else:
+                    row[k] = None  # NaN/Inf from the wire — treat as missing
+            elif isinstance(v, str) and _looks_numeric(v):
                 dec = to_decimal(v)
                 if dec is not None:
                     row[k] = dec
@@ -351,6 +363,12 @@ class ScanEngine:
             except Exception as exc:  # noqa: BLE001
                 upsert_errors.append(f"scan insert: {type(exc).__name__}: {exc}")
 
+            if scan_id is None and result_rows:
+                # A missing scan id means every scan_result row would be
+                # dropped — that is silent total data loss, surface it.
+                upsert_errors.append(
+                    "scan id lookup returned no row — "
+                    f"{len(result_rows)} scan_results NOT written")
             if scan_id is not None and result_rows:
                 for r in result_rows:
                     r["scan_id"] = scan_id
