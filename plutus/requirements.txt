@@ -1,0 +1,26 @@
+# Plutus — runtime dependencies.
+#
+# Pinned to major-minor floors; upgrades are deliberate (money app).
+# The API package (fastapi/uvicorn) is required because `plutus/api/app.py`
+# still runs locally for dev & unit tests even though production traffic
+# now terminates in the Supabase Edge Function.
+
+# Data ingestion
+yfinance>=0.2.40,<0.3
+pandas>=2.0,<3.0
+requests>=2.31,<3.0
+
+# Supabase client
+supabase>=2.5.0,<3.0
+postgrest>=0.16.0,<0.20
+
+# Local API (dev + tests only in prod topology)
+fastapi>=0.100,<0.120
+uvicorn>=0.23,<0.35
+httpx>=0.24,<0.30           # required by fastapi.testclient
+
+# Config
+python-dotenv>=1.0,<2.0
+
+# Testing
+pytest>=8.0,<9.0

@@ -1,0 +1,88 @@
+# Plutus — Weekly Postgres backup to Supabase Storage.
+#
+# Stage 8 (Hardening).
+#
+# Strategy:
+#   1. `pg_dump` against Supabase Postgres using the DIRECT connection
+#      string (URI includes password + sslmode=require).
+#   2. gzip locally.
+#   3. Upload to Supabase Storage bucket `plutus-backups` via the REST API
+#      (no extra tooling; only curl + a service-role JWT).
+#   4. Retention is enforced by a lifecycle rule on the bucket (30 days),
+#      NOT by this workflow. If you want workflow-side retention, add a
+#      separate cleanup step; leaving it to Storage keeps this file stateless.
+#
+# Required repo secrets:
+#   PLUTUS_SUPABASE_URL           https://<project>.supabase.co
+#   PLUTUS_SUPABASE_SERVICE_KEY   service-role JWT (for Storage upload)
+#   PLUTUS_SUPABASE_DB_URL        postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres?sslmode=require
+#   PLUTUS_ALERT_WEBHOOK          (optional) — alerted on failure
+#
+# Cost: gzipped dump for 300 stocks × 7 y snapshots ~ 20–40 MB. Well
+# inside the free-tier Storage bucket (1 GB).
+name: plutus-weekly-backup
+
+on:
+  schedule:
+    - cron: "0 20 * * 0"   # 20:00 UTC Sunday (01:30 IST Mon)
+  workflow_dispatch:
+
+concurrency:
+  group: plutus-weekly-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLUTUS_SUPABASE_URL: ${{ secrets.PLUTUS_SUPABASE_URL }}
+      PLUTUS_SUPABASE_SERVICE_KEY: ${{ secrets.PLUTUS_SUPABASE_SERVICE_KEY }}
+      PLUTUS_SUPABASE_DB_URL: ${{ secrets.PLUTUS_SUPABASE_DB_URL }}
+      PLUTUS_ALERT_WEBHOOK: ${{ secrets.PLUTUS_ALERT_WEBHOOK }}
+      BUCKET: plutus-backups
+    steps:
+      - name: Install Postgres client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Compute filename
+        id: fn
+        run: |
+          echo "name=plutus-$(date -u +%Y%m%d-%H%M%S).sql.gz" >> "$GITHUB_OUTPUT"
+
+      - name: pg_dump | gzip
+        run: |
+          set -euo pipefail
+          pg_dump \
+            --no-owner \
+            --no-privileges \
+            --format=plain \
+            --dbname="$PLUTUS_SUPABASE_DB_URL" \
+            | gzip -9 > "${{ steps.fn.outputs.name }}"
+          ls -la "${{ steps.fn.outputs.name }}"
+
+      - name: Upload to Supabase Storage
+        run: |
+          set -euo pipefail
+          FILE="${{ steps.fn.outputs.name }}"
+          # Storage REST uploads use the service key as both apikey and Bearer.
+          curl -sS -f \
+            -X POST \
+            -H "apikey: $PLUTUS_SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $PLUTUS_SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/gzip" \
+            -H "x-upsert: true" \
+            --data-binary "@${FILE}" \
+            "${PLUTUS_SUPABASE_URL}/storage/v1/object/${BUCKET}/${FILE}"
+          echo "uploaded ${FILE}"
+
+      - name: Notify on failure
+        if: failure() && env.PLUTUS_ALERT_WEBHOOK != ''
+        env:
+          PAYLOAD: |
+            {"text":"🚨 *Plutus weekly backup FAILED*\nrun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+        run: |
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            --data "$PAYLOAD" "$PLUTUS_ALERT_WEBHOOK" || true

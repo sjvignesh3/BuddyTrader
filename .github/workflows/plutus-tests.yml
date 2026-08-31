@@ -1,0 +1,39 @@
+# CI — run the Plutus unit test suite on every push and PR.
+# Money-safety gates live here (no float in metrics/sync/api).
+name: plutus-tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plutus/**"
+      - "supabase/functions/**"
+      - ".github/workflows/plutus-*.yml"
+  pull_request:
+    paths:
+      - "plutus/**"
+      - "supabase/functions/**"
+      - ".github/workflows/plutus-*.yml"
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: plutus/requirements.txt
+      - run: pip install -r plutus/requirements.txt
+      - run: python -m pytest plutus/ -q
+
+  no-float-in-money-paths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Grep for float() in money-touching packages
+        run: |
+          set -e
+          ! grep -Rn '\bfloat(' plutus/metrics/ plutus/sync/ plutus/fundamentals/ plutus/api/ \
+            || (echo "float() found in money path — banned" && exit 1)

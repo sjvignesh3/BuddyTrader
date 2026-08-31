@@ -1,0 +1,128 @@
+"""
+Envelope Strategy — bit-for-bit port of backend/app/strategies/envelope.py.
+
+Rules (from UserData/strategy_rules.json):
+  BUY_ZONE     : below_200dma_pct >= 14.0  -> Score 100
+  OPPORTUNITY  : below_200dma_pct >= 9.0   -> Score 70
+  NO_SIGNAL    : below_200dma_pct <  9.0   -> Score 0
+
+All comparisons use Decimal — no float() calls anywhere.
+"""
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Any, Dict
+
+from plutus.registry.types import to_decimal
+from plutus.scan.base import (
+    STATUS_BUY_ZONE,
+    STATUS_ERROR,
+    STATUS_NO_SIGNAL,
+    STATUS_OPPORTUNITY,
+    Strategy,
+    StrategyResult,
+)
+
+
+DEFAULT_BUY_ZONE_PCT = Decimal("14.0")
+DEFAULT_OPPORTUNITY_PCT = Decimal("9.0")
+DEFAULT_SCORE_MAP = {
+    STATUS_BUY_ZONE: 100,
+    STATUS_OPPORTUNITY: 70,
+    STATUS_NO_SIGNAL: 0,
+}
+
+
+class EnvelopeStrategy(Strategy):
+
+    @property
+    def strategy_id(self) -> str:
+        return "envelope_200dma"
+
+    @property
+    def strategy_name(self) -> str:
+        return "Envelope"
+
+    def evaluate(self, snapshot: Dict[str, Any], config: Dict[str, Any]) -> StrategyResult:
+        symbol = snapshot.get("symbol", "?")
+        errors: list[str] = []
+
+        # -- extract inputs --------------------------------------------------
+        try:
+            below_dma_pct = self._get_decimal(snapshot, "below_200dma_pct")
+            dma_200 = self._get_decimal(snapshot, "dma_200")
+            close = self._get_decimal(snapshot, "close")
+        except TypeError as exc:
+            return StrategyResult(
+                strategy_id=self.strategy_id,
+                strategy_name=self.strategy_name,
+                symbol=symbol,
+                status=STATUS_ERROR,
+                score=0,
+                reasons=[str(exc)],
+                errors=[str(exc)],
+            )
+
+        if below_dma_pct is None:
+            errors.append("below_200dma_pct missing — cannot evaluate envelope")
+            return StrategyResult(
+                strategy_id=self.strategy_id,
+                strategy_name=self.strategy_name,
+                symbol=symbol,
+                status=STATUS_ERROR,
+                score=0,
+                reasons=errors,
+                metrics_snapshot={
+                    "below_200dma_pct": None,
+                    "dma_200": dma_200,
+                    "close": close,
+                },
+                errors=errors,
+            )
+
+        # -- resolve thresholds ---------------------------------------------
+        inputs = (config or {}).get("inputs", {}) or {}
+        buy_zone_pct = to_decimal(
+            inputs.get("buy_zone_below_dma_pct")
+        ) or DEFAULT_BUY_ZONE_PCT
+        opportunity_pct = to_decimal(
+            inputs.get("opportunity_below_dma_pct")
+        ) or DEFAULT_OPPORTUNITY_PCT
+        score_map = (config or {}).get("score_map") or DEFAULT_SCORE_MAP
+
+        # -- decision -------------------------------------------------------
+        if below_dma_pct >= buy_zone_pct:
+            status = STATUS_BUY_ZONE
+            reasons = [
+                f"Price is {below_dma_pct:.1f}% below 200 DMA "
+                f"(threshold: {buy_zone_pct}%)"
+            ]
+        elif below_dma_pct >= opportunity_pct:
+            status = STATUS_OPPORTUNITY
+            reasons = [
+                f"Price is {below_dma_pct:.1f}% below 200 DMA; "
+                f"suitable for GTT watch (threshold: {opportunity_pct}%)"
+            ]
+        else:
+            status = STATUS_NO_SIGNAL
+            reasons = [
+                f"Price is only {below_dma_pct:.1f}% below 200 DMA "
+                f"(need {opportunity_pct}%+)"
+            ]
+
+        return StrategyResult(
+            strategy_id=self.strategy_id,
+            strategy_name=self.strategy_name,
+            symbol=symbol,
+            status=status,
+            score=self._score_from_map(score_map, status),
+            reasons=reasons,
+            metrics_snapshot={
+                "below_200dma_pct": below_dma_pct,
+                "dma_200": dma_200,
+                "close": close,
+                "threshold_buy_zone_pct": buy_zone_pct,
+                "threshold_opportunity_pct": opportunity_pct,
+            },
+            errors=errors,
+        )
