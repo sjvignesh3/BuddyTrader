@@ -35,6 +35,37 @@ SNAPSHOT_CONFLICT = ("symbol", "snapshot_date")
 SYNC_JOBS_TABLE = "sync_jobs"
 SYNC_JOBS_CONFLICT = ("job_type", "as_of_date")
 DEFAULT_JOB_TYPE = "daily_sync"
+RATIOS_TABLE = "screener_ratios"
+
+
+def _default_load_screener_ratios(client: Any = None) -> Dict[str, Dict[str, Any]]:
+    """Latest weekly Screener ratios, keyed by symbol, Decimal-typed.
+
+    One SELECT per run (the table is one row per symbol). PostgREST returns
+    NUMERIC as float — converted here, the read boundary. Any failure
+    returns {} so the daily sync still runs (valuation fields stay NULL
+    with a per-symbol error note)."""
+    from plutus.registry.types import to_decimal
+    try:
+        cli = client if client is not None else sb.get_client()
+        res = (cli.table(RATIOS_TABLE)
+               .select("symbol,market_cap,pe,pb")
+               .execute())
+        rows = getattr(res, "data", None) or []
+        out: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            sym = r.get("symbol")
+            if not sym:
+                continue
+            out[sym] = {
+                "market_cap": to_decimal(r.get("market_cap")),
+                "pe": to_decimal(r.get("pe")),
+                "pb": to_decimal(r.get("pb")),
+            }
+        return out
+    except Exception as exc:  # noqa: BLE001 — degraded, not fatal
+        logger.warning("screener_ratios load failed: %s", exc)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +162,10 @@ class DailySyncWorker:
     fetch_info: Callable[[str], Result[Dict[str, Any]]] = yf.fetch_info
     fetch_history: Callable[..., Result[Any]] = yf.fetch_history
     upsert: Callable[..., Any] = sb.bulk_upsert
+    load_screener_ratios: Callable[..., Dict[str, Dict[str, Any]]] = _default_load_screener_ratios
     job_type: str = DEFAULT_JOB_TYPE
+    # Populated once per run_all from the screener_ratios table.
+    _ratios_by_symbol: Optional[Dict[str, Dict[str, Any]]] = None
 
     # ---- Single symbol ----------------------------------------------------
     def run_symbol(
@@ -168,12 +202,17 @@ class DailySyncWorker:
                 return rep, None
 
             meta = extract_meta(info_res.value or {})
+            if self._ratios_by_symbol is None:
+                # run_symbol called directly (not via run_all) — load once.
+                self._ratios_by_symbol = self.load_screener_ratios(
+                    client=self.supabase_client)
             inputs = SnapshotInputs(
                 symbol=symbol,
                 snapshot_date=as_of,
                 bars=bars,
                 info=info_res.value or {},
                 meta=meta,
+                screener_ratios=self._ratios_by_symbol.get(symbol),
             )
             snap = compute_snapshot(inputs)
             if snap.get("errors"):
@@ -201,6 +240,10 @@ class DailySyncWorker:
         rows_to_write: List[Dict[str, Any]] = []
         symbols_ok = 0
         symbols_failed = 0
+
+        # One SELECT for the whole run: latest weekly Screener PE/PB/MCap.
+        self._ratios_by_symbol = self.load_screener_ratios(
+            client=self.supabase_client)
 
         for sym in symbols:
             rep, row = self.run_symbol(sym, as_of, dry_run=dry_run)

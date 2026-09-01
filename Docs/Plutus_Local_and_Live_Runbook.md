@@ -401,27 +401,31 @@ OK
 
 ---
 
-### 4.6 Configure backend (screener.in)
+### 4.6 Configure Screener.in credentials (REQUIRED for the quarterly sync)
 
-This step is **optional** — only needed if you want quarterly fundamentals from screener.in.
+**Tier B (quarterly fundamentals) is sourced from Screener.in** — the same
+authenticated front-page fetch proven in legacy Buddy (quarterly results
+table, top ratios, quick ratios, shareholding pattern). Screener renders
+data only for logged-in users, so credentials are required; the quarterly
+worker aborts fast without them.
 
-```bash
-cd backend
-cp .env.example .env
-```
-
-Fill in:
+Add to `plutus/.env` (NOT backend/.env — that belongs to legacy Buddy):
 
 ```dotenv
 SCREENER_EMAIL=your@email.com
 SCREENER_PASSWORD=yourpassword
+PLUTUS_SCREENER_COOLDOWN_S=15    # pause between symbols (rate-limit etiquette)
 ```
 
-Return to repo root:
-
-```bash
-cd ..
-```
+Notes:
+- One login per run; HTTP 429 on login gets a 65 s back-off + one retry.
+- The cooldown activates when more than 5 symbols are synced (legacy
+  Buddy used 20 s; 15 s is fine at quarterly cadence). Full 440-symbol
+  run ≈ 2 hours — the GitHub Actions workflow timeout is set to 240 min.
+- Custom "quick ratios" on your Screener account (5Yrs PE, 5Yrs PBV,
+  Net Debt to Equity, Pledged percentage) are fetched via the same Ajax
+  call the browser makes and stored when present; the public chart API
+  fills 5Y PE/PBV averages when the quick ratios are absent.
 
 ---
 
@@ -983,7 +987,13 @@ python -m plutus.scripts.run_quarterly_sync \
   --symbols RELIANCE.NS,TCS.NS
 ```
 
-The quarterly sync fetches ROCE, ROE, promoter pledging, and EPS from yfinance's `.info` dict and upserts into `fundamentals`. It is slower than the daily sync (one HTTP call per symbol with a heavier payload).
+The quarterly sync fetches everything from **Screener.in's authenticated
+company page** (see §4.6): quarterly Sales/OPM/PBT/Net Profit (all quarters
+shown), ROCE, ROE, Net Debt to Equity, pledging, 5Y PE/PBV, and the
+shareholding pattern (Promoters / FIIs+DIIs / Public). Money lands in the
+DB as absolute rupees (Screener prints ₹ Cr; converted once at extraction).
+It is slower than the daily sync by design — a 15 s cooldown separates
+symbols to respect Screener's rate limits.
 
 **Manual overrides (CSV upload for ROCE / ROE / pledging corrections):**
 
@@ -1324,10 +1334,19 @@ curl -s -o /dev/null -w "%{http_code}" "$FRONTEND"
 
 | Workflow | Cron | UTC Time | IST Time | Purpose |
 |----------|------|----------|----------|---------|
-| `plutus-daily-sync` | `30 12 * * 1-5` | 12:30 Mon–Fri | 18:00 Mon–Fri | OHLCV sync + scan + canary |
-| `plutus-quarterly-sync` | `0 2 * * 0` | 02:00 Sunday | 07:30 Sunday | Fundamentals refresh |
+| `plutus-daily-sync` | `30 12 * * 1-5` | 12:30 Mon–Fri | 18:00 Mon–Fri | yfinance OHLCV (AdjClose) sync + scan + canary |
+| `plutus-weekly-ratios` | `30 23 * * 5` | 23:30 Friday | **05:00 Saturday** | Screener PE / PB / Market Cap → `screener_ratios` |
+| `plutus-quarterly-sync` | `0 2 * * 0` | 02:00 Sunday | 07:30 Sunday | Screener fundamentals refresh |
 | `plutus-weekly-backup` | `0 20 * * 0` | 20:00 Sunday | 01:30 Monday | DB backup to Storage |
 | `plutus-tests` | on push/PR | — | — | CI unit tests |
+
+**Source separation (locked):** prices & price-derived metrics (OHLC, AdjClose,
+200-DMA, ATH, 52W, rally, trend) = **yfinance daily**, exactly as BuddyTrader.
+Valuation (PE / PB / Market Cap) = **Screener.in weekly** (Saturday 05:00 IST);
+the daily sync stamps the stored values into each day's snapshot. Quarterly
+fundamentals (results table, ROCE/ROE, holdings, pledging, 5Y PE/PBV, net D/E)
+= **Screener.in quarterly**. Retired fields (no longer populated):
+`forward_pe`, `debt_to_equity_pct`, `ebitda_ttm`.
 
 **Concurrency:** All workflows have `cancel-in-progress: false`. A mid-run job is never killed by a subsequent trigger.
 

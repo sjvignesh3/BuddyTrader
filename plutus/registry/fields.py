@@ -32,6 +32,7 @@ class FieldSource(str, Enum):
     YF_HISTORY = "yfinance.history"        # OHLCV DataFrame
     YF_QUARTERLY = "yfinance.quarterly"    # ``.quarterly_financials`` etc.
     YF_HOLDERS = "yfinance.major_holders"  # Shareholding table
+    SCREENER = "screener.in"               # Authenticated Screener.in page
     DERIVED = "derived"                    # Computed from other fields
     MANUAL = "manual"                      # Admin CSV upload (pledging, ROE)
     CSV = "csv"                            # From the master universe CSV
@@ -166,20 +167,26 @@ _FIELDS: list[Field] = [
           yf_key="Volume", notes="Traded shares."),
 
     # -- Valuation (from yfinance.info) ---------------------------------
-    Field("market_cap", "daily_snapshots", FieldDType.DECIMAL, FieldSource.YF_INFO, FieldTier.A_DAILY,
-          precision=(20, 2), unit="₹ absolute", yf_key="marketCap",
-          notes="Store raw ₹ value. Frontend converts to ₹Cr."),
-    Field("pe_current", "daily_snapshots", FieldDType.DECIMAL, FieldSource.YF_INFO, FieldTier.A_DAILY,
-          precision=(10, 2), unit="ratio", yf_key="trailingPE"),
+    Field("market_cap", "daily_snapshots", FieldDType.DECIMAL, FieldSource.SCREENER, FieldTier.A_DAILY,
+          precision=(20, 2), unit="₹ absolute",
+          notes="From screener_ratios (weekly Saturday sync); stamped into "
+                "each day's snapshot by the daily worker. Frontend shows ₹Cr."),
+    Field("pe_current", "daily_snapshots", FieldDType.DECIMAL, FieldSource.SCREENER, FieldTier.A_DAILY,
+          precision=(10, 2), unit="ratio",
+          notes="Screener 'Stock P/E' (weekly) — same TTM convention as pe_5y_avg."),
     Field("forward_pe", "daily_snapshots", FieldDType.DECIMAL, FieldSource.YF_INFO, FieldTier.A_DAILY,
-          precision=(10, 2), unit="ratio", yf_key="forwardPE"),
-    Field("pb_current", "daily_snapshots", FieldDType.DECIMAL, FieldSource.YF_INFO, FieldTier.A_DAILY,
-          precision=(10, 2), unit="ratio", yf_key="priceToBook"),
+          precision=(10, 2), unit="ratio", yf_key="forwardPE",
+          notes="RETIRED (2026-09-01): column kept, no longer populated."),
+    Field("pb_current", "daily_snapshots", FieldDType.DECIMAL, FieldSource.SCREENER, FieldTier.A_DAILY,
+          precision=(10, 2), unit="ratio",
+          notes="Screener Current Price / Book Value (weekly)."),
     Field("debt_to_equity_pct", "daily_snapshots", FieldDType.DECIMAL, FieldSource.YF_INFO, FieldTier.A_DAILY,
           precision=(8, 4), unit="percent (0-100)", yf_key="debtToEquity",
-          notes="yfinance returns D/E as a percent (36.65 = 0.37x ratio). Store raw."),
+          notes="RETIRED (2026-09-01): column kept, no longer populated. "
+                "Net D/E lives in fundamentals (screener quick ratio)."),
     Field("ebitda_ttm", "daily_snapshots", FieldDType.DECIMAL, FieldSource.YF_INFO, FieldTier.A_DAILY,
-          precision=(20, 2), unit="₹ absolute", yf_key="ebitda"),
+          precision=(20, 2), unit="₹ absolute", yf_key="ebitda",
+          notes="RETIRED (2026-09-01): column kept, no longer populated."),
     Field("revenue_ttm", "daily_snapshots", FieldDType.DECIMAL, FieldSource.YF_INFO, FieldTier.A_DAILY,
           precision=(20, 2), unit="₹ absolute", yf_key="totalRevenue"),
     Field("profit_margin_pct", "daily_snapshots", FieldDType.DECIMAL, FieldSource.YF_INFO, FieldTier.A_DAILY,

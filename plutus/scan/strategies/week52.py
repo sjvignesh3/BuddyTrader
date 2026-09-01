@@ -1,5 +1,5 @@
 """
-52 Week High Low Strategy ??? bit-for-bit port of
+52 Week High Low Strategy — bit-for-bit port of
 backend/app/strategies/week52_high_low.py.
 
 Rules (from UserData/strategy_rules.json):
@@ -66,7 +66,7 @@ class Week52HighLowStrategy(Strategy):
 
         if dist_from_low is None:
             errors.append(
-                "distance_from_52w_low_pct missing ??? cannot evaluate 52W High/Low"
+                "distance_from_52w_low_pct missing — cannot evaluate 52W High/Low"
             )
             return StrategyResult(
                 strategy_id=self.strategy_id,

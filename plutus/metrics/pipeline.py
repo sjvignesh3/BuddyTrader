@@ -21,12 +21,10 @@ from typing import Any, Dict, List, Optional, Sequence
 from plutus.adapters.validators import (
     sanity_check_count,
     sanity_check_price,
-    sanity_check_ratio,
 )
 from plutus.metrics.ath import compute_ath, gap_from_ath_pct
 from plutus.metrics.cap_bucket import classify_market_cap
 from plutus.metrics.dma import compute_below_dma_pct, compute_dma
-from plutus.metrics.pe_pb import pick_forward_pe, pick_pb, pick_pe
 from plutus.metrics.rally import OHLCVBar, compute_rally_metrics
 from plutus.metrics.week52 import (
     compute_52w_high,
@@ -47,6 +45,10 @@ class SnapshotInputs:
     info: Dict[str, Any]                    # yfinance .info payload
     meta: Dict[str, Any] = field(default_factory=dict)
     trend_days: int = 7                     # look-back for price_change_nd_pct
+    # Latest Screener.in valuation ratios (weekly sync — see
+    # sync/weekly_ratios.py). Keys: pe, pb, market_cap (ABSOLUTE ₹),
+    # all Decimal. None/{} => valuation fields stay NULL with an error note.
+    screener_ratios: Optional[Dict[str, Any]] = None
 
 
 def _safe(callable_, *args, errors: List[str], label: str, **kwargs):
@@ -77,10 +79,9 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
         # OHLCV — filled below if we have bars
         "open": None, "high": None, "low": None, "close": None,
         "adj_close": None, "volume": None,
-        # Derived
+        # Valuation (Screener.in, weekly) + derived
         "market_cap": None, "cap_bucket": None,
-        "pe_current": None, "forward_pe": None, "pb_current": None,
-        "debt_to_equity_pct": None, "ebitda_ttm": None,
+        "pe_current": None, "pb_current": None,
         "revenue_ttm": None, "profit_margin_pct": None,
         "price_change_nd_pct": None,
         "dma_200": None, "below_200dma_pct": None,
@@ -180,34 +181,27 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
         errors=errors, label="fall_from_ath_pct",
     )
 
-    # ----- Market cap + bucket -----
-    mc_raw = inp.info.get("marketCap") if inp.info else None
-    mc: Optional[Decimal] = None
-    if mc_raw is not None:
-        try:
-            mc = to_decimal(mc_raw)
-            row["market_cap"] = mc
-        except Exception as exc:
-            errors.append(f"market_cap: {type(exc).__name__}: {exc}")
+    # ----- Valuation: PE / PB / Market Cap from Screener.in (weekly) -----
+    # Source decision (2026-09-01): these come from the `screener_ratios`
+    # table (Saturday sync), NOT yfinance — same source and TTM convention
+    # as the 5Y averages the screener rules compare against.
+    ratios = inp.screener_ratios or {}
+    mc = _safe(to_decimal, ratios.get("market_cap"),
+               errors=errors, label="market_cap")
+    row["market_cap"] = mc
     row["cap_bucket"] = _safe(classify_market_cap, mc,
                               errors=errors, label="cap_bucket")
-
-    # ----- PE / PB -----
-    row["pe_current"] = _safe(pick_pe, inp.info,
+    row["pe_current"] = _safe(to_decimal, ratios.get("pe"),
                               errors=errors, label="pe_current")
-    row["forward_pe"] = _safe(pick_forward_pe, inp.info,
-                              errors=errors, label="forward_pe")
-    row["pb_current"] = _safe(pick_pb, inp.info,
+    row["pb_current"] = _safe(to_decimal, ratios.get("pb"),
                               errors=errors, label="pb_current")
+    if not ratios:
+        errors.append(
+            "valuation: no screener_ratios for symbol — run the weekly "
+            "ratios sync (pe/pb/market_cap left NULL)")
 
     # ----- Other .info-sourced Tier-A fields -----
     if inp.info:
-        row["debt_to_equity_pct"] = _safe(
-            sanity_check_ratio, inp.info.get("debtToEquity"),
-            errors=errors, label="debt_to_equity_pct", field="debt_to_equity_pct")
-        row["ebitda_ttm"] = _safe(
-            to_decimal, inp.info.get("ebitda"),
-            errors=errors, label="ebitda_ttm")
         row["revenue_ttm"] = _safe(
             to_decimal, inp.info.get("totalRevenue"),
             errors=errors, label="revenue_ttm")

@@ -18,11 +18,12 @@ class TestPipelineHappy:
             # snapshot date, and the 200-DMA needs the full window intact.
             snapshot_date=bars[-1].d,
             bars=bars,
-            info={"marketCap": 60_000 * 10_000_000,
-                  "trailingPE": 25.0, "priceToBook": 3.0,
-                  "volume": 1_000_000},
+            info={"volume": 1_000_000},
             meta={"regularMarketPrice": 100.00,
                   "fiftyTwoWeekHigh": 100.00, "fiftyTwoWeekLow": 100.00},
+            # Valuation comes from the weekly Screener ratios table.
+            screener_ratios={"market_cap": Decimal(60_000 * 10_000_000),
+                             "pe": Decimal("25.00"), "pb": Decimal("3.00")},
         )
         row = compute_snapshot(inp)
 
@@ -58,36 +59,38 @@ class TestPipelinePartialFailure:
         assert len(row["errors"]) == 1
         assert "no OHLCV" in row["errors"][0]
 
-    def test_unparseable_market_cap_is_treated_as_missing(self) -> None:
-        # to_decimal returns None for garbage strings — pipeline should
-        # silently treat as missing rather than logging spurious errors.
+    def test_missing_screener_ratios_leaves_valuation_null(self) -> None:
+        # No weekly ratios row for the symbol -> valuation NULL + error note,
+        # price-action metrics still computed.
         bars = flat_series(price="50.00", n=5)
         inp = SnapshotInputs(
             symbol="BAD.NS", snapshot_date=date(2024, 1, 5),
-            bars=bars,
-            info={"marketCap": "not-a-number"},
+            bars=bars, info={},
         )
         row = compute_snapshot(inp)
         assert row["market_cap"] is None
         assert row["cap_bucket"] is None
+        assert row["pe_current"] is None
+        assert any("screener_ratios" in e for e in row["errors"])
         # Other fields still computed cleanly. (dma_200 is None here by
         # design: 5 bars < the 200-bar window — a fake DMA must not ship.)
         assert row["close"] == Decimal("50.00")
         assert row["dma_200"] is None
         assert any("dma_200" in e for e in row["errors"])
 
-    def test_type_error_market_cap_is_recorded(self) -> None:
-        # A bool triggers TypeError inside to_decimal — pipeline must catch.
+    def test_garbage_screener_ratio_values_become_none(self) -> None:
         bars = flat_series(price="50.00", n=5)
         inp = SnapshotInputs(
-            symbol="BOOLMC.NS", snapshot_date=date(2024, 1, 5),
-            bars=bars,
-            info={"marketCap": True},
+            symbol="BAD.NS", snapshot_date=date(2024, 1, 5),
+            bars=bars, info={},
+            screener_ratios={"market_cap": "not-a-number",
+                             "pe": None, "pb": "NaN"},
         )
         row = compute_snapshot(inp)
         assert row["market_cap"] is None
         assert row["cap_bucket"] is None
-        assert any("market_cap" in e for e in row["errors"])
+        assert row["pe_current"] is None
+        assert row["pb_current"] is None
 
 
 class TestPipelineRegistryContract:

@@ -117,6 +117,12 @@ def _fail_fetch_info(sym: str) -> Result[dict]:
     return _ok_fetch_info(sym)
 
 
+def _fake_ratios_loader(client=None) -> Dict[str, Dict[str, Any]]:
+    """Weekly Screener ratios stub — PE/PB/MCap now come from this table."""
+    return {"RELIANCE.NS": {"market_cap": Decimal("800000000000"),
+                            "pe": Decimal("22.50"), "pb": Decimal("4.10")}}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -126,6 +132,7 @@ class TestRunSymbol:
             fetch_info=_ok_fetch_info,
             fetch_history=_ok_fetch_history,
             upsert=_FakeUpsert(),
+            load_screener_ratios=_fake_ratios_loader,
         )
         rep, row = w.run_symbol("RELIANCE.NS", date(2024, 6, 1))
         assert rep.ok
@@ -135,6 +142,9 @@ class TestRunSymbol:
         assert row["cap_bucket"] in ("Large", "Mid", "Small", "Micro")
         # market_cap must be Decimal, never float — money-safety gate
         assert isinstance(row["market_cap"], Decimal)
+        # Valuation is Screener-sourced (weekly table), not yfinance .info.
+        assert row["pe_current"] == Decimal("22.50")
+        assert row["pb_current"] == Decimal("4.10")
 
     def test_empty_history_skipped(self):
         def _empty_hist(sym, **_):

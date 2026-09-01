@@ -130,6 +130,33 @@ def snapshots_for_pool(
     return _rows(res)
 
 
+def snapshots_for_symbols(
+    symbols: Sequence[str],
+    snapshot_date: Optional[str] = None,
+    *,
+    client: Optional[Any] = None,
+    limit: int = 500,
+) -> List[Dict[str, Any]]:
+    """Latest (or given-date) snapshots for an explicit symbol list —
+    powers the PlayArea watchlist, which is not a DB pool."""
+    cli = _client(client)
+    symbols = [s for s in symbols if s]
+    if not symbols:
+        return []
+    d = snapshot_date or latest_snapshot_date(client=cli)
+    if not d:
+        return []
+    res = (
+        cli.table("daily_snapshots")
+           .select("*")
+           .in_("symbol", symbols)
+           .eq("snapshot_date", d)
+           .limit(limit)
+           .execute()
+    )
+    return _rows(res)
+
+
 def snapshot_history(
     symbol: str,
     *,
@@ -181,6 +208,37 @@ def scan_results(
         q = q.in_("status", list(status_in))
     res = q.execute()
     return _rows(res)
+
+
+def latest_scan_results_for_symbols(
+    symbols: Sequence[str],
+    *,
+    client: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Most recent scan result per (symbol, strategy) across ANY pool scan.
+
+    PlayArea symbols carry no pool scan of their own; their signals come
+    from whichever pool scan (F40/E40/S200) last evaluated them. Rows are
+    fetched newest-first and de-duplicated per (symbol, strategy_id)."""
+    cli = _client(client)
+    symbols = [s for s in symbols if s]
+    if not symbols:
+        return []
+    res = (
+        cli.table("scan_results")
+           .select("*")
+           .in_("symbol", symbols)
+           .order("id", desc=True)
+           .limit(2000)
+           .execute()
+    )
+    rows = _rows(res)
+    seen: Dict[Any, Dict[str, Any]] = {}
+    for r in rows:  # newest first — first hit wins
+        key = (r.get("symbol"), r.get("strategy_id"))
+        if key not in seen:
+            seen[key] = r
+    return list(seen.values())
 
 
 # --- Sync jobs ---------------------------------------------------------------

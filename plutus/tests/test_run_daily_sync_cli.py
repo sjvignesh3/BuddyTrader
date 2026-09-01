@@ -39,6 +39,71 @@ class _StubWorker:
         )
 
 
+class TestFetchOnMissEnrichment:
+    """Legacy cache contract: symbols missing from fundamentals /
+    screener_ratios are fetched live right after the daily sync."""
+
+    @dataclass
+    class _WorkerRep:
+        symbols_ok: int
+        per_symbol: List[Any]
+
+    class _FakeEnrichWorker:
+        def __init__(self):
+            self.calls: List[List[str]] = []
+
+        def run_all(self, symbols, as_of=None, *, dry_run=False):
+            self.calls.append(list(symbols))
+            rep = TestFetchOnMissEnrichment._WorkerRep(
+                symbols_ok=len(symbols), per_symbol=[])
+            return rep
+
+    def test_only_missing_symbols_are_fetched(self):
+        have = {"fundamentals": {"A.NS"}, "screener_ratios": {"A.NS", "B.NS"}}
+
+        def _finder(symbols, table, supabase_client=None):
+            return [s for s in symbols if s not in have[table]]
+
+        qw = self._FakeEnrichWorker()
+        rw = self._FakeEnrichWorker()
+        out = cli.enrich_missing_fundamentals(
+            ["A.NS", "B.NS", "C.NS"],
+            quarterly_worker=qw, ratios_worker=rw, find_missing=_finder)
+        assert qw.calls == [["B.NS", "C.NS"]]
+        assert rw.calls == [["C.NS"]]
+        assert out["fundamentals_fetched"] == 2
+        assert out["ratios_fetched"] == 1
+        assert out["errors"] == []
+
+    def test_nothing_missing_no_worker_calls(self):
+        qw = self._FakeEnrichWorker()
+        rw = self._FakeEnrichWorker()
+        out = cli.enrich_missing_fundamentals(
+            ["A.NS"], quarterly_worker=qw, ratios_worker=rw,
+            find_missing=lambda symbols, table, supabase_client=None: [])
+        assert qw.calls == [] and rw.calls == []
+        assert out["missing_fundamentals"] == []
+
+    def test_enrichment_never_raises(self):
+        def _boom(*a, **k):
+            raise RuntimeError("db down")
+        out = cli.enrich_missing_fundamentals(["A.NS"], find_missing=_boom)
+        assert out["errors"] and "db down" in out["errors"][0]
+
+    def test_no_enrich_flag_skips(self, capsys):
+        w = _StubWorker()
+        called = {"n": 0}
+        # Patch the module fn to count invocations.
+        orig = cli.enrich_missing_fundamentals
+        cli.enrich_missing_fundamentals = lambda *a, **k: called.__setitem__("n", called["n"] + 1) or {}
+        try:
+            rc = cli.main(["--symbols", "A.NS", "--no-enrich"], worker=w)
+        finally:
+            cli.enrich_missing_fundamentals = orig
+        assert rc == 0
+        assert called["n"] == 0
+
+
 class TestCli:
     def test_symbols_arg_bypasses_db(self, capsys):
         w = _StubWorker()

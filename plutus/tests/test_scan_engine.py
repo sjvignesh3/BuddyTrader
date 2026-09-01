@@ -265,6 +265,15 @@ class TestScanEngineFundamentalsMerge:
                 "roe": Decimal("20"),
                 "net_debt_to_equity": Decimal("0.15"),
                 "promoter_pledging_pct": Decimal("0"),
+                # Quarter aggregates (the 11-check score's ATH/OPM rules).
+                "latest_q_sales": Decimal("100"),
+                "latest_q_pbt": Decimal("20"),
+                "latest_q_net_profit": Decimal("15"),
+                "ath_q_sales": Decimal("100"),
+                "ath_q_pbt": Decimal("20"),
+                "ath_q_net_profit": Decimal("15"),
+                "latest_opm": Decimal("25"),
+                "avg_opm": Decimal("24"),
             }}
 
         upserter = _FakeUpsert()
@@ -280,9 +289,10 @@ class TestScanEngineFundamentalsMerge:
             snapshot_date=date(2024, 6, 1),
             strategy_ids=["fundamental_screener"],
         )
-        # 1 stock, all 6 rules pass → PASS is an opportunity.
+        # 1 stock, all 11 checks pass → 11 points, PASS is an opportunity.
         assert report.opportunities_count == 1
         assert report.per_result[0].status == "PASS"
+        assert report.per_result[0].score == 11
 
 
 class TestScanEngineHelpers:

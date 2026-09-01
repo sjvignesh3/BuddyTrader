@@ -71,8 +71,71 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
                     help="Cap number of symbols processed.")
     ap.add_argument("--as-of", type=str, default=None,
                     help="Override snapshot date (YYYY-MM-DD).")
+    ap.add_argument("--no-enrich", action="store_true",
+                    help="Skip the fetch-on-miss Screener enrichment for "
+                         "symbols with no fundamentals / ratios in the DB.")
     ap.add_argument("--verbose", action="store_true")
     return ap.parse_args(argv)
+
+
+# ---------------------------------------------------------------------------
+# Fetch-on-miss enrichment — the legacy BuddyTrader cache contract:
+# "only symbols NOT yet in the cache are fetched live". Any symbol that just
+# synced but has NO fundamentals row / NO screener_ratios row is fetched
+# from Screener.in right now, so a fresh PlayArea addition (or newly seeded
+# stock) is fully scored by the scan step that follows this CLI.
+# ---------------------------------------------------------------------------
+def _find_missing(symbols: Sequence[str], table: str,
+                  supabase_client: Any = None) -> List[str]:
+    from plutus.adapters.supabase_client import get_client
+    cli = supabase_client if supabase_client is not None else get_client()
+    res = (cli.table(table).select("symbol")
+           .in_("symbol", list(symbols)).execute())
+    have = {r.get("symbol") for r in (getattr(res, "data", None) or [])}
+    return [s for s in symbols if s not in have]
+
+
+def enrich_missing_fundamentals(
+    symbols: Sequence[str],
+    *,
+    supabase_client: Any = None,
+    quarterly_worker: Any = None,
+    ratios_worker: Any = None,
+    find_missing: Any = None,
+) -> dict:
+    """Best-effort: never raises, never changes the daily sync's exit code."""
+    summary: dict = {"fundamentals_fetched": 0, "ratios_fetched": 0,
+                     "missing_fundamentals": [], "missing_ratios": [],
+                     "errors": []}
+    finder = find_missing or _find_missing
+    try:
+        missing_fund = finder(symbols, "fundamentals",
+                              supabase_client=supabase_client)
+        missing_ratios = finder(symbols, "screener_ratios",
+                                supabase_client=supabase_client)
+        summary["missing_fundamentals"] = missing_fund
+        summary["missing_ratios"] = missing_ratios
+
+        if missing_fund:
+            from plutus.sync.quarterly import QuarterlySyncWorker
+            qw = quarterly_worker or QuarterlySyncWorker()
+            qrep = qw.run_all(missing_fund)
+            summary["fundamentals_fetched"] = qrep.symbols_ok
+            summary["errors"].extend(
+                f"fundamentals {s.symbol}: {s.error}"
+                for s in qrep.per_symbol if not s.ok)
+
+        if missing_ratios:
+            from plutus.sync.weekly_ratios import WeeklyRatiosWorker
+            rw = ratios_worker or WeeklyRatiosWorker()
+            rrep = rw.run_all(missing_ratios)
+            summary["ratios_fetched"] = rrep.symbols_ok
+            summary["errors"].extend(
+                f"ratios {s.symbol}: {s.error}"
+                for s in rrep.per_symbol if not s.ok)
+    except Exception as exc:  # noqa: BLE001 — enrichment must not break the sync
+        summary["errors"].append(f"{type(exc).__name__}: {exc}")
+    return summary
 
 
 def _resolve_as_of(raw: Optional[str]) -> date:
@@ -130,6 +193,19 @@ def main(
 
     # One-shot summary to stdout for humans + machines.
     report_json = report.as_json()
+
+    # Fetch-on-miss (legacy cache contract): symbols that synced OK but have
+    # no fundamentals / screener ratios yet are fetched from Screener now,
+    # so the scan that follows can score them. Best-effort — never changes
+    # the exit code.
+    if not args.dry_run and not args.no_enrich:
+        ok_symbols = [s.symbol for s in report.per_symbol if s.ok]
+        if ok_symbols:
+            enrichment = enrich_missing_fundamentals(ok_symbols)
+            report_json["enrichment"] = enrichment
+            if enrichment["errors"]:
+                logger.warning("enrichment errors: %s", enrichment["errors"][:5])
+
     print(json.dumps(report_json, indent=2, default=str))
 
     # Silence-on-green alerting. Never raises — returns None if disabled.

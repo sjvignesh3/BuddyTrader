@@ -28,6 +28,18 @@ export function fmtPct(value: string | number | null | undefined, digits = 2): s
   return `${n.toFixed(digits)}%`;
 }
 
+/** Raw-₹ value → "₹ 17,25,340 Cr" (divide by 1e7). Plan §4.1: market_cap is
+ * stored in absolute rupees; the frontend converts to crores for display. */
+export function fmtCr(value: string | number | null | undefined, digits = 0): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = typeof value === "string" ? Number(value) : value;
+  if (!Number.isFinite(n)) return "—";
+  return `₹${(n / 1e7).toLocaleString("en-IN", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })}${NBSP}Cr`;
+}
+
 /** ISO date → "15 Jan 2025". */
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";

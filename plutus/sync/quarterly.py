@@ -1,19 +1,23 @@
 """
-Quarterly Sync Worker — Plutus Stage 5.
+Quarterly Sync Worker — Tier B via Screener.in.
 
 Shape mirrors Stage 4's DailySyncWorker:
-    * `run_symbol(symbol)` — fetch quarterly_financials + info + holders,
-      extract registry-shaped rows, return them. Never raises.
-    * `run_all(symbols)`   — iterate, batch upsert to `fundamentals`,
-      write one `sync_jobs` row.
+    * `run_symbol(symbol)` — fetch the authenticated Screener bundle,
+      build registry-shaped rows, return them. Never raises.
+    * `run_all(symbols)`   — pre-flight login, iterate with a COOLDOWN
+      between live fetches (Screener rate-limit etiquette, default 15 s),
+      batch upsert to `fundamentals`, write one `sync_jobs` row.
 
-Trigger cadence: manual button ("Sync Fundamentals") or scheduled quarterly
-via pg_cron. Not tied to trading calendar — safe to run any day.
+Source separation (locked): Tier A (daily prices/valuation) = yfinance;
+Tier B (quarterly fundamentals) = Screener.in authenticated page. The
+manual overrides CSV path remains for one-off corrections.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 import uuid
 from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime, timezone
@@ -21,7 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from plutus.adapters import supabase_client as sb
 from plutus.adapters.result import Result
-from plutus.fundamentals.quarterly import extract_quarterly_rows
+from plutus.fundamentals.quarterly import rows_from_bundle
 from plutus.registry.fields import fields_for
 from plutus.sync.worker import _log, SYNC_JOBS_CONFLICT, SYNC_JOBS_TABLE
 
@@ -31,13 +35,47 @@ FUNDAMENTALS_TABLE = "fundamentals"
 FUNDAMENTALS_CONFLICT = ("symbol", "quarter_end_date")
 DEFAULT_JOB_TYPE = "quarterly_sync"
 
+# Cooldown between LIVE Screener fetches. Legacy Buddy used 20 s; 15 s is
+# fine for a quarterly cadence. Applied only when more than the threshold
+# of symbols are fetched (legacy behaviour); small batches use a polite
+# half-second gap.
+DEFAULT_COOLDOWN_S = 15.0
+COOLDOWN_THRESHOLD = 5
+
+
+def _cooldown_seconds() -> float:
+    raw = os.environ.get("PLUTUS_SCREENER_COOLDOWN_S", "").strip()
+    if not raw:
+        return DEFAULT_COOLDOWN_S
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return DEFAULT_COOLDOWN_S
+
 
 # ---------------------------------------------------------------------------
-# yfinance quarterly fetcher (dependency-injected for tests)
+# Screener fetcher (dependency-injected for tests)
 # ---------------------------------------------------------------------------
+_client_singleton: Optional[Any] = None
+
+
+def _get_screener_client() -> Any:
+    """One authenticated ScreenerClient per process (one login per run)."""
+    global _client_singleton
+    if _client_singleton is None:
+        from plutus.fundamentals.screener_client import ScreenerClient
+        _client_singleton = ScreenerClient()
+    return _client_singleton
+
+
+def reset_screener_client() -> None:
+    """Test hook."""
+    global _client_singleton
+    _client_singleton = None
+
+
 def _default_fetch_quarterly(symbol: str) -> Result[Dict[str, Any]]:
-    """Live yfinance fetch — returns dict of DataFrames + info."""
-    from plutus.adapters.yf_client import _retry, _yf
+    """Live Screener.in fetch — returns the parsed bundle."""
     from plutus.adapters.validators import sanity_check_symbol
 
     try:
@@ -45,23 +83,16 @@ def _default_fetch_quarterly(symbol: str) -> Result[Dict[str, Any]]:
     except ValueError as exc:
         return Result.failure(str(exc), symbol=symbol, attempts=0)
 
-    def _do() -> Dict[str, Any]:
-        ticker = _yf().Ticker(sym)
-        payload: Dict[str, Any] = {
-            "info": dict(ticker.info) if ticker.info else {},
-            "quarterly_financials": ticker.quarterly_financials,
-            "major_holders": ticker.major_holders,
-        }
-        # 5y daily closes power pe_5y_avg / pb_5y_avg. Best-effort — the
-        # quarterly row is still valuable without the averages.
-        try:
-            payload["history"] = ticker.history(
-                period="5y", interval="1d", auto_adjust=False, actions=False)
-        except Exception:  # noqa: BLE001
-            payload["history"] = None
-        return payload
-
-    return _retry(_do, symbol=sym, op="quarterly")
+    started = time.monotonic()
+    try:
+        bundle = _get_screener_client().fetch_bundle(sym)
+        latency = int((time.monotonic() - started) * 1000)
+        return Result.success(bundle, symbol=sym, attempts=1,
+                              latency_ms=latency)
+    except Exception as exc:  # noqa: BLE001 — per-symbol isolation
+        latency = int((time.monotonic() - started) * 1000)
+        return Result.failure(f"{type(exc).__name__}: {exc}", symbol=sym,
+                              attempts=1, latency_ms=latency)
 
 
 # ---------------------------------------------------------------------------
@@ -153,16 +184,15 @@ class QuarterlySyncWorker:
             if not res.ok:
                 rep.error = f"fetch_quarterly: {res.error}"
                 return rep, []
-            payload = res.value or {}
-            rows = extract_quarterly_rows(
-                payload.get("quarterly_financials"),
-                info=payload.get("info"),
-                major_holders=payload.get("major_holders"),
-            )
+            bundle = res.value or {}
+            rows = rows_from_bundle(bundle)
             if not rows:
                 rep.error = "no quarterly rows extracted"
                 return rep, []
-            self._attach_5y_averages(rows, payload, rep)
+            if rows[0].get("promoter_pledging_pct") is None:
+                rep.warnings.append(
+                    "pledging not on page (add 'Pledged percentage' quick "
+                    "ratio on screener.in, or use the overrides CSV)")
             projected = [_project_row(symbol, r) for r in rows]
             rep.ok = True
             rep.rows_extracted = len(projected)
@@ -171,41 +201,17 @@ class QuarterlySyncWorker:
             rep.error = f"{type(exc).__name__}: {exc}"
             return rep, []
 
-    @staticmethod
-    def _attach_5y_averages(rows: List[Dict[str, Any]],
-                            payload: Dict[str, Any],
-                            rep: SymbolReport) -> None:
-        """Compute pe_5y_avg / pb_5y_avg and set them on the NEWEST quarter.
-
-        Best-effort: any missing input leaves the columns None and adds a
-        warning. Never raises.
-        """
+    def _preflight_login(self) -> Optional[str]:
+        """Login ONCE before the loop when using the live fetcher, so a bad
+        credential fails the run in seconds instead of burning the cooldown
+        on 400+ identical failures. Returns an error string, or None."""
+        if self.fetch_quarterly is not _default_fetch_quarterly:
+            return None  # injected fetcher (tests) — no network, no login
         try:
-            from plutus.fundamentals.quarterly import (
-                compute_pb_5yr_avg,
-                compute_pe_5yr_avg,
-            )
-            from plutus.registry.types import to_decimal
-            from plutus.sync.history_builder import bars_from_df
-
-            bars = bars_from_df(payload.get("history"))
-            closes = [b.adj_close if b.adj_close is not None else b.close
-                      for b in bars]
-            info = payload.get("info") or {}
-            ni_series = [r.get("net_profit") for r in rows]  # newest first
-            shares = to_decimal(info.get("sharesOutstanding"))
-            bvps = to_decimal(info.get("bookValue"))
-
-            pe5 = compute_pe_5yr_avg(ni_series, shares, closes) if closes else None
-            pb5 = compute_pb_5yr_avg(bvps, closes) if closes else None
-            rows[0]["pe_5y_avg"] = pe5
-            rows[0]["pb_5y_avg"] = pb5
-            if pe5 is None:
-                rep.warnings.append("pe_5y_avg: insufficient inputs")
-            if pb5 is None:
-                rep.warnings.append("pb_5y_avg: insufficient inputs")
+            _get_screener_client().login()
+            return None
         except Exception as exc:  # noqa: BLE001
-            rep.warnings.append(f"5y averages skipped: {type(exc).__name__}: {exc}")
+            return f"{type(exc).__name__}: {exc}"
 
     def run_all(
         self,
@@ -222,7 +228,28 @@ class QuarterlySyncWorker:
         symbols_ok = 0
         symbols_failed = 0
 
-        for sym in symbols:
+        auth_error = self._preflight_login()
+        if auth_error is not None:
+            logger.error("screener auth failed — aborting run: %s", auth_error)
+            for sym in symbols:
+                per_symbol.append(SymbolReport(
+                    symbol=sym, ok=False, rows_extracted=0,
+                    error=f"screener auth: {auth_error}"))
+            symbols_failed = len(per_symbol)
+            symbols = []
+
+        # Cooldown applies only to LIVE fetches (legacy throttle rule:
+        # active above the threshold; small batches use a polite 0.5 s).
+        live = self.fetch_quarterly is _default_fetch_quarterly
+        cooldown = 0.0
+        if live:
+            cooldown = _cooldown_seconds() if len(symbols) > COOLDOWN_THRESHOLD else 0.5
+            if len(symbols) > COOLDOWN_THRESHOLD:
+                logger.info(
+                    "screener cooldown ACTIVE: %d symbols x %.0fs ≈ %.0f min total",
+                    len(symbols), cooldown, len(symbols) * cooldown / 60)
+
+        for i, sym in enumerate(symbols):
             rep, rows = self.run_symbol(sym)
             per_symbol.append(rep)
             if rep.ok:
@@ -230,6 +257,11 @@ class QuarterlySyncWorker:
                 all_rows.extend(rows)
             else:
                 symbols_failed += 1
+            if (i + 1) % 10 == 0:
+                logger.info("quarterly sync progress: %d/%d", i + 1, len(symbols))
+            # Never sleep after the last symbol.
+            if cooldown and i < len(symbols) - 1:
+                time.sleep(cooldown)
 
         upsert_errors: List[str] = []
         rows_written = 0

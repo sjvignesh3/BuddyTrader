@@ -55,8 +55,46 @@ OPPORTUNITY_STATUSES = frozenset({
 # so the FundamentalScreenerStrategy can read them without extra joins.
 FUNDAMENTAL_MERGE_COLS = (
     "roce", "roe", "net_debt_to_equity", "promoter_pledging_pct",
-    "pe_5y_avg", "pb_5y_avg",
+    "pe_5y_avg", "pb_5y_avg", "promoter_holding_pct",
 )
+
+# Quarter-history aggregates computed by _default_fetch_fundamentals and
+# merged alongside FUNDAMENTAL_MERGE_COLS — inputs to the 11-check score's
+# Sales/PBT/NP-at-ATH and OPM-stability rules (BuddyTrader semantics).
+FUNDAMENTAL_AGG_COLS = (
+    "latest_q_sales", "latest_q_pbt", "latest_q_net_profit",
+    "ath_q_sales", "ath_q_pbt", "ath_q_net_profit",
+    "latest_opm", "avg_opm",
+)
+
+
+def _quarter_aggregates(rows_newest_first: "List[Dict[str, Any]]") -> "Dict[str, Any]":
+    """Latest + all-time-high quarterly figures across every stored quarter.
+
+    OPM: BuddyTrader approximated OPM with net-profit margin because its
+    cache lacked the real number; Plutus stores Screener's actual OPM %
+    per quarter, so the real thing is used here."""
+    def _series(key: str) -> "List[Decimal]":
+        return [r[key] for r in rows_newest_first
+                if isinstance(r.get(key), Decimal)]
+
+    sales = _series("sales")
+    pbt = _series("pbt")
+    np_ = _series("net_profit")
+    opm = _series("operating_margin_pct")
+    avg_opm = None
+    if len(opm) > 1:
+        avg_opm = sum(opm, Decimal(0)) / Decimal(len(opm))
+    return {
+        "latest_q_sales": sales[0] if sales else None,
+        "latest_q_pbt": pbt[0] if pbt else None,
+        "latest_q_net_profit": np_[0] if np_ else None,
+        "ath_q_sales": max(sales) if sales else None,
+        "ath_q_pbt": max(pbt) if pbt else None,
+        "ath_q_net_profit": max(np_) if np_ else None,
+        "latest_opm": opm[0] if opm else None,
+        "avg_opm": avg_opm,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -210,11 +248,18 @@ class ScanEngine:
     def _default_fetch_fundamentals(
         self, symbols: Sequence[str]
     ) -> Dict[str, Dict[str, Any]]:
-        """Latest fundamentals row per symbol (bypassable via injection)."""
+        """Per-symbol fundamentals for the screener strategy.
+
+        Returns the LATEST row's quality metrics PLUS quarter-history
+        aggregates (latest / all-time-high quarterly Sales, PBT, Net Profit
+        and latest / average OPM) that power the BuddyTrader 11-check
+        fundamental score's ATH rules."""
         if not symbols:
             return {}
         cli = self.supabase_client or sb.get_client()
-        cols = ",".join(("symbol",) + FUNDAMENTAL_MERGE_COLS + ("quarter_end_date",))
+        cols = ",".join(("symbol",) + FUNDAMENTAL_MERGE_COLS
+                        + ("quarter_end_date", "sales", "pbt", "net_profit",
+                           "operating_margin_pct"))
         res = (
             cli.table("fundamentals")
                .select(cols)
@@ -223,13 +268,20 @@ class ScanEngine:
                .execute()
         )
         rows = getattr(res, "data", None) or []
-        latest: Dict[str, Dict[str, Any]] = {}
+        by_symbol: Dict[str, List[Dict[str, Any]]] = {}
         for r in rows:
             sym = r.get("symbol")
-            if sym and sym not in latest:
-                self._normalise_decimals(r)
-                latest[sym] = r
-        return latest
+            if not sym:
+                continue
+            self._normalise_decimals(r)
+            by_symbol.setdefault(sym, []).append(r)  # newest first
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for sym, srows in by_symbol.items():
+            merged = dict(srows[0])  # latest row carries the quality metrics
+            merged.update(_quarter_aggregates(srows))
+            out[sym] = merged
+        return out
 
     @staticmethod
     def _normalise_decimals(row: Dict[str, Any]) -> None:
@@ -286,7 +338,7 @@ class ScanEngine:
                 f = fund_map.get(s.get("symbol"))
                 if not f:
                     continue
-                for col in FUNDAMENTAL_MERGE_COLS:
+                for col in FUNDAMENTAL_MERGE_COLS + FUNDAMENTAL_AGG_COLS:
                     if col in f and col not in s:
                         s[col] = f[col]
 

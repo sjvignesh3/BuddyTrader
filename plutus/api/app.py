@@ -110,15 +110,27 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
     # -- Snapshots ---------------------------------------------------------
     @app.get("/api/snapshots/latest")
     def get_latest_snapshots(
-        pool: str = Query(..., description="Pool code (F40 / E40 / S200 / PlayArea)"),
+        pool: Optional[str] = Query(None, description="Pool code (F40 / E40 / S200)"),
+        symbols: Optional[str] = Query(None, description="Comma-separated symbols "
+                                       "(PlayArea watchlist mode — alternative to pool)"),
         snapshot_date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD)"),
         limit: int = Query(500, ge=1, le=2000),
     ) -> dict:
+        if not pool and not symbols:
+            raise HTTPException(status_code=400,
+                                detail="either pool or symbols is required")
         try:
-            rows = repo.snapshots_for_pool(
-                pool_code=pool, snapshot_date=snapshot_date,
-                client=cli(), limit=limit,
-            )
+            if symbols:
+                sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+                rows = repo.snapshots_for_symbols(
+                    sym_list, snapshot_date=snapshot_date,
+                    client=cli(), limit=limit,
+                )
+            else:
+                rows = repo.snapshots_for_pool(
+                    pool_code=pool, snapshot_date=snapshot_date,
+                    client=cli(), limit=limit,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.exception("snapshots_failed")
             raise HTTPException(status_code=502, detail=str(exc))
@@ -142,10 +154,23 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
 
     @app.get("/api/scan_results")
     def get_scan_results(
-        scan_id: str = Query(...),
+        scan_id: Optional[str] = Query(None),
+        symbols: Optional[str] = Query(None, description="Comma-separated symbols — "
+                                       "returns each symbol's LATEST result per "
+                                       "strategy across any pool scan (PlayArea)"),
         strategy_id: Optional[str] = Query(None),
         status: Optional[str] = Query(None, description="Comma-separated list"),
     ) -> dict:
+        if not scan_id and not symbols:
+            raise HTTPException(status_code=400,
+                                detail="either scan_id or symbols is required")
+        if symbols:
+            sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+            rows = repo.latest_scan_results_for_symbols(sym_list, client=cli())
+            if strategy_id:
+                rows = [r for r in rows if r.get("strategy_id") == strategy_id]
+            return {"scan_id": None, "results": serialize_rows(rows),
+                    "count": len(rows)}
         status_in = [s.strip() for s in status.split(",")] if status else None
         rows = repo.scan_results(
             scan_id=scan_id, strategy_id=strategy_id,

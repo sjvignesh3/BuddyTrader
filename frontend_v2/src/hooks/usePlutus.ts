@@ -14,6 +14,11 @@ export const qk = {
     ["scan_results", scanId ?? "none", strategy ?? "all"] as const,
   syncJobs: (jobType?: string) => ["sync_jobs", jobType ?? "all"] as const,
   history: (symbol: string, days: number) => ["history", symbol, days] as const,
+  fundamentals: (symbol: string) => ["fundamentals", symbol] as const,
+  snapshotsBySymbols: (symbols: string[]) =>
+    ["snapshots_by_symbols", symbols.join(",")] as const,
+  scanResultsForSymbols: (symbols: string[]) =>
+    ["scan_results_for_symbols", symbols.join(",")] as const,
 };
 
 export function usePools() {
@@ -74,6 +79,34 @@ export function useSyncJobs(
     queryFn: () => api.syncJobs(jobType),
     // Realtime live → no polling. Otherwise poll every 60 s as before.
     refetchInterval: realtimeLive ? false : 60_000,
+  });
+}
+
+/** PlayArea watchlist — snapshots for an explicit symbol list. */
+export function useSnapshotsBySymbols(symbols: string[]) {
+  return useQuery({
+    queryKey: qk.snapshotsBySymbols(symbols),
+    queryFn: () => api.latestSnapshotsForSymbols(symbols),
+    enabled: symbols.length > 0,
+  });
+}
+
+/** PlayArea watchlist — latest scan result per (symbol, strategy). */
+export function useScanResultsForSymbols(symbols: string[]) {
+  return useQuery({
+    queryKey: qk.scanResultsForSymbols(symbols),
+    queryFn: () => api.scanResultsForSymbols(symbols),
+    enabled: symbols.length > 0,
+  });
+}
+
+/** Tier-B fundamentals for one symbol — fetched lazily when a row expands. */
+export function useFundamentals(symbol: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.fundamentals(symbol),
+    queryFn: () => api.fundamentals(symbol),
+    enabled: Boolean(symbol) && enabled,
+    staleTime: 5 * 60_000, // quarterly data — no need to refetch per expand
   });
 }
 

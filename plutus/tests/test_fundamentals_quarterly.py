@@ -1,172 +1,194 @@
-"""Unit tests for plutus.fundamentals.quarterly extractors."""
+"""Screener.in parsers + fundamentals row builder — offline HTML fixtures.
+
+The fixture mirrors the real screener.in markup shapes the legacy Buddy
+fetcher was built against: #top-ratios <li> spans, the quick-ratios Ajax
+fragment, #quarters and #shareholding data tables, and the #analysis
+pledging sentence.
+"""
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Any, Dict, List
 
-import pytest
-
-from plutus.fundamentals.quarterly import (
-    compute_pb_5yr_avg,
-    compute_pe_5yr_avg,
-    extract_holdings,
-    extract_quarterly_rows,
+from plutus.fundamentals.quarterly import rows_from_bundle
+from plutus.fundamentals.screener_page import (
+    extract_pledging_fallback,
+    extract_quarterly_results,
+    extract_ratios,
+    extract_shareholding,
+    extract_warehouse_id,
+    parse_number,
+    quarter_label_to_date,
 )
 
 
-# ---------------------------------------------------------------------------
-# Duck-typed DataFrame stand-ins
-# ---------------------------------------------------------------------------
-class _FakeQF:
-    """
-    Mimics yfinance.quarterly_financials:
-        columns = quarter-end dates
-        rows    = line item labels
-        at[row, col] returns the cell value
-    """
-    def __init__(self, data: Dict[str, Dict[Any, Any]], columns: List[Any]):
-        # data: { line_item: { col: value } }
-        self._data = data
-        self.columns = list(columns)
+PAGE_HTML = """
+<div data-warehouse-id="150476773" data-company-id="3730"></div>
+<ul id="top-ratios">
+  <li><span class="name">Market Cap</span>
+      <span class="nowrap value">&#8377; <span class="number">8,69,924</span> Cr.</span></li>
+  <li><span class="name">Current Price</span>
+      <span class="nowrap value">&#8377; <span class="number">2,369</span></span></li>
+  <li><span class="name">Stock P/E</span>
+      <span class="nowrap value"><span class="number">16.2</span></span></li>
+  <li><span class="name">Book Value</span>
+      <span class="nowrap value">&#8377; <span class="number">296</span></span></li>
+  <li><span class="name">ROCE</span>
+      <span class="nowrap value"><span class="number">63.0</span> %</span></li>
+  <li><span class="name">ROE</span>
+      <span class="nowrap value"><span class="number">51.8</span> %</span></li>
+</ul>
+<section id="quarters">
+  <table class="data-table">
+    <thead><tr><th></th><th>Mar 2026</th><th>Jun 2026</th></tr></thead>
+    <tbody>
+      <tr><td>Sales&nbsp;+</td><td>70,698</td><td>72,275</td></tr>
+      <tr><td>Expenses&nbsp;+</td><td>51,422</td><td>53,719</td></tr>
+      <tr><td>OPM %</td><td>27%</td><td>26%</td></tr>
+      <tr><td>Profit before tax</td><td>18,362</td><td>17,944</td></tr>
+      <tr><td>Net Profit&nbsp;+</td><td>13,784</td><td>13,420</td></tr>
+    </tbody>
+  </table>
+</section>
+<section id="shareholding">
+  <table class="data-table">
+    <thead><tr><th></th><th>Mar 2026</th><th>Jun 2026</th></tr></thead>
+    <tbody>
+      <tr><td><button>Promoters&nbsp;+</button></td><td>71.77%</td><td>71.77%</td></tr>
+      <tr><td><button>FIIs&nbsp;+</button></td><td>9.66%</td><td>9.07%</td></tr>
+      <tr><td><button>DIIs&nbsp;+</button></td><td>13.34%</td><td>13.41%</td></tr>
+      <tr><td><button>Public&nbsp;+</button></td><td>5.16%</td><td>5.69%</td></tr>
+      <tr><td>No. of Shareholders</td><td>24,50,090</td><td>26,05,182</td></tr>
+    </tbody>
+  </table>
+</section>
+"""
 
-    class _AtAccessor:
-        def __init__(self, data): self._d = data
+QUICK_RATIOS_HTML = """
+<li><span class="name">5Yrs PE</span>
+    <span class="nowrap value"><span class="number">29.7</span></span></li>
+<li><span class="name">5Yrs PBV</span>
+    <span class="nowrap value"><span class="number">13.2</span></span></li>
+<li><span class="name">Net Debt to Equity</span>
+    <span class="nowrap value"><span class="number">-0.02</span></span></li>
+<li><span class="name">Pledged percentage</span>
+    <span class="nowrap value"><span class="number">0.00</span> %</span></li>
+"""
 
-        def __getitem__(self, key):
-            row, col = key
-            return self._d[row][col]
-
-    @property
-    def at(self):
-        return _FakeQF._AtAccessor(self._data)
-
-    class _Loc:
-        def __init__(self, data): self._d = data
-        def __getitem__(self, row):
-            r = self._d.get(row)
-            if r is None:
-                raise KeyError(row)
-            return r
-    @property
-    def loc(self):
-        return _FakeQF._Loc(self._data)
-
-
-class _FakeHolders:
-    """Mimics yfinance.major_holders as an iterable of (value, label) rows."""
-    def __init__(self, rows):
-        self._rows = rows
-
-    def iterrows(self):
-        for i, r in enumerate(self._rows):
-            yield i, r
-
-
-# ---------------------------------------------------------------------------
-# extract_holdings
-# ---------------------------------------------------------------------------
-class TestExtractHoldings:
-    def test_happy_path_percent_strings(self):
-        h = _FakeHolders([("52.30%", "% of Shares Held by All Insider"),
-                          ("18.40%", "% of Shares Held by Institutions")])
-        got = extract_holdings(h)
-        assert got["promoter_holding_pct"] == Decimal("52.30")
-        assert got["institutional_pct"] == Decimal("18.40")
-        assert got["public_holding_pct"] == Decimal("29.30")
-
-    def test_fractional_input_scaled(self):
-        h = _FakeHolders([(0.523, "insider"), (0.184, "inst")])
-        got = extract_holdings(h)
-        assert got["promoter_holding_pct"] == Decimal("52.30")
-        assert got["institutional_pct"] == Decimal("18.40")
-
-    def test_none_input(self):
-        got = extract_holdings(None)
-        assert all(v is None for v in got.values())
-
-    def test_partial_data(self):
-        h = _FakeHolders([("60.0%", "insider")])
-        got = extract_holdings(h)
-        assert got["promoter_holding_pct"] == Decimal("60.00")
-        assert got["institutional_pct"] is None
-        assert got["public_holding_pct"] is None
+PLEDGED_PAGE = """
+<meta name="description" content="Promoters have pledged 89.4% of their holding.">
+<section id="analysis"><div class="cons">
+  <li>Promoters have pledged 89.4% of their holding.</li>
+</div></section>
+"""
 
 
-# ---------------------------------------------------------------------------
-# extract_quarterly_rows
-# ---------------------------------------------------------------------------
-class TestExtractQuarterlyRows:
-    def _qf(self):
-        cols = [date(2024, 9, 30), date(2024, 6, 30), date(2024, 3, 31), date(2023, 12, 31)]
-        data = {
-            "Total Revenue":    {c: v for c, v in zip(cols, [220_00, 200_00, 190_00, 180_00])},
-            "Pretax Income":    {c: v for c, v in zip(cols, [ 50_00,  45_00,  42_00,  40_00])},
-            "Net Income":       {c: v for c, v in zip(cols, [ 40_00,  35_00,  32_00,  30_00])},
-            "Operating Income": {c: v for c, v in zip(cols, [ 60_00,  55_00,  50_00,  48_00])},
+class TestPrimitives:
+    def test_parse_number(self):
+        assert parse_number("3,09,468") == Decimal("309468")
+        assert parse_number("63.0%") == Decimal("63.0")
+        assert parse_number("-0.02") == Decimal("-0.02")
+        assert parse_number("—") is None
+        assert parse_number("") is None
+        assert parse_number(None) is None
+
+    def test_quarter_label_to_date(self):
+        assert quarter_label_to_date("Jun 2026") == date(2026, 6, 30)
+        assert quarter_label_to_date("Mar 2026") == date(2026, 3, 31)
+        assert quarter_label_to_date("Feb 2024") == date(2024, 2, 29)  # leap
+        assert quarter_label_to_date("garbage") is None
+
+    def test_warehouse_id(self):
+        assert extract_warehouse_id(PAGE_HTML) == "150476773"
+        assert extract_warehouse_id("<div></div>") is None
+
+
+class TestRatios:
+    def test_top_ratios_only(self):
+        r = extract_ratios(PAGE_HTML)
+        assert r["roce"] == Decimal("63.0")
+        assert r["roe"] == Decimal("51.8")
+        assert r["current_pe"] == Decimal("16.2")
+        # PB derived from Current Price / Book Value: 2369 / 296
+        assert r["current_pb"] == Decimal("8.00")
+        assert r["pe_5yr_avg"] is None  # quick-ratio, not on the base page
+
+    def test_quick_ratios_merged(self):
+        r = extract_ratios(PAGE_HTML, QUICK_RATIOS_HTML)
+        assert r["pe_5yr_avg"] == Decimal("29.7")
+        assert r["pb_5yr_avg"] == Decimal("13.2")
+        assert r["net_debt_to_equity"] == Decimal("-0.02")
+        assert r["pledged_pct"] == Decimal("0.00")
+
+    def test_pledging_fallback_sentence(self):
+        assert extract_pledging_fallback(PLEDGED_PAGE) == Decimal("89.4")
+        assert extract_pledging_fallback(PAGE_HTML) is None
+
+
+class TestQuarterly:
+    def test_extract_quarters(self):
+        qs = extract_quarterly_results(PAGE_HTML)
+        assert [q["quarter_label"] for q in qs] == ["Mar 2026", "Jun 2026"]
+        jun = qs[1]
+        assert jun["quarter_end_date"] == date(2026, 6, 30)
+        assert jun["sales"] == Decimal("72275")       # ₹ Cr, as printed
+        assert jun["pbt"] == Decimal("17944")
+        assert jun["net_profit"] == Decimal("13420")
+        assert jun["opm_pct"] == Decimal("26")
+
+    def test_empty_page(self):
+        assert extract_quarterly_results("<html></html>") == []
+
+
+class TestShareholding:
+    def test_latest_quarter_values(self):
+        sh = extract_shareholding(PAGE_HTML)
+        assert sh["promoter_holding_pct"] == Decimal("71.77")
+        # FIIs 9.07 + DIIs 13.41 (latest column)
+        assert sh["institutional_pct"] == Decimal("22.48")
+        assert sh["public_holding_pct"] == Decimal("5.69")
+
+
+class TestRowsFromBundle:
+    def _bundle(self):
+        return {
+            "symbol": "TCS.NS",
+            "quarterly": extract_quarterly_results(PAGE_HTML),
+            "ratios": extract_ratios(PAGE_HTML, QUICK_RATIOS_HTML),
+            "shareholding": extract_shareholding(PAGE_HTML),
         }
-        return _FakeQF(data, cols)
 
-    def test_happy_path(self):
-        rows = extract_quarterly_rows(self._qf(), info={"debtToEquity": 24.5})
-        assert len(rows) == 4
+    def test_rows_newest_first_and_units(self):
+        rows = rows_from_bundle(self._bundle())
+        assert len(rows) == 2
         r0 = rows[0]
-        assert r0["quarter_end_date"] == date(2024, 9, 30)
-        assert r0["quarter_label"] == "Sep 2024"
-        assert r0["sales"] == Decimal("22000.00")
-        assert r0["net_profit"] == Decimal("4000.00")
-        # 6000 / 22000 * 100 = 27.27
-        assert r0["operating_margin_pct"] == Decimal("27.27")
-        assert r0["net_debt_to_equity"] == Decimal("24.5")
-        assert r0["promoter_holding_source"] == "yfinance"
+        assert r0["quarter_end_date"] == date(2026, 6, 30)  # newest first
+        # ₹ Cr -> absolute rupees (x 1e7)
+        assert r0["sales"] == Decimal("722750000000.00")
+        assert r0["net_profit"] == Decimal("134200000000.00")
+        assert r0["operating_margin_pct"] == Decimal("26.00")
 
-    def test_none_input(self):
-        assert extract_quarterly_rows(None) == []
+    def test_quality_metrics_on_newest_row_only(self):
+        rows = rows_from_bundle(self._bundle())
+        r0, r1 = rows
+        assert r0["roce"] == Decimal("63.0")
+        assert r0["roe"] == Decimal("51.8")
+        assert r0["net_debt_to_equity"] == Decimal("-0.02")
+        assert r0["promoter_pledging_pct"] == Decimal("0.00")
+        assert r0["pe_5y_avg"] == Decimal("29.7")
+        assert r0["pb_5y_avg"] == Decimal("13.2")
+        assert r0["promoter_holding_pct"] == Decimal("71.77")
+        assert r0["data_source"] == "screener.in"
+        assert r0["data_quality_flags"]["roce"] == "screener.in"
+        # Older rows: quarterly financials only.
+        assert r1["roce"] is None
+        assert r1["promoter_holding_pct"] is None
+        assert r1["data_quality_flags"] == {}
 
-    def test_missing_line_items_none(self):
-        cols = [date(2024, 9, 30)]
-        qf = _FakeQF({"Total Revenue": {cols[0]: 100_00}}, cols)
-        rows = extract_quarterly_rows(qf, info=None)
-        assert rows[0]["net_profit"] is None
-        assert rows[0]["operating_margin_pct"] is None
+    def test_uniform_keys_across_rows(self):
+        # PostgREST bulk upserts need one uniform column list.
+        rows = rows_from_bundle(self._bundle())
+        assert set(rows[0].keys()) == set(rows[1].keys())
 
-    def test_string_date_columns(self):
-        cols = ["2024-09-30", "2024-06-30"]
-        qf = _FakeQF({
-            "Total Revenue": {cols[0]: 100_00, cols[1]: 90_00},
-        }, cols)
-        rows = extract_quarterly_rows(qf, info=None)
-        assert rows[0]["quarter_end_date"] == date(2024, 9, 30)
-
-
-# ---------------------------------------------------------------------------
-# 5Y averages
-# ---------------------------------------------------------------------------
-class TestFiveYearAverages:
-    def test_pe_happy_path(self):
-        ni = [Decimal("100"), Decimal("100"), Decimal("100"), Decimal("100")]
-        closes = [Decimal("200")] * 100
-        # TTM_EPS = 400 / 10 = 40 ; PE = 200 / 40 = 5.00
-        got = compute_pe_5yr_avg(ni, shares_outstanding=Decimal("10"),
-                                 daily_closes=closes)
-        assert got == Decimal("5.00")
-
-    def test_pe_missing_data_returns_none(self):
-        assert compute_pe_5yr_avg([], Decimal("10"), [Decimal("100")]) is None
-        assert compute_pe_5yr_avg([None], Decimal("10"), [Decimal("100")]) is None
-        assert compute_pe_5yr_avg([Decimal("1")], None, [Decimal("100")]) is None
-        assert compute_pe_5yr_avg([Decimal("1")], Decimal("0"), [Decimal("100")]) is None
-
-    def test_pe_negative_ttm_returns_none(self):
-        ni = [Decimal("-100")] * 4
-        got = compute_pe_5yr_avg(ni, Decimal("10"), [Decimal("100")])
-        assert got is None
-
-    def test_pb_happy_path(self):
-        got = compute_pb_5yr_avg(Decimal("50"), [Decimal("150")] * 10)
-        assert got == Decimal("3.00")
-
-    def test_pb_missing_data_returns_none(self):
-        assert compute_pb_5yr_avg(None, [Decimal("100")]) is None
-        assert compute_pb_5yr_avg(Decimal("0"), [Decimal("100")]) is None
-        assert compute_pb_5yr_avg(Decimal("10"), []) is None
+    def test_empty_bundle(self):
+        assert rows_from_bundle({"quarterly": [], "ratios": {}, "shareholding": {}}) == []

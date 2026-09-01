@@ -79,6 +79,30 @@ export interface ScanResult {
   metrics_snapshot: Record<string, unknown>;
 }
 
+/** Tier-B quarterly fundamentals row (money fields are strings). */
+export interface Fundamentals {
+  symbol: string;
+  quarter_end_date: string;
+  quarter_label?: string | null;
+  sales?: string | null;
+  pbt?: string | null;
+  net_profit?: string | null;
+  operating_margin_pct?: string | null;
+  promoter_holding_pct?: string | null;
+  institutional_pct?: string | null;
+  public_holding_pct?: string | null;
+  promoter_pledging_pct?: string | null;
+  promoter_holding_source?: string | null;
+  roce?: string | null;
+  roe?: string | null;
+  net_debt_to_equity?: string | null;
+  pe_5y_avg?: string | null;
+  pb_5y_avg?: string | null;
+  data_source?: string | null;
+  fetched_at?: string | null;
+  [k: string]: unknown;
+}
+
 export interface SyncJob {
   id: number;
   job_type: string;
@@ -114,6 +138,18 @@ export const api = {
         date ? `&snapshot_date=${date}` : ""
       }`
     ),
+  /** PlayArea watchlist mode — snapshots for an explicit symbol list. */
+  latestSnapshotsForSymbols: (symbols: string[], date?: string) =>
+    get<{
+      pool: string | null;
+      snapshot_date: string | null;
+      snapshots: Snapshot[];
+      count: number;
+    }>(
+      `/api/snapshots/latest?symbols=${encodeURIComponent(symbols.join(","))}${
+        date ? `&snapshot_date=${date}` : ""
+      }`
+    ),
   history: (symbol: string, days = 60) =>
     get<{ symbol: string; days: number; bars: Snapshot[] }>(
       `/api/snapshots/${encodeURIComponent(symbol)}/history?days=${days}`
@@ -130,6 +166,15 @@ export const api = {
       `/api/scan_results?${q.toString()}`
     );
   },
+  /** PlayArea mode — each symbol's LATEST result per strategy, any pool scan. */
+  scanResultsForSymbols: (symbols: string[]) =>
+    get<{ scan_id: null; results: ScanResult[]; count: number }>(
+      `/api/scan_results?symbols=${encodeURIComponent(symbols.join(","))}`
+    ),
+  fundamentals: (symbol: string) =>
+    get<{ symbol: string; fundamentals: Fundamentals | Fundamentals[] }>(
+      `/api/fundamentals/${encodeURIComponent(symbol)}/latest`
+    ),
   syncJobs: (jobType?: string, limit = 10) =>
     get<{ jobs: SyncJob[]; count: number }>(
       `/api/sync_jobs/latest?limit=${limit}${

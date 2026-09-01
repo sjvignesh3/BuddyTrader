@@ -1,4 +1,4 @@
-"""Stage 5 quarterly worker tests — no yfinance, no Supabase."""
+"""Quarterly worker tests — no screener.in network, no Supabase."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -16,36 +16,28 @@ from plutus.sync.quarterly import (
 )
 
 
-class _FakeQF:
-    def __init__(self, data, columns):
-        self._data = data
-        self.columns = list(columns)
-
-    class _At:
-        def __init__(self, d): self._d = d
-        def __getitem__(self, k): return self._d[k[0]][k[1]]
-    @property
-    def at(self): return _FakeQF._At(self._data)
-    class _Loc:
-        def __init__(self, d): self._d = d
-        def __getitem__(self, k):
-            v = self._d.get(k)
-            if v is None: raise KeyError(k)
-            return v
-    @property
-    def loc(self): return _FakeQF._Loc(self._data)
-
-
 def _ok_fetch(sym):
-    cols = [date(2024, 9, 30), date(2024, 6, 30)]
-    qf = _FakeQF({
-        "Total Revenue": {cols[0]: 100_00, cols[1]: 90_00},
-        "Net Income":    {cols[0]:  20_00, cols[1]: 18_00},
-    }, cols)
+    """Screener-bundle-shaped payload (see ScreenerClient.fetch_bundle)."""
     return Result.success({
-        "info": {"debtToEquity": 30.0},
-        "quarterly_financials": qf,
-        "major_holders": None,
+        "symbol": sym,
+        "quarterly": [
+            {"quarter_label": "Jun 2024",
+             "quarter_end_date": date(2024, 6, 30),
+             "sales": Decimal("9000"), "opm_pct": Decimal("25"),
+             "pbt": Decimal("2200"), "net_profit": Decimal("1800")},
+            {"quarter_label": "Sep 2024",
+             "quarter_end_date": date(2024, 9, 30),
+             "sales": Decimal("10000"), "opm_pct": Decimal("26"),
+             "pbt": Decimal("2500"), "net_profit": Decimal("2000")},
+        ],
+        "ratios": {"roce": Decimal("30.0"), "roe": Decimal("25.0"),
+                   "net_debt_to_equity": Decimal("0.10"),
+                   "pledged_pct": Decimal("0.00"),
+                   "pe_5yr_avg": Decimal("22.0"), "pb_5yr_avg": Decimal("4.0"),
+                   "_raw_map": {"ROCE": "30.0"}},
+        "shareholding": {"promoter_holding_pct": Decimal("50.0"),
+                         "institutional_pct": Decimal("30.0"),
+                         "public_holding_pct": Decimal("20.0")},
     }, symbol=sym, attempts=1)
 
 

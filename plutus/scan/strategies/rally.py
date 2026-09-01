@@ -1,5 +1,5 @@
 """
-20% Rally Strategy ??? bit-for-bit port of
+20% Rally Strategy — bit-for-bit port of
 backend/app/strategies/rally_20_percent.py.
 
 The heavy lifting (streak detection, pivot picking) is done upstream in
@@ -44,7 +44,7 @@ class Rally20PercentStrategy(Strategy):
         symbol = snapshot.get("symbol", "?")
         errors: list[str] = []
 
-        # Rally block is optional on the snapshot ??? if the metrics pipeline
+        # Rally block is optional on the snapshot — if the metrics pipeline
         # could not build it (e.g. short history), we return INVALID with a
         # clean note rather than an error.
         try:

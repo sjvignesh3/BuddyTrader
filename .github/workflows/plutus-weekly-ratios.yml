@@ -1,17 +1,22 @@
-# Plutus — Quarterly fundamentals refresh.
+# Plutus — Weekly Screener.in valuation ratios (PE / PB / Market Cap).
 #
-# Replaces the Render cron `plutus-quarterly-sync`. Runs every Sunday at
-# 02:00 UTC — weekly re-check catches late filings without over-fetching.
+# Source decision (2026-09-01): these come from Screener.in on a WEEKLY
+# cadence; the daily sync stamps the stored values into each snapshot.
+# Saturday 05:00 IST == Friday 23:30 UTC.
 #
-name: plutus-quarterly-sync
+name: plutus-weekly-ratios
 
 on:
   schedule:
-    - cron: "0 2 * * 0"       # Sundays 02:00 UTC
+    - cron: "30 23 * * 5"     # Fri 23:30 UTC == Sat 05:00 IST
   workflow_dispatch:
     inputs:
       pool:
         description: "Pool code (blank = ALL)"
+        required: false
+        default: ""
+      limit:
+        description: "Symbol cap for smoke runs"
         required: false
         default: ""
       dry_run:
@@ -20,19 +25,17 @@ on:
         default: "false"
 
 concurrency:
-  group: plutus-quarterly-sync
+  group: plutus-weekly-ratios
   cancel-in-progress: false
 
 jobs:
-  quarterly:
+  ratios:
     runs-on: ubuntu-latest
-    # Screener.in is the Tier-B source with a 15 s per-symbol cooldown:
-    # ~450 symbols ≈ 2 h of pacing + fetch time. GitHub caps a job at 6 h.
+    # ~450 symbols x 15 s cooldown ≈ 2 h of pacing + fetch time.
     timeout-minutes: 240
     env:
       PLUTUS_SUPABASE_URL: ${{ secrets.PLUTUS_SUPABASE_URL }}
       PLUTUS_SUPABASE_SERVICE_KEY: ${{ secrets.PLUTUS_SUPABASE_SERVICE_KEY }}
-      # Screener.in credentials — REQUIRED (data renders only when logged in).
       SCREENER_EMAIL: ${{ secrets.SCREENER_EMAIL }}
       SCREENER_PASSWORD: ${{ secrets.SCREENER_PASSWORD }}
       PLUTUS_SCREENER_COOLDOWN_S: "15"
@@ -53,22 +56,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r plutus/requirements.txt
 
-      - name: Run quarterly sync
+      - name: Run weekly ratios sync
         run: |
           ARGS=""
           POOL="${{ github.event.inputs.pool }}"
+          LIMIT="${{ github.event.inputs.limit }}"
           DRY="${{ github.event.inputs.dry_run }}"
           if [ -n "$POOL" ]; then ARGS="$ARGS --pool $POOL"; fi
+          if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
           if [ "$DRY" = "true" ]; then ARGS="$ARGS --dry-run"; fi
-          python -m plutus.scripts.run_quarterly_sync $ARGS
+          python -m plutus.scripts.run_weekly_ratios $ARGS
 
       - name: Notify on workflow failure
-        # Backstop for hard crashes the in-process alerter can't catch —
-        # parity with the daily and backup workflows.
         if: failure() && env.PLUTUS_ALERT_WEBHOOK != ''
         env:
           PAYLOAD: |
-            {"text":"🚨 *Plutus quarterly sync workflow failed*\nrun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+            {"text":"🚨 *Plutus weekly ratios workflow failed*\nrun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
         run: |
           curl -sS -X POST -H 'Content-Type: application/json' \
             --data "$PAYLOAD" "$PLUTUS_ALERT_WEBHOOK" || true

@@ -166,6 +166,25 @@ async function snapshotsForPool(
   return { rows: data ?? [], effectiveDate: d };
 }
 
+// PlayArea watchlist mode: latest (or given-date) snapshots for an
+// explicit symbol list — mirrors repository.snapshots_for_symbols.
+async function snapshotsForSymbols(
+  cli: SupabaseClient,
+  opts: { symbols: string[]; snapshotDate: string | null; limit: number },
+) {
+  if (opts.symbols.length === 0) return { rows: [], effectiveDate: null };
+  const d = opts.snapshotDate ?? await latestSnapshotDate(cli);
+  if (!d) return { rows: [], effectiveDate: null };
+  const { data, error: err } = await cli
+    .from("daily_snapshots")
+    .select("*")
+    .in("symbol", opts.symbols)
+    .eq("snapshot_date", d)
+    .limit(opts.limit);
+  if (err) throw err;
+  return { rows: data ?? [], effectiveDate: d };
+}
+
 async function snapshotHistory(
   cli: SupabaseClient, symbol: string, days: number,
 ) {
@@ -201,6 +220,27 @@ async function scanResults(
   const { data, error: err } = await q;
   if (err) throw err;
   return data ?? [];
+}
+
+// Most recent scan result per (symbol, strategy) across ANY pool scan —
+// mirrors repository.latest_scan_results_for_symbols (PlayArea signals).
+async function latestScanResultsForSymbols(
+  cli: SupabaseClient, symbols: string[],
+) {
+  if (symbols.length === 0) return [];
+  const { data, error: err } = await cli
+    .from("scan_results")
+    .select("*")
+    .in("symbol", symbols)
+    .order("id", { ascending: false })
+    .limit(2000);
+  if (err) throw err;
+  const seen = new Map<string, any>();
+  for (const r of data ?? []) {  // newest first — first hit wins
+    const key = `${r.symbol}::${r.strategy_id}`;
+    if (!seen.has(key)) seen.set(key, r);
+  }
+  return Array.from(seen.values());
 }
 
 async function latestSyncJobs(
@@ -312,12 +352,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // ── Snapshots ────────────────────────────────────────────────────
     if (path === "/api/snapshots/latest") {
       const pool = url.searchParams.get("pool");
-      if (!pool) return error(400, "pool is required");
-      const { rows, effectiveDate } = await snapshotsForPool(cli, {
-        pool,
+      const symbolsRaw = url.searchParams.get("symbols");
+      if (!pool && !symbolsRaw) {
+        return error(400, "either pool or symbols is required");
+      }
+      const opts = {
         snapshotDate: url.searchParams.get("snapshot_date"),
         limit: intParam(url, "limit", 500, 1, 2000),
-      });
+      };
+      const { rows, effectiveDate } = symbolsRaw
+        ? await snapshotsForSymbols(cli, {
+            symbols: symbolsRaw.split(",").map((s) => s.trim()).filter(Boolean),
+            ...opts,
+          })
+        : await snapshotsForPool(cli, { pool: pool!, ...opts });
       return json({
         pool,
         snapshot_date: effectiveDate,
@@ -349,10 +397,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (path === "/api/scan_results") {
       const scanId = url.searchParams.get("scan_id");
-      if (!scanId) return error(400, "scan_id is required");
+      const symbolsRaw = url.searchParams.get("symbols");
+      if (!scanId && !symbolsRaw) {
+        return error(400, "either scan_id or symbols is required");
+      }
+      if (symbolsRaw) {
+        let rows = await latestScanResultsForSymbols(
+          cli, symbolsRaw.split(",").map((s) => s.trim()).filter(Boolean));
+        const strat = url.searchParams.get("strategy_id");
+        if (strat) rows = rows.filter((r: any) => r.strategy_id === strat);
+        return json({ scan_id: null, results: serializeRows(rows), count: rows.length });
+      }
       const statusRaw = url.searchParams.get("status");
       const rows = await scanResults(cli, {
-        scanId,
+        scanId: scanId!,
         strategyId: url.searchParams.get("strategy_id"),
         statusIn: statusRaw ? statusRaw.split(",").map((s) => s.trim()) : null,
       });

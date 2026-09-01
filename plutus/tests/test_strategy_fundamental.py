@@ -1,97 +1,122 @@
-"""
-Fundamental Screener — bit-for-bit correctness gate.
-
-We drive individual rules and assert PASS/FAIL/ERROR per the legacy contract
-(safety-first: any missing input counts as fail).
-"""
+"""Fundamental Score strategy — the BuddyTrader 11-check score."""
 from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
-from plutus.scan.base import STATUS_ERROR, STATUS_FAIL, STATUS_PASS
-from plutus.scan.strategies.fundamental import FundamentalScreenerStrategy
-
-
-@pytest.fixture
-def strat() -> FundamentalScreenerStrategy:
-    return FundamentalScreenerStrategy()
+from plutus.scan.base import STATUS_FAIL, STATUS_PASS
+from plutus.scan.strategies.fundamental import (
+    POINTS_MAX,
+    FundamentalScreenerStrategy,
+)
 
 
-def _full_snapshot(**overrides):
-    base = {
-        "symbol": "HDFCBANK",
-        "pe_current": Decimal("18"),
-        "pe_5y_avg": Decimal("22"),
-        "pb_current": Decimal("2.5"),
-        "pb_5y_avg": Decimal("3.0"),
-        "roce": Decimal("20"),
-        "roe": Decimal("18.5"),
-        "net_debt_to_equity": Decimal("0.15"),
-        "promoter_pledging_pct": Decimal("0"),
+D = Decimal
+
+
+def _snapshot(**overrides):
+    """A snapshot that passes ALL 11 checks unless overridden."""
+    snap = {
+        "symbol": "TCS.NS",
+        # Valuation (Screener weekly ratios, stamped by the daily sync)
+        "pe_current": D("16.2"),
+        "pb_current": D("8.00"),
+        # Fundamentals latest row
+        "pe_5y_avg": D("29.7"),
+        "pb_5y_avg": D("13.2"),
+        "net_debt_to_equity": D("-0.02"),
+        "roce": D("63.0"),
+        "roe": D("51.8"),
+        "promoter_pledging_pct": D("0.00"),
+        "promoter_holding_pct": D("71.77"),
+        # Quarter-history aggregates (absolute rupees)
+        "latest_q_sales": D("722750000000"),
+        "latest_q_pbt": D("179440000000"),
+        "latest_q_net_profit": D("134200000000"),
+        "ath_q_sales": D("722750000000"),
+        "ath_q_pbt": D("183620000000"),
+        "ath_q_net_profit": D("137840000000"),
+        "latest_opm": D("26.00"),
+        "avg_opm": D("26.50"),
     }
-    base.update(overrides)
-    return base
+    snap.update(overrides)
+    return snap
 
 
-class TestFundamentalAllPass:
-    def test_every_rule_passes(self, strat):
-        r = strat.evaluate(_full_snapshot(), {})
+class TestElevenChecks:
+    def test_all_pass_gives_11_points_and_pass_status(self):
+        r = FundamentalScreenerStrategy().evaluate(_snapshot(), {})
+        assert r.score == 11
         assert r.status == STATUS_PASS
-        assert r.score == 6   # 6 enabled rules, all pass
-        counts = r.metrics_snapshot
-        assert counts["passed_count"] == 6
-        assert counts["failed_count"] == 0
-        assert counts["skipped_count"] == 0
+        ms = r.metrics_snapshot
+        assert ms["points"] == 11
+        assert ms["points_max"] == POINTS_MAX == 11
+        assert len(ms["checks"]) == 11
+        assert all(c["passed"] is True for c in ms["checks"])
+        assert len(r.reasons) == 11
+        assert r.reasons[0].startswith("[PASS] 1. PE < 70")
 
+    def test_check_ids_match_legacy_buddy(self):
+        r = FundamentalScreenerStrategy().evaluate(_snapshot(), {})
+        ids = [c["id"] for c in r.metrics_snapshot["checks"]]
+        assert ids == ["pe_lt_70", "pe_lt_5yr", "pb_lt_5yr", "net_debt",
+                       "roce", "roe", "sales_ath", "profit_ath", "pbt_ath",
+                       "pledging", "opm"]
 
-class TestFundamentalPartialFail:
-    def test_one_failing_rule_flips_to_fail(self, strat):
-        snap = _full_snapshot(roce=Decimal("10"))   # < default 18
-        r = strat.evaluate(snap, {})
+    def test_missing_inputs_are_na_not_fail(self):
+        snap = _snapshot(roce=None, promoter_pledging_pct=None)
+        r = FundamentalScreenerStrategy().evaluate(snap, {})
+        by_id = {c["id"]: c for c in r.metrics_snapshot["checks"]}
+        assert by_id["roce"]["passed"] is None
+        assert by_id["pledging"]["passed"] is None
+        # Points count only definite passes.
+        assert r.score == 9
+        assert r.metrics_snapshot["unknown"] == 2
+        assert r.status == STATUS_PASS  # 9 >= 8
+
+    def test_ath_tolerance_is_90_percent(self):
+        # latest exactly at 90% of ATH -> pass; just below -> fail.
+        snap = _snapshot(latest_q_sales=D("90"), ath_q_sales=D("100"))
+        r = FundamentalScreenerStrategy().evaluate(snap, {})
+        assert {c["id"]: c["passed"] for c in r.metrics_snapshot["checks"]}["sales_ath"] is True
+
+        snap = _snapshot(latest_q_sales=D("89.99"), ath_q_sales=D("100"))
+        r = FundamentalScreenerStrategy().evaluate(snap, {})
+        assert {c["id"]: c["passed"] for c in r.metrics_snapshot["checks"]}["sales_ath"] is False
+
+    def test_opm_stability_vs_average(self):
+        # latest >= 90% of average passes.
+        snap = _snapshot(latest_opm=D("24.0"), avg_opm=D("26.0"))
+        r = FundamentalScreenerStrategy().evaluate(snap, {})
+        assert {c["id"]: c["passed"] for c in r.metrics_snapshot["checks"]}["opm"] is True
+        snap = _snapshot(latest_opm=D("20.0"), avg_opm=D("26.0"))
+        r = FundamentalScreenerStrategy().evaluate(snap, {})
+        assert {c["id"]: c["passed"] for c in r.metrics_snapshot["checks"]}["opm"] is False
+
+    def test_opm_positive_when_no_average(self):
+        snap = _snapshot(avg_opm=None, latest_opm=D("5.0"))
+        r = FundamentalScreenerStrategy().evaluate(snap, {})
+        assert {c["id"]: c["passed"] for c in r.metrics_snapshot["checks"]}["opm"] is True
+
+    def test_weak_score_is_fail_status(self):
+        snap = _snapshot(
+            pe_current=D("80"),            # fails PE<70 and PE<5yr avg? 80>29.7 fail
+            pb_current=D("20"),            # 20 > 13.2 fail
+            net_debt_to_equity=D("1.5"),   # fail
+            roce=D("5"), roe=D("5"),       # fail, fail
+            promoter_pledging_pct=D("40"),  # fail
+        )
+        r = FundamentalScreenerStrategy().evaluate(snap, {})
+        assert r.score <= 5
         assert r.status == STATUS_FAIL
-        assert r.score == 5   # 5 passed, 1 failed
-        assert r.metrics_snapshot["failed_count"] == 1
 
-    def test_missing_pe_avg_is_fail(self, strat):
-        snap = _full_snapshot(pe_5y_avg=None)
-        r = strat.evaluate(snap, {})
+    def test_thresholds_overridable_via_config(self):
+        snap = _snapshot(roce=D("16.0"))
+        cfg = {"thresholds": {"roce_min": "20"}}
+        r = FundamentalScreenerStrategy().evaluate(snap, cfg)
+        assert {c["id"]: c["passed"] for c in r.metrics_snapshot["checks"]}["roce"] is False
+
+    def test_never_raises_on_garbage(self):
+        r = FundamentalScreenerStrategy().evaluate({"symbol": "X.NS"}, {})
+        assert r.score == 0
+        assert r.metrics_snapshot["unknown"] == 11
         assert r.status == STATUS_FAIL
-        # pe_below_avg fails, others pass
-        assert r.metrics_snapshot["passed_count"] == 5
-
-    def test_missing_pledging_is_fail_not_pass(self, strat):
-        # Safety-first: None pledging is treated as fail.
-        snap = _full_snapshot(promoter_pledging_pct=None)
-        r = strat.evaluate(snap, {})
-        assert r.status == STATUS_FAIL
-        # find pledging rule in metrics
-        rules = r.metrics_snapshot["rule_results"]
-        pledge = next(x for x in rules if x["rule_id"] == "pledging_max")
-        assert pledge["passed"] is False
-        assert "safety" in pledge["reason"].lower()
-
-
-class TestFundamentalConfigOverrides:
-    def test_custom_threshold_flips_outcome(self, strat):
-        # Default roce_min is 18; with 25, ROCE of 20 now fails.
-        snap = _full_snapshot(roce=Decimal("20"))
-        cfg = {"thresholds": {"roce_min": Decimal("25")}}
-        r = strat.evaluate(snap, cfg)
-        assert r.status == STATUS_FAIL
-
-    def test_disabling_a_rule_skips_it(self, strat):
-        snap = _full_snapshot(roce=Decimal("5"))    # would fail
-        cfg = {"enabled_rules": {"roce_min": False}}
-        r = strat.evaluate(snap, cfg)
-        assert r.status == STATUS_PASS
-        assert r.metrics_snapshot["skipped_count"] == 1
-
-    def test_all_rules_disabled_returns_error(self, strat):
-        cfg = {"enabled_rules": {k: False for k in [
-            "pe_below_avg", "pb_below_avg", "roce_min", "roe_min",
-            "net_debt_to_equity", "pledging_max",
-        ]}}
-        r = strat.evaluate(_full_snapshot(), cfg)
-        assert r.status == STATUS_ERROR
