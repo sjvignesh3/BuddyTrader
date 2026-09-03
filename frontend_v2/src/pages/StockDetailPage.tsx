@@ -3,19 +3,18 @@
 // old in-table accordion; mobile-first). Layout, top to bottom:
 //   header (symbol · name · sector · cap · held badge · screener link)
 //   hero (price + week trend + signal + funda score + key chips)
-//   price chart (close line with 200 DMA / rally levels, range switch)
+//   price chart (embedded TradingView widget + key ₹ levels line)
 //   technical read (DMA envelope · 52-week range · ATH · rally) as cards
 //   strategy verdicts (each engine's reasons)
 //   fundamental panel (11 checks, ratios, latest-Q vs ATH)
 //   my positions (Trading Journal lots for this stock)
 // Works for any symbol with a snapshot — reachable from every pool table row.
 // -----------------------------------------------------------------------------
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { ScanResult, Stock } from "../lib/api";
 import {
-  useHistory,
   useScanResultsForSymbols,
   useSnapshotsBySymbols,
   useStock,
@@ -29,13 +28,13 @@ import {
   type StockRow,
 } from "../lib/rows";
 import LoadError from "../components/LoadError";
-import PriceChart, { type ChartLevel } from "../components/PriceChart";
 import ScoreRing from "../components/ScoreRing";
 import SignalBadge from "../components/SignalBadge";
 import StatusPill from "../components/StatusPill";
 import StockNotes from "../components/StockNotes";
 import StockOpportunities from "../components/StockOpportunities";
 import StockPositions from "../components/StockPositions";
+import TradingViewChart from "../components/TradingViewChart";
 import { fmtCr, fmtDate, fmtMoney, fmtPct } from "../lib/money";
 
 const STRATEGY_ORDER = [
@@ -54,11 +53,6 @@ const CAP_STYLE: Record<string, string> = {
   Small: "bg-amber-50 text-amber-800 ring-1 ring-amber-200",
   Micro: "bg-stone-100 text-stone-600 ring-1 ring-stone-200",
 };
-
-const RANGES = [
-  { label: "1M", days: 30 }, { label: "3M", days: 90 },
-  { label: "6M", days: 180 }, { label: "1Y", days: 365 },
-];
 
 // ---- small building blocks --------------------------------------------------
 
@@ -215,7 +209,6 @@ export default function StockDetailPage() {
   const { symbol = "" } = useParams();
   const navigate = useNavigate();
   const plain = symbol.replace(/\.(NS|BO)$/i, "");
-  const [rangeDays, setRangeDays] = useState(180);
 
   useEffect(() => {
     document.title = `${plain} · BuddyTrader`;
@@ -225,7 +218,6 @@ export default function StockDetailPage() {
   const snapsQ = useSnapshotsBySymbols(symbol ? [symbol] : []);
   const resultsQ = useScanResultsForSymbols(symbol ? [symbol] : []);
   const stockQ = useStock(symbol);
-  const histQ = useHistory(symbol, rangeDays);
 
   const positionsQ = useQuery({
     queryKey: ["journal", "positions"],
@@ -246,14 +238,6 @@ export default function StockDetailPage() {
     }
     return buildRows(snapshots, stockMap, resultMap)[0] ?? null;
   }, [snapsQ.data, stockQ.data, resultsQ.data]);
-
-  const chartPoints = useMemo(() => {
-    const bars = histQ.data?.bars ?? [];
-    return bars
-      .map((b) => ({ date: b.snapshot_date, close: num(b.close) ?? NaN }))
-      .filter((p) => Number.isFinite(p.close))
-      .sort((a, b) => a.date.localeCompare(b.date));
-  }, [histQ.data]);
 
   const loading = snapsQ.isLoading || resultsQ.isLoading;
   if (loading || snapsQ.error || !row) {
@@ -278,17 +262,11 @@ export default function StockDetailPage() {
   const d = funda?.data ?? {};
   const notScored = funda !== null && funda.unknown >= funda.pointsMax;
 
-  const chartLevels: ChartLevel[] = [];
-  if (row.dma200 !== null) {
-    chartLevels.push({ label: "200 DMA", value: row.dma200, color: "#b45309" });
-    chartLevels.push({
-      label: "DMA buy zone", value: row.dma200 * (1 - 0.14), color: "#0369a1" });
-  }
-  if (row.hasRally && row.rallyLow !== null)
-    chartLevels.push({ label: "Next buy", value: row.rallyLow, color: "#0f766e" });
-  if (row.hasRally && row.rallyHigh !== null)
-    chartLevels.push({ label: "Next sell", value: row.rallyHigh, color: "#e11d48" });
-
+  // Full-site links use NSE; the EMBED uses BSE because NSE licensing blocks
+  // its data inside third-party TradingView widgets ("only available on
+  // TradingView"), while BSE quotes render fine and tickers share codes.
+  const tvSymbol = `${/\.BO$/i.test(row.symbol) ? "BSE" : "NSE"}:${plain}`;
+  const tvEmbedSymbol = `BSE:${plain}`;
   const fromHigh = num(s.distance_from_52w_high_pct);
 
   return (
@@ -362,36 +340,33 @@ export default function StockDetailPage() {
         </div>
       </div>
 
-      {/* ── Chart ── */}
+      {/* ── Chart (TradingView embed — full history lives there) ── */}
       <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
         <div className="flex flex-wrap items-center gap-2 mb-2">
-          <SectionTitle>Price history</SectionTitle>
+          <SectionTitle>Price chart</SectionTitle>
           <a
-            href={`https://in.tradingview.com/chart/?symbol=${encodeURIComponent(
-              `${/\.BO$/i.test(row.symbol) ? "BSE" : "NSE"}:${plain}`)}`}
+            href={`https://in.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="-mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md bg-brand-soft ring-1 ring-brand-border text-brand-accent hover:bg-teal-50 hover:ring-teal-300 transition-colors"
+            className="ml-auto -mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md bg-brand-soft ring-1 ring-brand-border text-brand-accent hover:bg-teal-50 hover:ring-teal-300 transition-colors"
             title="Open the full chart on TradingView"
           >
-            📊 TradingView <span className="text-[9px]">↗</span>
+            📊 Open on TradingView <span className="text-[9px]">↗</span>
           </a>
-          <div className="ml-auto inline-flex gap-1 -mt-1.5">
-            {RANGES.map((r) => (
-              <button key={r.label}
-                      onClick={() => setRangeDays(r.days)}
-                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors ${
-                        rangeDays === r.days
-                          ? "bg-teal-700 text-white"
-                          : "bg-brand-soft ring-1 ring-brand-border text-brand-mute hover:text-brand-text"}`}>
-                {r.label}
-              </button>
-            ))}
-          </div>
         </div>
-        {histQ.isLoading
-          ? <div className="h-32 grid place-items-center text-xs text-brand-mute">Loading chart…</div>
-          : <PriceChart points={chartPoints} levels={chartLevels} />}
+        <TradingViewChart tvSymbol={tvEmbedSymbol} />
+        {row.dma200 !== null && (
+          <div className="mt-2 text-[10px] text-brand-mute">
+            Key levels — 200 DMA <b className="font-mono text-brand-text">₹{fmtMoney(row.dma200)}</b>
+            {" "}· DMA buy zone <b className="font-mono text-sky-800">≤ ₹{fmtMoney(row.dma200 * (1 - 0.14))}</b>
+            {row.hasRally && row.rallyLow !== null && (
+              <> · rally re-entry <b className="font-mono text-teal-800">₹{fmtMoney(row.rallyLow)}</b></>
+            )}
+            {row.hasRally && row.rallyHigh !== null && (
+              <> · rally exit <b className="font-mono text-rose-700">₹{fmtMoney(row.rallyHigh)}</b></>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Technical read ── */}
