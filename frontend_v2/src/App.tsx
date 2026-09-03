@@ -4,6 +4,7 @@ import HomePage from "./pages/HomePage";
 import JournalPage from "./pages/JournalPage";
 import PoolsPage from "./pages/PoolsPage";
 import PoolDetailPage from "./pages/PoolDetailPage";
+import StockDetailPage from "./pages/StockDetailPage";
 import SyncStatusPage from "./pages/SyncStatusPage";
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="/journal" element={<JournalPage />} />
           <Route path="/pools" element={<PoolsPage />} />
           <Route path="/pools/:code" element={<PoolDetailPage />} />
+          <Route path="/stocks/:symbol" element={<StockDetailPage />} />
           <Route path="/status" element={<SyncStatusPage />} />
         </Routes>
       </main>

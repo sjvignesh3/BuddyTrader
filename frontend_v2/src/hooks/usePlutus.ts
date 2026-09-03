@@ -12,6 +12,7 @@ export const qk = {
   scan: (pool: string) => ["scan", pool] as const,
   scanResults: (scanId: number | undefined, strategy?: string) =>
     ["scan_results", scanId ?? "none", strategy ?? "all"] as const,
+  stock: (symbol: string) => ["stock", symbol] as const,
   syncJobs: (jobType?: string) => ["sync_jobs", jobType ?? "all"] as const,
   history: (symbol: string, days: number) => ["history", symbol, days] as const,
   fundamentals: (symbol: string) => ["fundamentals", symbol] as const,
@@ -29,6 +30,16 @@ export function useStocks(pool?: string) {
   return useQuery({
     queryKey: qk.stocks(pool),
     queryFn: () => api.stocks(pool),
+  });
+}
+
+/** One stock's metadata (name, sector, pools) — the stock detail page. */
+export function useStock(symbol: string) {
+  return useQuery({
+    queryKey: qk.stock(symbol),
+    queryFn: () => api.stock(symbol),
+    enabled: Boolean(symbol),
+    staleTime: 5 * 60_000, // metadata changes only on reseed
   });
 }
 

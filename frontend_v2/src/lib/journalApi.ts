@@ -74,6 +74,16 @@ export interface Trade {
   updated_at?: string;
 }
 
+/** One dated research note on a stock — the "my views over time" trail. */
+export interface StockNote {
+  id: number;
+  symbol: string;
+  note_date: string;
+  content: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Position {
   symbol: string;
   qty: number;
@@ -85,6 +95,7 @@ export interface Position {
 /** Editable payloads (id/status timestamps excluded). */
 export type OpportunityDraft = Partial<Omit<Opportunity, "id" | "created_at" | "updated_at">>;
 export type TradeDraft = Partial<Omit<Trade, "id" | "created_at" | "updated_at">>;
+export type StockNoteDraft = Partial<Omit<StockNote, "id" | "created_at" | "updated_at">>;
 
 // ---- Endpoints ---------------------------------------------------------------
 
@@ -125,6 +136,17 @@ export const journalApi = {
 
   positions: () => send<{ positions: Position[]; count: number }>(
     "GET", "/api/journal/positions"),
+
+  /** Dated stock notes — pass a plain NSE symbol to scope to one stock. */
+  notes: (symbol?: string) =>
+    send<{ notes: StockNote[]; count: number }>(
+      "GET", `/api/journal/notes${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`),
+  createNote: (draft: StockNoteDraft) =>
+    send<{ note: StockNote }>("POST", "/api/journal/notes", draft),
+  updateNote: (id: number, draft: StockNoteDraft) =>
+    send<{ note: StockNote }>("PUT", `/api/journal/notes/${id}`, draft),
+  deleteNote: (id: number) =>
+    send<{ deleted: number }>("DELETE", `/api/journal/notes/${id}`),
 
   bulkImport: (payload: { opportunities?: OpportunityDraft[]; trades?: TradeDraft[] }) =>
     send<{ imported: { opportunities: number; trades: number } }>(

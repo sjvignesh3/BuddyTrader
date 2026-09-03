@@ -18,6 +18,7 @@ import sys
 from typing import Any, List, Optional, Sequence
 
 from plutus.alerts.sync_hook import maybe_alert_on_run_report
+from plutus.sync.context import build_run_context
 from plutus.sync.weekly_ratios import WeeklyRatiosWorker
 
 logger = logging.getLogger("plutus.run_weekly_ratios")
@@ -73,7 +74,13 @@ def main(argv: Optional[Sequence[str]] = None, *,
         logger.error("no symbols to sync")
         return 2
 
-    w = worker or WeeklyRatiosWorker()
+    run_ctx = build_run_context(
+        pool=args.pool,
+        symbols=symbols if args.symbols else None,
+    )
+    w = worker or WeeklyRatiosWorker(run_context=run_ctx)
+    if worker is not None and getattr(worker, "run_context", False) is None:
+        worker.run_context = run_ctx  # injected worker without a context
     report = w.run_all(symbols, dry_run=args.dry_run)
 
     report_json = report.as_json()

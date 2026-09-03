@@ -50,6 +50,33 @@ export function fmtDate(iso: string | null | undefined): string {
   }).replace(/ /g, NBSP);
 }
 
+/** ISO datetime → "15 Jan, 6:32 pm" (viewer-local time). */
+export function fmtDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const date = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  const time = d.toLocaleTimeString("en-IN", {
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
+  return `${date}, ${time}`.replace(/ /g, NBSP);
+}
+
+/** Duration between two ISO stamps → "7s" / "4m 12s" / "1h 03m". */
+export function fmtDuration(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+): string {
+  if (!startIso || !endIso) return "—";
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
 /** Colour class for a scan / sync-job status pill (light theme). */
 export function statusClass(status: string): string {
   switch (status) {

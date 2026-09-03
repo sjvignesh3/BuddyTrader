@@ -7,7 +7,7 @@
 // prices + fundamentals; the page polls until the row appears.
 // -----------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ScanResult, Stock } from "../lib/api";
 import {
@@ -53,6 +53,7 @@ export default function PoolDetailPage() {
   const { code = "F40" } = useParams();
   const isPlayArea = code === "PlayArea";
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   // ---- PlayArea watchlist -------------------------------------------------
   const [watchlist, setWatchlist] = useState<string[]>(() => loadPlayArea());
@@ -161,10 +162,9 @@ export default function PoolDetailPage() {
     });
   }, [radarRows, search, capFilter, sectorFilter, signalFilter, minScore]);
 
-  // ---- Compare tray + expansion --------------------------------------------------
+  // ---- Compare tray ---------------------------------------------------------------
   const [compared, setCompared] = useState<string[]>([]);
   const [showCompare, setShowCompare] = useState(false);
-  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const toggleCompare = (symbol: string) =>
     setCompared((prev) => prev.includes(symbol)
       ? prev.filter((s) => s !== symbol)
@@ -230,10 +230,7 @@ export default function PoolDetailPage() {
         heldSymbols={heldSymbols}
         compared={compared}
         onToggleCompare={toggleCompare}
-        onOpen={(symbol) => {
-          setExpandedSymbol(symbol);
-          document.getElementById("pool-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }}
+        onOpen={(symbol) => navigate(`/stocks/${encodeURIComponent(symbol)}`)}
       />
 
       {/* ── Toolbar ── */}
@@ -303,8 +300,6 @@ export default function PoolDetailPage() {
             heldSymbols={heldSymbols}
             compared={compared}
             onToggleCompare={toggleCompare}
-            expandedSymbol={expandedSymbol}
-            onExpand={setExpandedSymbol}
           />
         )}
       </div>

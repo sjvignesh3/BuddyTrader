@@ -3,7 +3,7 @@
 // technical signal strength first, fundamental score second. Display-only
 // (never persisted, never fed back into any computation).
 // -----------------------------------------------------------------------------
-import type { StockRow } from "./rows";
+import { passesAthRule, type StockRow } from "./rows";
 
 export type Conviction = "PRIME" | "STRONG" | "WATCH" | null;
 
@@ -50,7 +50,8 @@ export function whyLine(r: StockRow): string {
     bits.push(`fresh 20% streak${r.daysSinceRally !== null ? ` ${r.daysSinceRally}d ago` : ""}`);
   }
   if ((r.score ?? 0) >= 8) bits.push(`fundamentals ${r.score}/11`);
-  if (r.downFromAthPct !== null && r.downFromAthPct >= 30) {
+  // Cap-aware fall-from-ATH rule (Large >20 · Mid >30 · Small/Micro >40).
+  if (passesAthRule(r) && r.downFromAthPct !== null) {
     bits.push(`${r.downFromAthPct.toFixed(0)}% off ATH`);
   }
   return bits.slice(0, 2).join(" · ") || "on the radar";

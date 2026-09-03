@@ -31,6 +31,7 @@ TRADE_FIELDS = {
     "buy_price", "qty", "strategy", "target_price", "status", "close_label",
     "sell_date", "sell_price", "comments", "risk_notes",
 }
+NOTE_FIELDS = {"symbol", "note_date", "content"}
 
 
 def _rows(res: Any) -> List[Dict[str, Any]]:
@@ -273,6 +274,52 @@ def register_journal_routes(app: Any, cli: Any) -> None:
             "closed": to_wire(inserted[0] if inserted else closed_row),
             "remainder": to_wire(remaining[0] if remaining else None),
         }
+
+    # -- Stock notes (dated research views per symbol) -------------------------
+    @app.get("/api/journal/notes")
+    @guard
+    def list_notes(
+        symbol: Optional[str] = Query(None, description="Plain NSE symbol, e.g. TCS"),
+        limit: int = Query(500, ge=1, le=2000),
+    ) -> dict:
+        q = client().table("journal_stock_notes").select("*")
+        if symbol:
+            q = q.eq("symbol", symbol.strip().upper())
+        rows = _rows(q.order("note_date", desc=True).order("id", desc=True)
+                     .limit(limit).execute())
+        return {"notes": serialize_rows(rows), "count": len(rows)}
+
+    @app.post("/api/journal/notes")
+    @guard
+    def create_note(payload: dict = Body(...)) -> dict:
+        row = _clean(payload, NOTE_FIELDS)
+        if not row.get("symbol"):
+            raise HTTPException(status_code=400, detail="symbol is required")
+        if not row.get("content"):
+            raise HTTPException(status_code=400, detail="content is required")
+        if not row.get("note_date"):
+            from datetime import date
+            row["note_date"] = date.today().isoformat()
+        rows = _rows(client().table("journal_stock_notes").insert(row).execute())
+        return {"note": to_wire(rows[0] if rows else row)}
+
+    @app.put("/api/journal/notes/{note_id}")
+    @guard
+    def update_note(note_id: int, payload: dict = Body(...)) -> dict:
+        row = _clean(payload, NOTE_FIELDS)
+        if not row:
+            raise HTTPException(status_code=400, detail="no editable fields in payload")
+        rows = _rows(client().table("journal_stock_notes")
+                     .update(row).eq("id", note_id).execute())
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"note {note_id} not found")
+        return {"note": to_wire(rows[0])}
+
+    @app.delete("/api/journal/notes/{note_id}")
+    @guard
+    def delete_note(note_id: int) -> dict:
+        client().table("journal_stock_notes").delete().eq("id", note_id).execute()
+        return {"deleted": note_id}
 
     # -- Open positions (Market Analysis integration) -------------------------
     @app.get("/api/journal/positions")

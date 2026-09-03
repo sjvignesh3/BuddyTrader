@@ -164,6 +164,8 @@ class DailySyncWorker:
     upsert: Callable[..., Any] = sb.bulk_upsert
     load_screener_ratios: Callable[..., Dict[str, Dict[str, Any]]] = _default_load_screener_ratios
     job_type: str = DEFAULT_JOB_TYPE
+    # Stamped into sync_jobs.payload_json["context"] — trigger/pool/symbols.
+    run_context: Optional[Dict[str, Any]] = None
     # Populated once per run_all from the screener_ratios table.
     _ratios_by_symbol: Optional[Dict[str, Dict[str, Any]]] = None
 
@@ -317,6 +319,9 @@ class DailySyncWorker:
             "snapshots_written": r.snapshots_written,
             "payload_json": {
                 "dry_run": r.dry_run,
+                "duration_ms": int(
+                    (r.finished_at - r.started_at).total_seconds() * 1000),
+                "context": dict(self.run_context or {}),
                 "upsert_errors": r.upsert_errors,
                 "failed_symbols": {
                     s.symbol: s.error for s in r.per_symbol if not s.ok

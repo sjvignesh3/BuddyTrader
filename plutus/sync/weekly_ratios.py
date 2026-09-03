@@ -124,6 +124,8 @@ class WeeklyRatiosWorker:
     fetch_ratios: Callable[[str], Result[Dict[str, Any]]] = _default_fetch_ratios
     upsert: Callable[..., Any] = sb.bulk_upsert
     job_type: str = DEFAULT_JOB_TYPE
+    # Stamped into sync_jobs.payload_json["context"] — trigger/pool/symbols.
+    run_context: Optional[Dict[str, Any]] = None
 
     def _preflight_login(self) -> Optional[str]:
         if self.fetch_ratios is not _default_fetch_ratios:
@@ -220,6 +222,9 @@ class WeeklyRatiosWorker:
             "snapshots_written": r.rows_written,
             "payload_json": {
                 "dry_run": r.dry_run,
+                "duration_ms": int(
+                    (r.finished_at - r.started_at).total_seconds() * 1000),
+                "context": dict(self.run_context or {}),
                 "upsert_errors": r.upsert_errors,
                 "failed_symbols": {s.symbol: s.error
                                    for s in r.per_symbol if not s.ok},

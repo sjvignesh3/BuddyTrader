@@ -176,6 +176,8 @@ class QuarterlySyncWorker:
     fetch_quarterly: Callable[[str], Result[Dict[str, Any]]] = _default_fetch_quarterly
     upsert: Callable[..., Any] = sb.bulk_upsert
     job_type: str = DEFAULT_JOB_TYPE
+    # Stamped into sync_jobs.payload_json["context"] — trigger/pool/symbols.
+    run_context: Optional[Dict[str, Any]] = None
 
     def run_symbol(self, symbol: str) -> tuple[SymbolReport, List[Dict[str, Any]]]:
         rep = SymbolReport(symbol=symbol, ok=False, rows_extracted=0)
@@ -318,6 +320,9 @@ class QuarterlySyncWorker:
             "snapshots_written": r.rows_written,   # reuse column for row count
             "payload_json": {
                 "dry_run": r.dry_run,
+                "duration_ms": int(
+                    (r.finished_at - r.started_at).total_seconds() * 1000),
+                "context": dict(self.run_context or {}),
                 "upsert_errors": r.upsert_errors,
                 "failed_symbols": {
                     s.symbol: s.error for s in r.per_symbol if not s.ok

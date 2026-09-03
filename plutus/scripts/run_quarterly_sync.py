@@ -16,6 +16,7 @@ from datetime import date, datetime
 from typing import Any, List, Optional, Sequence
 
 from plutus.alerts.sync_hook import maybe_alert_on_run_report
+from plutus.sync.context import build_run_context
 from plutus.sync.quarterly import QuarterlySyncWorker, apply_manual_overrides
 
 logger = logging.getLogger("plutus.run_quarterly_sync")
@@ -117,7 +118,13 @@ def main(
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not apply yfinance session timeout: %s", exc)
 
-    w = worker or QuarterlySyncWorker()
+    run_ctx = build_run_context(
+        pool=args.pool,
+        symbols=symbols if args.symbols else None,
+    )
+    w = worker or QuarterlySyncWorker(run_context=run_ctx)
+    if worker is not None and getattr(worker, "run_context", False) is None:
+        worker.run_context = run_ctx  # injected worker without a context
     report = w.run_all(symbols, as_of=as_of, dry_run=args.dry_run)
 
     # Optionally chain override CSV after the yfinance pass.

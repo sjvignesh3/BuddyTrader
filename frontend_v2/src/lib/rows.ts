@@ -50,6 +50,24 @@ export interface StockRow {
   snapshot: Snapshot;
 }
 
+// Cap-aware "deep fall from ATH" rule — a stock only counts as beaten-down
+// once its fall from ATH clears the bar for its size class:
+//   Large > 20% · Mid > 30% · Small & Micro > 40%.
+export const ATH_FALL_RULE: Record<string, number> = {
+  Large: 20, Mid: 30, Small: 40, Micro: 40,
+};
+
+/** Threshold for a cap bucket (unknown cap falls back to the Mid bar). */
+export function athFallThreshold(cap: string | null): number {
+  return (cap && ATH_FALL_RULE[cap]) || 30;
+}
+
+/** true = clears the rule · false = short of it · null = not computable. */
+export function passesAthRule(r: Pick<StockRow, "cap" | "downFromAthPct">): boolean | null {
+  if (r.downFromAthPct === null) return null;
+  return r.downFromAthPct > athFallThreshold(r.cap);
+}
+
 export function num(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);

@@ -4,13 +4,14 @@
 //   · % Below DMA renders as a progress bar toward the 14% buy threshold
 //   · Score renders as a radial ring (8+/6–7/<6 bands)
 //   · a compare checkbox feeds the side-by-side tray
+//   · clicking a row opens the stock's own page (/stocks/:symbol)
 // Columns: Symbol · Sector · Cap · Close ₹ · 200 DMA · % Below DMA ·
 // 52W Low · 52W High · % From Low · ATH · % ↓ ATH · Last Week Trend ·
 // Score /11 · then [Signal] or [Days Since Streak · % To Next Buy · Streak %].
 // -----------------------------------------------------------------------------
-import { Fragment, useMemo, useState } from "react";
-import type { StockRow } from "../lib/rows";
-import RowDetail from "./RowDetail";
+import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { athFallThreshold, passesAthRule, type StockRow } from "../lib/rows";
 import ScoreRing from "./ScoreRing";
 import SignalBadge from "./SignalBadge";
 
@@ -130,16 +131,23 @@ const BASE_COLS: Col[] = [
     value: (r) => r.ath,
     render: (r) => <span className="text-brand-mute">{money(r.ath)}</span> },
   { key: "downFromAthPct", label: "% ↓ ATH", align: "right",
-    tip: "Fall from all-time high (adjusted)",
+    tip: "Fall from all-time high (adjusted). Deep-value rule by cap: "
+       + "Large >20% · Mid >30% · Small/Micro >40%. ✓ = clears its rule.",
     value: (r) => r.downFromAthPct,
-    render: (r) => (
-      <span className={`font-semibold ${
-        r.downFromAthPct === null ? "text-brand-mute"
-          : r.downFromAthPct >= 30 ? "text-teal-700"
-            : r.downFromAthPct >= 15 ? "text-amber-700" : "text-brand-mute"}`}>
-        {pct(r.downFromAthPct)}
-      </span>
-    ) },
+    render: (r) => {
+      const t = athFallThreshold(r.cap);
+      const v = r.downFromAthPct;
+      const pass = passesAthRule(r);
+      return (
+        <span className={`font-semibold ${
+          v === null ? "text-brand-mute"
+            : pass ? "text-teal-700"
+              : v >= t - 10 ? "text-amber-700" : "text-brand-mute"}`}
+              title={`Rule for ${r.cap ?? "unknown"} cap: fall > ${t}%`}>
+          {pct(v)}{pass ? " ✓" : ""}
+        </span>
+      );
+    } },
   { key: "trendPct", label: "Week Trend", align: "right",
     tip: "Price % change over 7 trading days. Sort for Top Gainers / Losers.",
     value: (r) => r.trendPct,
@@ -205,19 +213,16 @@ export default function StockTable({
   pool,
   compared,
   onToggleCompare,
-  expandedSymbol,
-  onExpand,
   heldSymbols,
 }: {
   rows: StockRow[];
   pool: string;
   compared: string[];
   onToggleCompare: (symbol: string) => void;
-  expandedSymbol: string | null;
-  onExpand: (symbol: string | null) => void;
   /** plain symbols with an open Trading Journal position — shows 💼 */
   heldSymbols?: Set<string>;
 }) {
+  const navigate = useNavigate();
   const isRally = RALLY_POOLS.has(pool);
   const columns = useMemo(() => {
     // Decorate the symbol cell with the "held" marker when applicable.
@@ -291,37 +296,27 @@ export default function StockTable({
           </thead>
           <tbody className="font-mono tabular-nums text-[11.5px]">
             {sorted.map((r) => {
-              const open = expandedSymbol === r.symbol;
               const inTray = compared.includes(r.symbol);
               return (
-                <Fragment key={r.symbol}>
-                  <tr
-                    onClick={() => onExpand(open ? null : r.symbol)}
-                    className={`border-t border-brand-border/70 cursor-pointer transition-colors ${
-                      open ? "bg-teal-50/60" : "hover:bg-brand-soft"}`}
-                  >
-                    <td className="px-2 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox"
-                             checked={inTray}
-                             onChange={() => onToggleCompare(r.symbol)}
-                             className="accent-teal-700 cursor-pointer"
-                             title="Compare" />
+                <tr
+                  key={r.symbol}
+                  onClick={() => navigate(`/stocks/${encodeURIComponent(r.symbol)}`)}
+                  className="border-t border-brand-border/70 cursor-pointer transition-colors hover:bg-brand-soft"
+                >
+                  <td className="px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox"
+                           checked={inTray}
+                           onChange={() => onToggleCompare(r.symbol)}
+                           className="accent-teal-700 cursor-pointer"
+                           title="Compare" />
+                  </td>
+                  {columns.map((c) => (
+                    <td key={c.key}
+                        className={`px-2.5 py-2 whitespace-nowrap ${ALIGN_CLS[c.align]}`}>
+                      {c.render(r)}
                     </td>
-                    {columns.map((c) => (
-                      <td key={c.key}
-                          className={`px-2.5 py-2 whitespace-nowrap ${ALIGN_CLS[c.align]}`}>
-                        {c.render(r)}
-                      </td>
-                    ))}
-                  </tr>
-                  {open && (
-                    <tr className="border-t border-teal-200">
-                      <td colSpan={columns.length + 1} className="p-0">
-                        <RowDetail row={r} isHeld={heldSymbols?.has(plain(r.symbol)) ?? false} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
+                  ))}
+                </tr>
               );
             })}
           </tbody>
@@ -338,13 +333,18 @@ export default function StockTable({
         <span><b className="text-amber-700">6–7</b> moderate</span>
         <span><b className="text-rose-600">0–5</b> weak</span>
         <span>– = not scored yet</span>
+        <span className="border-l border-brand-border pl-3">
+          <span className="font-bold text-brand-accent">% ↓ ATH rule:</span>{" "}
+          <b>LRG</b> &gt;20 · <b>MID</b> &gt;30 · <b>SML/MCR</b> &gt;40 ·{" "}
+          <b className="text-teal-700">✓</b> clears it
+        </span>
         {isRally && (
           <span className="border-l border-brand-border pl-3">
             <b className="text-teal-700">% To Next Buy ≤ 0</b> = at/below re-entry ·{" "}
             <b className="text-amber-700">≤ +10%</b> = watch zone
           </span>
         )}
-        <span className="ml-auto">↕ sort by any header · click a row for the full story · ☑ to compare</span>
+        <span className="ml-auto">↕ sort by any header · click a row to open the stock page · ☑ to compare</span>
       </div>
     </div>
   );

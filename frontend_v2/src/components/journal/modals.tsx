@@ -26,23 +26,25 @@ function intOrNull(s: string): number | null {
 
 // ---- Opportunity ---------------------------------------------------------------
 
-export function OpportunityModal({ initial, onSave, onClose, busy }: {
+export function OpportunityModal({ initial, prefill, onSave, onClose, busy }: {
   initial: Opportunity | null;
+  /** Defaults for a NEW opportunity (e.g. from the stock page) — ignored when editing. */
+  prefill?: OpportunityDraft;
   onSave: (draft: OpportunityDraft) => void;
   onClose: () => void;
   busy: boolean;
 }) {
   const [f, setF] = useState({
-    opp_date: initial?.opp_date ?? today(),
-    symbol: initial?.symbol ?? "",
-    cap_bucket: initial?.cap_bucket ?? "",
-    buy_price: initial?.buy_price ?? "",
-    limit_price: initial?.limit_price ?? "",
-    qty: initial?.qty?.toString() ?? "",
-    strategy: initial?.strategy ?? "",
-    target_price: initial?.target_price ?? "",
-    action_filter: initial?.action_filter ?? "",
-    notes: initial?.notes ?? "",
+    opp_date: initial?.opp_date ?? prefill?.opp_date ?? today(),
+    symbol: initial?.symbol ?? prefill?.symbol ?? "",
+    cap_bucket: initial?.cap_bucket ?? prefill?.cap_bucket ?? "",
+    buy_price: initial?.buy_price ?? prefill?.buy_price ?? "",
+    limit_price: initial?.limit_price ?? prefill?.limit_price ?? "",
+    qty: initial?.qty?.toString() ?? prefill?.qty?.toString() ?? "",
+    strategy: initial?.strategy ?? prefill?.strategy ?? "",
+    target_price: initial?.target_price ?? prefill?.target_price ?? "",
+    action_filter: initial?.action_filter ?? prefill?.action_filter ?? "",
+    notes: initial?.notes ?? prefill?.notes ?? "",
   });
   const set = (k: keyof typeof f) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>

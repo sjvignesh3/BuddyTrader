@@ -40,6 +40,9 @@ Or one-by-one:
 009_views.sql
 010_rls.sql              -- anon read, service write (Stage 7)
 011_canary_checks.sql    -- pinned drift fixtures (Stage 8)
+012_screener_ratios.sql  -- weekly Screener PE/PB/MCap store
+013_journal.sql          -- Trading Journal (settings, opportunities, trades)
+014_stock_notes.sql      -- per-stock dated research notes (journal)
 ```
 
 Row-Level Security policies live in `010_rls.sql` and `011_canary_checks.sql`.

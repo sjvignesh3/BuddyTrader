@@ -23,6 +23,7 @@ from datetime import date, datetime
 from typing import Any, List, Optional, Sequence
 
 from plutus.alerts.sync_hook import maybe_alert_on_run_report
+from plutus.sync.context import build_run_context
 from plutus.sync.worker import DailySyncWorker
 
 logger = logging.getLogger("plutus.run_daily_sync")
@@ -102,6 +103,7 @@ def enrich_missing_fundamentals(
     quarterly_worker: Any = None,
     ratios_worker: Any = None,
     find_missing: Any = None,
+    context: Any = None,
 ) -> dict:
     """Best-effort: never raises, never changes the daily sync's exit code."""
     summary: dict = {"fundamentals_fetched": 0, "ratios_fetched": 0,
@@ -118,7 +120,8 @@ def enrich_missing_fundamentals(
 
         if missing_fund:
             from plutus.sync.quarterly import QuarterlySyncWorker
-            qw = quarterly_worker or QuarterlySyncWorker()
+            qw = quarterly_worker or QuarterlySyncWorker(
+                run_context=dict(context) if context else None)
             qrep = qw.run_all(missing_fund)
             summary["fundamentals_fetched"] = qrep.symbols_ok
             summary["errors"].extend(
@@ -127,7 +130,8 @@ def enrich_missing_fundamentals(
 
         if missing_ratios:
             from plutus.sync.weekly_ratios import WeeklyRatiosWorker
-            rw = ratios_worker or WeeklyRatiosWorker()
+            rw = ratios_worker or WeeklyRatiosWorker(
+                run_context=dict(context) if context else None)
             rrep = rw.run_all(missing_ratios)
             summary["ratios_fetched"] = rrep.symbols_ok
             summary["errors"].extend(
@@ -193,13 +197,24 @@ def main(
     # so the snapshot written below is stamped with fresh PE/PB/MCap and
     # the scan that follows can score them. Best-effort — never changes
     # the exit code.
+    # Trigger/pool/scope context — recorded into sync_jobs.payload_json so
+    # the app's Sync page can show WHO ran WHAT. Fetch-on-miss children are
+    # tagged `via` so their sync_jobs rows say the daily sync spawned them.
+    run_ctx = build_run_context(
+        pool=args.pool,
+        symbols=symbols if args.symbols else None,
+    )
+
     enrichment: Optional[dict] = None
     if not args.dry_run and not args.no_enrich:
-        enrichment = enrich_missing_fundamentals(symbols)
+        enrichment = enrich_missing_fundamentals(
+            symbols, context={**run_ctx, "via": "daily_sync fetch-on-miss"})
         if enrichment["errors"]:
             logger.warning("enrichment errors: %s", enrichment["errors"][:5])
 
-    w = worker or DailySyncWorker()
+    w = worker or DailySyncWorker(run_context=run_ctx)
+    if worker is not None and getattr(worker, "run_context", False) is None:
+        worker.run_context = run_ctx  # injected worker without a context
     report = w.run_all(symbols, as_of=as_of, dry_run=args.dry_run)
 
     # One-shot summary to stdout for humans + machines.

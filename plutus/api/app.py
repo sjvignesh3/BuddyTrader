@@ -214,13 +214,17 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
                 _resolve_as_of,
                 enrich_missing_fundamentals,
             )
+            from plutus.sync.context import TRIGGER_ON_DEMAND, build_run_context
             from plutus.sync.worker import DailySyncWorker
 
             as_of = _resolve_as_of(None)
+            run_ctx = build_run_context(
+                pool="PlayArea", symbols=symbols, trigger=TRIGGER_ON_DEMAND)
             # Screener enrichment FIRST so the daily sync can stamp the
             # fresh PE/PB/MCap into the snapshot it is about to write.
-            enrich_missing_fundamentals(symbols)
-            DailySyncWorker().run_all(symbols, as_of=as_of)
+            enrich_missing_fundamentals(
+                symbols, context={**run_ctx, "via": "on-demand fetch-on-miss"})
+            DailySyncWorker(run_context=run_ctx).run_all(symbols, as_of=as_of)
 
             # Re-score: run the scan for each pool the symbols belong to.
             from plutus.adapters import supabase_client as _sb
