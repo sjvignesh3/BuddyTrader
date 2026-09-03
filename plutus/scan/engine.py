@@ -60,20 +60,32 @@ FUNDAMENTAL_MERGE_COLS = (
 
 # Quarter-history aggregates computed by _default_fetch_fundamentals and
 # merged alongside FUNDAMENTAL_MERGE_COLS — inputs to the 11-check score's
-# Sales/PBT/NP-at-ATH and OPM-stability rules (BuddyTrader semantics).
+# ATH rules and the YoY same-quarter (cyclicality-aware) rule.
 FUNDAMENTAL_AGG_COLS = (
     "latest_q_sales", "latest_q_pbt", "latest_q_net_profit",
     "ath_q_sales", "ath_q_pbt", "ath_q_net_profit",
-    "latest_opm", "avg_opm",
+    "yoy_q_net_profit", "prev_q_net_profit", "yoy_quarter_label",
 )
 
 
-def _quarter_aggregates(rows_newest_first: "List[Dict[str, Any]]") -> "Dict[str, Any]":
-    """Latest + all-time-high quarterly figures across every stored quarter.
+def _quarter_month_year(q: Any) -> "Optional[tuple]":
+    """quarter_end_date arrives as datetime.date locally but as an ISO
+    string from PostgREST — normalise to (year, month)."""
+    if q is None:
+        return None
+    if hasattr(q, "year") and hasattr(q, "month"):
+        return (q.year, q.month)
+    s = str(q)
+    try:
+        return (int(s[0:4]), int(s[5:7]))
+    except (ValueError, IndexError):
+        return None
 
-    OPM: BuddyTrader approximated OPM with net-profit margin because its
-    cache lacked the real number; Plutus stores Screener's actual OPM %
-    per quarter, so the real thing is used here."""
+
+def _quarter_aggregates(rows_newest_first: "List[Dict[str, Any]]") -> "Dict[str, Any]":
+    """Latest + all-time-high quarterly figures across every stored quarter,
+    plus the SAME QUARTER LAST YEAR's net profit (YoY comparison — a
+    seasonally-low latest quarter must not sink a cyclic business)."""
     def _series(key: str) -> "List[Decimal]":
         return [r[key] for r in rows_newest_first
                 if isinstance(r.get(key), Decimal)]
@@ -81,10 +93,25 @@ def _quarter_aggregates(rows_newest_first: "List[Dict[str, Any]]") -> "Dict[str,
     sales = _series("sales")
     pbt = _series("pbt")
     np_ = _series("net_profit")
-    opm = _series("operating_margin_pct")
-    avg_opm = None
-    if len(opm) > 1:
-        avg_opm = sum(opm, Decimal(0)) / Decimal(len(opm))
+
+    # YoY: the quarter with the same month, one year before the latest.
+    yoy_np: Optional[Decimal] = None
+    yoy_label: Optional[str] = None
+    prev_np: Optional[Decimal] = None
+    latest_ym = _quarter_month_year(
+        rows_newest_first[0].get("quarter_end_date")) if rows_newest_first else None
+    if latest_ym is not None:
+        target = (latest_ym[0] - 1, latest_ym[1])
+        for r in rows_newest_first[1:]:
+            if _quarter_month_year(r.get("quarter_end_date")) == target \
+               and isinstance(r.get("net_profit"), Decimal):
+                yoy_np = r["net_profit"]
+                yoy_label = r.get("quarter_label") or f"{target[1]:02d}/{target[0]}"
+                break
+    if len(rows_newest_first) > 1 and isinstance(
+            rows_newest_first[1].get("net_profit"), Decimal):
+        prev_np = rows_newest_first[1]["net_profit"]
+
     return {
         "latest_q_sales": sales[0] if sales else None,
         "latest_q_pbt": pbt[0] if pbt else None,
@@ -92,8 +119,9 @@ def _quarter_aggregates(rows_newest_first: "List[Dict[str, Any]]") -> "Dict[str,
         "ath_q_sales": max(sales) if sales else None,
         "ath_q_pbt": max(pbt) if pbt else None,
         "ath_q_net_profit": max(np_) if np_ else None,
-        "latest_opm": opm[0] if opm else None,
-        "avg_opm": avg_opm,
+        "yoy_q_net_profit": yoy_np,
+        "prev_q_net_profit": prev_np,
+        "yoy_quarter_label": yoy_label,
     }
 
 
@@ -258,8 +286,8 @@ class ScanEngine:
             return {}
         cli = self.supabase_client or sb.get_client()
         cols = ",".join(("symbol",) + FUNDAMENTAL_MERGE_COLS
-                        + ("quarter_end_date", "sales", "pbt", "net_profit",
-                           "operating_margin_pct"))
+                        + ("quarter_end_date", "quarter_label",
+                           "sales", "pbt", "net_profit"))
         res = (
             cli.table("fundamentals")
                .select(cols)

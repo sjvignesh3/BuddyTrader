@@ -2,7 +2,9 @@
 FastAPI application factory — Plutus read-only API (Stage 7).
 
 Design contract:
-  * READ-ONLY. There is no POST/PUT/DELETE anywhere in this file.
+  * READ-ONLY for market data. There is no POST/PUT/DELETE in this file.
+    The single writable area is the personal Trading Journal, mounted from
+    plutus.api.journal (its tables are anon-inaccessible via RLS).
   * The Supabase client is dependency-injected via app.state.supabase_client
     so tests can swap in an in-memory fake.
   * Every response is passed through ``serializers.to_wire`` so Decimals
@@ -52,7 +54,8 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
         CORSMiddleware,
         allow_origins=["*"],       # narrowed via env in prod (Stage 9).
         allow_credentials=False,
-        allow_methods=["GET"],
+        # Write methods exist ONLY under /api/journal/* (personal journal).
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
@@ -194,5 +197,79 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
         if row is None:
             raise HTTPException(status_code=404, detail=f"no fundamentals for {symbol}")
         return {"fundamentals": to_wire(row)}
+
+    # -- LOCAL-DEV on-demand fetch (PlayArea "Fetch now") --------------------
+    # Deliberately NOT ported to the Edge Function: production stays
+    # read-only; there, new symbols fill on the nightly sync. Locally this
+    # runs the daily sync + fetch-on-miss enrichment + the pool scans for
+    # the requested symbols in a background thread. Available only when
+    # PLUTUS_ENV != prod.
+    _sync_in_progress: set = set()
+
+    def _run_on_demand(symbols: list) -> None:
+        import logging as _logging
+        log = _logging.getLogger("plutus.api.on_demand")
+        try:
+            from plutus.scripts.run_daily_sync import (
+                _resolve_as_of,
+                enrich_missing_fundamentals,
+            )
+            from plutus.sync.worker import DailySyncWorker
+
+            as_of = _resolve_as_of(None)
+            # Screener enrichment FIRST so the daily sync can stamp the
+            # fresh PE/PB/MCap into the snapshot it is about to write.
+            enrich_missing_fundamentals(symbols)
+            DailySyncWorker().run_all(symbols, as_of=as_of)
+
+            # Re-score: run the scan for each pool the symbols belong to.
+            from plutus.adapters import supabase_client as _sb
+            from plutus.scan.engine import ScanEngine
+            client = cli() or _sb.get_client()
+            pools: set = set()
+            try:
+                res = (client.table("stocks").select("symbol,pools")
+                       .in_("symbol", symbols).execute())
+                for r in getattr(res, "data", None) or []:
+                    pools.update(r.get("pools") or [])
+            except Exception as exc:  # noqa: BLE001
+                log.warning("pool lookup failed: %s", exc)
+            eng = ScanEngine(supabase_client=client)
+            for pool in sorted(pools):
+                eng.run(pool_code=pool, snapshot_date=as_of,
+                        triggered_by="api")
+            log.info("on-demand sync done: %s (pools %s)", symbols, sorted(pools))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("on-demand sync failed: %s", exc)
+        finally:
+            for s in symbols:
+                _sync_in_progress.discard(s)
+
+    @app.get("/api/admin/sync")
+    def on_demand_sync(symbols: str = Query(..., description="Comma-separated")) -> dict:
+        from plutus.config import get_settings
+        try:
+            env = get_settings().environment
+        except Exception:  # noqa: BLE001
+            env = "dev"
+        if env == "prod":
+            raise HTTPException(status_code=404, detail="not available in prod")
+
+        req = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        todo = [s for s in req if s not in _sync_in_progress]
+        for s in todo:
+            _sync_in_progress.add(s)
+        if todo:
+            import threading
+            threading.Thread(target=_run_on_demand, args=(todo,),
+                             daemon=True).start()
+        return {"started": todo,
+                "already_running": [s for s in req if s not in todo],
+                "note": "sync + screener fetch + scan running in background; "
+                        "poll the snapshots endpoint"}
+
+    # -- Trading Journal (writable; personal tool) ---------------------------
+    from plutus.api.journal import register_journal_routes
+    register_journal_routes(app, cli)
 
     return app

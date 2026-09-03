@@ -148,12 +148,24 @@ class TestSyncAndFund:
 
 
 class TestReadOnlyContract:
-    """The API must expose zero write verbs."""
+    """Market-data routes expose zero write verbs; the personal Trading
+    Journal (/api/journal/*) is the ONLY writable surface."""
 
     def test_no_post_routes(self, client):
         for route in client.app.routes:
+            path = getattr(route, "path", "")
+            if path.startswith("/api/journal"):
+                continue
             methods = getattr(route, "methods", set()) or set()
-            assert "POST" not in methods, f"Write route leaked: {route.path}"
-            assert "PUT" not in methods, f"Write route leaked: {route.path}"
-            assert "PATCH" not in methods, f"Write route leaked: {route.path}"
-            assert "DELETE" not in methods, f"Write route leaked: {route.path}"
+            assert "POST" not in methods, f"Write route leaked: {path}"
+            assert "PUT" not in methods, f"Write route leaked: {path}"
+            assert "PATCH" not in methods, f"Write route leaked: {path}"
+            assert "DELETE" not in methods, f"Write route leaked: {path}"
+
+    def test_journal_routes_mounted(self, client):
+        journal = [getattr(r, "path", "") for r in client.app.routes
+                   if getattr(r, "path", "").startswith("/api/journal")]
+        assert "/api/journal/settings" in journal
+        assert "/api/journal/trades" in journal
+        assert "/api/journal/opportunities" in journal
+        assert "/api/journal/positions" in journal

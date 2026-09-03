@@ -188,23 +188,24 @@ def main(
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not apply yfinance session timeout: %s", exc)
 
+    # Fetch-on-miss (legacy cache contract): symbols with no fundamentals /
+    # screener ratios yet are fetched from Screener BEFORE the price sync,
+    # so the snapshot written below is stamped with fresh PE/PB/MCap and
+    # the scan that follows can score them. Best-effort — never changes
+    # the exit code.
+    enrichment: Optional[dict] = None
+    if not args.dry_run and not args.no_enrich:
+        enrichment = enrich_missing_fundamentals(symbols)
+        if enrichment["errors"]:
+            logger.warning("enrichment errors: %s", enrichment["errors"][:5])
+
     w = worker or DailySyncWorker()
     report = w.run_all(symbols, as_of=as_of, dry_run=args.dry_run)
 
     # One-shot summary to stdout for humans + machines.
     report_json = report.as_json()
-
-    # Fetch-on-miss (legacy cache contract): symbols that synced OK but have
-    # no fundamentals / screener ratios yet are fetched from Screener now,
-    # so the scan that follows can score them. Best-effort — never changes
-    # the exit code.
-    if not args.dry_run and not args.no_enrich:
-        ok_symbols = [s.symbol for s in report.per_symbol if s.ok]
-        if ok_symbols:
-            enrichment = enrich_missing_fundamentals(ok_symbols)
-            report_json["enrichment"] = enrichment
-            if enrichment["errors"]:
-                logger.warning("enrichment errors: %s", enrichment["errors"][:5])
+    if enrichment is not None:
+        report_json["enrichment"] = enrichment
 
     print(json.dumps(report_json, indent=2, default=str))
 

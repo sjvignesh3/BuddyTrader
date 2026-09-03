@@ -111,8 +111,9 @@ def parse_section_table(html: str, section_id: str) -> List[List[str]]:
 
 def extract_quarterly_results(html: str) -> List[Dict[str, Any]]:
     """One dict per quarter column, NEWEST LAST as printed on the page:
-    {quarter_label, quarter_end_date, sales, opm_pct, pbt, net_profit}.
-    Money values are in ₹ CRORES exactly as printed."""
+    {quarter_label, quarter_end_date, sales, pbt, net_profit}.
+    Money values are in ₹ CRORES exactly as printed.
+    (OPM intentionally not extracted — dropped from the criteria 2026-09-02.)"""
     out: List[Dict[str, Any]] = []
     rows = parse_section_table(html, "quarters")
     if not rows:
@@ -121,7 +122,7 @@ def extract_quarterly_results(html: str) -> List[Dict[str, Any]]:
     if len(headers) < 2:
         return out
 
-    sales_row = pbt_row = np_row = opm_row = None
+    sales_row = pbt_row = np_row = None
     for row in rows[1:]:
         if not row:
             continue
@@ -132,8 +133,6 @@ def extract_quarterly_results(html: str) -> List[Dict[str, Any]]:
             pbt_row = row
         elif "net profit" in label and "before" not in label and np_row is None:
             np_row = row
-        elif label.startswith("opm") and opm_row is None:
-            opm_row = row
 
     def _cell(row: Optional[List[str]], i: int) -> Optional[Decimal]:
         if row is None or i >= len(row):
@@ -148,7 +147,6 @@ def extract_quarterly_results(html: str) -> List[Dict[str, Any]]:
             "quarter_label": label,
             "quarter_end_date": quarter_label_to_date(label),
             "sales": _cell(sales_row, i),
-            "opm_pct": _cell(opm_row, i),
             "pbt": _cell(pbt_row, i),
             "net_profit": _cell(np_row, i),
         })

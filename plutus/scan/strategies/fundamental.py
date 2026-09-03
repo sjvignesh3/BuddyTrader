@@ -15,7 +15,11 @@ Faithful port of the scoring contract in legacy
    8. Net Profit near ATH   (latest Q >= 90% of peak quarterly)
    9. PBT near ATH          (latest Q >= 90% of peak quarterly)
   10. Pledging < 5%
-  11. OPM stable/positive   (latest >= 90% of average; positive if no history)
+  11. Net Profit YoY (same quarter) — latest Q vs the SAME quarter last
+      year. Cyclic/seasonal businesses post soft quarters by design; a
+      QoQ dip with YoY growth is a pattern, not a red flag — this check
+      rewards it instead of punishing it. (Replaced the old OPM check,
+      decision 2026-09-02.)
 
 Scoring rules (legacy semantics):
   * points = number of checks that DEFINITELY pass; unknown (missing
@@ -57,7 +61,7 @@ DEFAULTS = {
     "roe_min": Decimal("15"),
     "pledging_max": Decimal("5"),
     "ath_tolerance": Decimal("0.90"),   # latest Q >= 90% of ATH quarter
-    "opm_tolerance": Decimal("0.90"),   # latest OPM >= 90% of average
+    "yoy_growth_min": Decimal("0"),     # latest Q NP >= same-Q-last-year NP
 }
 
 _CRORE = Decimal(10_000_000)
@@ -107,8 +111,8 @@ class FundamentalScreenerStrategy(Strategy):
         ath_sales = g(snap, "ath_q_sales")
         ath_pbt = g(snap, "ath_q_pbt")
         ath_np = g(snap, "ath_q_net_profit")
-        latest_opm = g(snap, "latest_opm")
-        avg_opm = g(snap, "avg_opm")
+        yoy_np = g(snap, "yoy_q_net_profit")
+        prev_np = g(snap, "prev_q_net_profit")
 
         pe_max = dec_or_default(cfg.get("pe_max"), DEFAULTS["pe_max"])
         nde_max = dec_or_default(cfg.get("net_debt_to_equity_max"),
@@ -119,8 +123,8 @@ class FundamentalScreenerStrategy(Strategy):
                                     DEFAULTS["pledging_max"])
         ath_tol = dec_or_default(cfg.get("ath_tolerance"),
                                  DEFAULTS["ath_tolerance"])
-        opm_tol = dec_or_default(cfg.get("opm_tolerance"),
-                                 DEFAULTS["opm_tolerance"])
+        yoy_min = dec_or_default(cfg.get("yoy_growth_min"),
+                                 DEFAULTS["yoy_growth_min"])
 
         checks: List[Dict[str, Any]] = []
 
@@ -195,15 +199,26 @@ class FundamentalScreenerStrategy(Strategy):
             add("pledging", f"Pledging < {pledge_max}%", pledge < pledge_max,
                 f"Pledging = {_fmt(pledge)}%")
 
-        # 11. OPM stable/positive
-        if latest_opm is None:
-            add("opm", "OPM Stable/Positive", None, "OPM data not available")
-        elif avg_opm is not None:
-            add("opm", "OPM Stable/Positive", latest_opm >= avg_opm * opm_tol,
-                f"Latest OPM {_fmt(latest_opm)}% vs avg {_fmt(avg_opm)}%")
+        # 11. Net Profit YoY — same quarter last year (cyclicality-aware).
+        # A seasonally soft latest quarter is judged against ITS OWN season,
+        # not the previous quarter; QoQ-down-but-YoY-up is called out as a
+        # cyclic pattern (conviction booster), never a knock-out.
+        if lq_np is None or yoy_np is None:
+            add("np_yoy", "Net Profit YoY (same quarter)", None,
+                "Same-quarter-last-year net profit not available")
+        elif yoy_np <= 0:
+            add("np_yoy", "Net Profit YoY (same quarter)", lq_np > 0,
+                f"Turned {'profitable' if lq_np > 0 else 'loss-making'} vs "
+                f"loss in the same quarter last year")
         else:
-            add("opm", "OPM Stable/Positive", latest_opm > 0,
-                f"OPM = {_fmt(latest_opm)}%")
+            growth = (lq_np - yoy_np) / yoy_np * Decimal(100)
+            passed = growth >= yoy_min
+            detail = (f"Latest Q {_fmt_cr(lq_np)} vs same Q last year "
+                      f"{_fmt_cr(yoy_np)} ({'+' if growth >= 0 else ''}"
+                      f"{_fmt(growth)}% YoY)")
+            if passed and prev_np is not None and lq_np < prev_np:
+                detail += " — QoQ dip but YoY up: cyclic/seasonal pattern"
+            add("np_yoy", "Net Profit YoY (same quarter)", passed, detail)
 
         return checks
 
@@ -261,8 +276,9 @@ class FundamentalScreenerStrategy(Strategy):
                     "ath_sales": self._get_decimal(snapshot, "ath_q_sales"),
                     "ath_pbt": self._get_decimal(snapshot, "ath_q_pbt"),
                     "ath_profit": self._get_decimal(snapshot, "ath_q_net_profit"),
-                    "latest_opm": self._get_decimal(snapshot, "latest_opm"),
-                    "avg_opm": self._get_decimal(snapshot, "avg_opm"),
+                    "yoy_profit": self._get_decimal(snapshot, "yoy_q_net_profit"),
+                    "prev_profit": self._get_decimal(snapshot, "prev_q_net_profit"),
+                    "yoy_quarter": snapshot.get("yoy_quarter_label"),
                 },
             },
         )

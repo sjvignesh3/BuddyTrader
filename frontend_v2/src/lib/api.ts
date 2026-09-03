@@ -175,6 +175,12 @@ export const api = {
     get<{ symbol: string; fundamentals: Fundamentals | Fundamentals[] }>(
       `/api/fundamentals/${encodeURIComponent(symbol)}/latest`
     ),
+  /** LOCAL-DEV only (FastAPI): trigger an on-demand sync + Screener fetch +
+   * scan for symbols missing from the DB. 404s on the prod Edge Function. */
+  adminSync: (symbols: string[]) =>
+    get<{ started: string[]; already_running: string[]; note: string }>(
+      `/api/admin/sync?symbols=${encodeURIComponent(symbols.join(","))}`
+    ),
   syncJobs: (jobType?: string, limit = 10) =>
     get<{ jobs: SyncJob[]; count: number }>(
       `/api/sync_jobs/latest?limit=${limit}${

@@ -265,15 +265,15 @@ class TestScanEngineFundamentalsMerge:
                 "roe": Decimal("20"),
                 "net_debt_to_equity": Decimal("0.15"),
                 "promoter_pledging_pct": Decimal("0"),
-                # Quarter aggregates (the 11-check score's ATH/OPM rules).
+                # Quarter aggregates (the 11-check score's ATH/YoY rules).
                 "latest_q_sales": Decimal("100"),
                 "latest_q_pbt": Decimal("20"),
                 "latest_q_net_profit": Decimal("15"),
                 "ath_q_sales": Decimal("100"),
                 "ath_q_pbt": Decimal("20"),
                 "ath_q_net_profit": Decimal("15"),
-                "latest_opm": Decimal("25"),
-                "avg_opm": Decimal("24"),
+                "yoy_q_net_profit": Decimal("12"),
+                "prev_q_net_profit": Decimal("14"),
             }}
 
         upserter = _FakeUpsert()
@@ -293,6 +293,49 @@ class TestScanEngineFundamentalsMerge:
         assert report.opportunities_count == 1
         assert report.per_result[0].status == "PASS"
         assert report.per_result[0].score == 11
+
+
+class TestQuarterAggregates:
+    def test_yoy_matches_same_month_last_year(self):
+        from plutus.scan.engine import _quarter_aggregates
+        rows = [  # newest first — quarterly cadence with a matching Jun 2023
+            {"quarter_end_date": date(2024, 6, 30), "quarter_label": "Jun 2024",
+             "sales": Decimal("100"), "pbt": Decimal("20"), "net_profit": Decimal("15")},
+            {"quarter_end_date": date(2024, 3, 31), "quarter_label": "Mar 2024",
+             "sales": Decimal("90"), "pbt": Decimal("18"), "net_profit": Decimal("18")},
+            {"quarter_end_date": date(2023, 12, 31), "quarter_label": "Dec 2023",
+             "sales": Decimal("80"), "pbt": Decimal("16"), "net_profit": Decimal("12")},
+            {"quarter_end_date": date(2023, 6, 30), "quarter_label": "Jun 2023",
+             "sales": Decimal("70"), "pbt": Decimal("14"), "net_profit": Decimal("10")},
+        ]
+        agg = _quarter_aggregates(rows)
+        assert agg["yoy_q_net_profit"] == Decimal("10")   # Jun 2023
+        assert agg["yoy_quarter_label"] == "Jun 2023"
+        assert agg["prev_q_net_profit"] == Decimal("18")  # Mar 2024
+        assert agg["latest_q_net_profit"] == Decimal("15")
+
+    def test_yoy_none_when_same_quarter_missing(self):
+        from plutus.scan.engine import _quarter_aggregates
+        rows = [
+            {"quarter_end_date": date(2024, 6, 30),
+             "sales": Decimal("100"), "pbt": Decimal("20"), "net_profit": Decimal("15")},
+            {"quarter_end_date": date(2024, 3, 31),
+             "sales": Decimal("90"), "pbt": Decimal("18"), "net_profit": Decimal("18")},
+        ]
+        agg = _quarter_aggregates(rows)
+        assert agg["yoy_q_net_profit"] is None
+
+    def test_yoy_works_with_iso_string_dates(self):
+        # PostgREST returns quarter_end_date as an ISO string.
+        from plutus.scan.engine import _quarter_aggregates
+        rows = [
+            {"quarter_end_date": "2024-06-30", "quarter_label": "Jun 2024",
+             "sales": Decimal("100"), "pbt": Decimal("20"), "net_profit": Decimal("15")},
+            {"quarter_end_date": "2023-06-30", "quarter_label": "Jun 2023",
+             "sales": Decimal("70"), "pbt": Decimal("14"), "net_profit": Decimal("10")},
+        ]
+        agg = _quarter_aggregates(rows)
+        assert agg["yoy_q_net_profit"] == Decimal("10")
 
 
 class TestScanEngineHelpers:

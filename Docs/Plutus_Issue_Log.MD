@@ -128,6 +128,28 @@
 
 **Validated live:** `run_daily_sync --symbols WIPRO.NS` → enrichment fetched 1 fundamentals + 1 ratios set (0 errors) → rescan → WIPRO scores **8/11** in PlayArea (ROCE 17.8, ROE 15.5, pledging 0.00, 5Y PE 20.0, PE 13.8, MCap ₹1,82,240 Cr — all Screener-sourced). All gates green.
 
+## 3h. Round 8 (2026-09-02) — on-demand PlayArea fetch + premium UI redesign
+
+**Bug fixed:** a PlayArea symbol never seen by any sync had no snapshot row → it silently didn't render, and nothing fetched (Round 7's fetch-on-miss only fired at sync time).
+
+| What | Detail |
+|---|---|
+| On-demand fetch | New LOCAL-DEV endpoint `GET /api/admin/sync?symbols=` (FastAPI only, 404 when `PLUTUS_ENV=prod`, deliberately NOT ported to the Edge Function — prod stays read-only): background thread runs Screener enrichment → daily sync → pool scans for the symbols. PlayArea now shows a never-synced symbol as an amber **“no data”** chip with a **“Fetch data”** button; while fetching, the page polls every 5 s until the row lands (3-min cap). `frontend_v2/.env.local` now points at FastAPI (:8787) so this works locally |
+| Ordering fix (found during validation) | Enrichment now runs BEFORE the price sync (both the CLI and the on-demand thread) so the snapshot being written is stamped with the fresh PE/PB/MCap — previously a first-ever fetch left the PE checks N/A until the next day |
+| Validated live | Added HDFCBANK (never synced) → Fetch data → yfinance 5y history + 13 Screener quarters + ratios landed, pools rescanned → row appeared automatically: PE 13.70 / PB 1.80 / Large, score 7/11, radar rank #1 STRONG·BUY |
+| **UI redesign (v2)** | New premium light theme — warm ivory ground, ink text, deep-teal + gold accents, Fraunces display serif + Inter, soft-shadow cards. Decision-first layout: **Opportunity Radar** (top-4 setups ranked signal→score→depth, PRIME/STRONG/WATCH conviction chips, one-line "why"), stat strip, filter toolbar (search/cap/sector/signal/min-score), the full BuddyTrader-column table (all columns + sorting kept; % Below DMA renders as a progress bar toward the 14% buy threshold; score as a radial ring), redesigned expanded row, and a **Compare tray** (pick ≤4 stocks from radar cards or table checkboxes → side-by-side metric grid with the better value marked per row) |
+| Housekeeping | ScoreBadge → ScoreRing; status pills/colours retuned for light; Pools landing + header restyled. All gates green (pytest, typecheck, lint, build) |
+
+## 3i. Round 9 (2026-09-02) — cyclicality-aware YoY check replaces OPM; Screener deep link
+
+| What | Detail |
+|---|---|
+| OPM removed | "OPM Stable/Positive" dropped from the 11 checks AND from fetching (screener parser no longer extracts the OPM row; `operating_margin_pct` column kept, written NULL; engine aggregates no longer compute latest/avg OPM; UI chip removed) |
+| New check 11: **Net Profit YoY (same quarter)** | Latest Q net profit vs the SAME quarter one year earlier (month-matched from stored quarters — e.g. Jun 2026 vs Jun 2025). Pass when YoY growth ≥ 0 (config `yoy_growth_min`). When the latest quarter is DOWN QoQ but UP YoY, the detail explicitly names it: *"QoQ dip but YoY up: cyclic/seasonal pattern"* — a seasonal business is boosted, never knocked out, for a soft quarter. Turnaround handling: loss in the same quarter last year → pass if now profitable. Missing history → N/A (score max stays 11) |
+| Screener link | "View on screener.in ↗" button on the Fundamental details card (`/company/{code}/consolidated/`) |
+| UI | Teal chip in the quarter row: "Same Q last year (Jun 2025) ₹17,090 Cr **+19.3% YoY**" |
+| Validated live | HDFCBANK: Jun-2026 NP ₹20,383 Cr vs Jun-2025 ₹17,090 Cr → +19.3% YoY despite a QoQ dip → check passes with the cyclic tag, **score 4→8** (PASS band). TCS/INFY also flagged cyclic (IT June seasonality); ITC −15.6% / RELIANCE −24.6% YoY fail honestly. 5 new offline tests (incl. month-matched YoY lookup + ISO-string dates from PostgREST); all gates green |
+
 ## 4. Deliberate deviations / notes
 
 - **Local ports are 55321–55329** (not the CLI-default 54321–54324) so the Plutus stack coexists with the other Supabase project running on this machine (`virundhu-cartsas`). Keys/URLs in `plutus/.env` + `frontend_v2/.env.local`.

@@ -1,0 +1,302 @@
+// -----------------------------------------------------------------------------
+// Journal domain math — capital-based allocation and derived table columns.
+//
+// Everything here is DISPLAY math: raw strings from the API are converted to
+// Number for percentages/aggregates (precision is fine at portfolio scale).
+// The cap-allocation rule (Fundamental Pointers doc):
+//   Large < 5%, Mid < 3%, Small < 2%, Micro < 1.5% of capital per stock.
+// -----------------------------------------------------------------------------
+
+import type { Snapshot } from "./api";
+import type { CapBucket, Opportunity, Trade } from "./journalApi";
+
+export const CAP_LIMITS: Record<CapBucket, number> = {
+  Large: 5, Mid: 3, Small: 2, Micro: 1.5,
+};
+
+export const CAP_ORDER: CapBucket[] = ["Large", "Mid", "Small", "Micro"];
+
+/** "Large Cap" / "large" / "LARGE CAP" → "Large". Unknown → null. */
+export function normalizeCap(raw: string | null | undefined): CapBucket | null {
+  if (!raw) return null;
+  const k = raw.trim().toLowerCase().replace(/\s*cap$/, "");
+  if (k === "large") return "Large";
+  if (k === "mid" || k === "midcap") return "Mid";
+  if (k === "small") return "Small";
+  if (k === "micro") return "Micro";
+  return null;
+}
+
+export function num(v: string | number | null | undefined): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "string" ? Number(v.replace(/,/g, "")) : v;
+  return Number.isFinite(n) ? n : null;
+}
+
+export type AllocState = "ok" | "warn" | "over";
+
+/** Marker state for a stock's total allocation % vs its cap-bucket limit. */
+export function allocState(totalPct: number | null, cap: CapBucket | null): AllocState | null {
+  if (totalPct === null || !cap) return null;
+  const limit = CAP_LIMITS[cap];
+  if (totalPct > limit) return "over";
+  if (totalPct >= limit * 0.8) return "warn";
+  return "ok";
+}
+
+export function daysBetween(fromIso: string | null | undefined, toIso?: string | null): number | null {
+  if (!fromIso) return null;
+  const a = new Date(fromIso).getTime();
+  const b = toIso ? new Date(toIso).getTime() : Date.now();
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return Math.max(1, Math.round((b - a) / 86_400_000));
+}
+
+// ---- Shared fetched-data context ----------------------------------------------
+
+export interface JournalCtx {
+  capital: number;
+  /** latest snapshot per symbol */
+  snaps: Map<string, Snapshot>;
+  /** OPEN invested ₹ per symbol (sum of buy_price*qty) */
+  openInvested: Map<string, number>;
+}
+
+export function buildOpenInvested(openTrades: Trade[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const t of openTrades) {
+    const inv = (num(t.buy_price) ?? 0) * t.qty;
+    m.set(t.symbol, (m.get(t.symbol) ?? 0) + inv);
+  }
+  return m;
+}
+
+/** Effective cap bucket: manual value on the row, else the snapshot's. */
+export function effectiveCap(rowCap: CapBucket | null, snap?: Snapshot): CapBucket | null {
+  return rowCap ?? normalizeCap((snap?.cap_bucket as string) ?? null);
+}
+
+function dayPct(snap?: Snapshot): number | null {
+  if (!snap) return null;
+  const nd = num(snap.price_change_nd_pct as string);
+  if (nd !== null) return nd;
+  const o = num(snap.open); const c = num(snap.close);
+  return o && c ? ((c - o) / o) * 100 : null;
+}
+
+// ---- Opportunities -------------------------------------------------------------
+
+export interface OppDerived {
+  cap: CapBucket | null;
+  ltp: number | null;
+  dayPct: number | null;
+  athFallPct: number | null;
+  potentialPct: number | null;   // (target-buy)/buy
+  potentialGain: number | null;  // (target-buy)*qty
+  toTrigPct: number | null;      // (ltp-buy)/buy — distance above the trigger
+  currentPct: number | null;     // existing OPEN allocation for symbol
+  additionPct: number | null;    // this plan's buy value / capital
+  totalPct: number | null;       // current + addition
+  capitalNeeded: number | null;  // buy*qty
+  totalExposure: number | null;  // invested + capitalNeeded
+  marker: AllocState | null;
+}
+
+export function deriveOpportunity(o: Opportunity, ctx: JournalCtx): OppDerived {
+  const snap = ctx.snaps.get(o.symbol);
+  const cap = effectiveCap(o.cap_bucket, snap);
+  const buy = num(o.buy_price);
+  const target = num(o.target_price);
+  const qty = o.qty ?? null;
+  const ltp = num(snap?.close);
+  const invested = ctx.openInvested.get(o.symbol) ?? 0;
+  const capitalNeeded = buy !== null && qty ? buy * qty : null;
+  const currentPct = ctx.capital ? (invested / ctx.capital) * 100 : null;
+  const additionPct = capitalNeeded !== null && ctx.capital
+    ? (capitalNeeded / ctx.capital) * 100 : null;
+  const totalPct = additionPct !== null && currentPct !== null
+    ? currentPct + additionPct : additionPct ?? currentPct;
+  return {
+    cap,
+    ltp,
+    dayPct: dayPct(snap),
+    athFallPct: num(snap?.fall_from_ath_pct as string),
+    potentialPct: buy && target ? ((target - buy) / buy) * 100 : null,
+    potentialGain: buy !== null && target !== null && qty ? (target - buy) * qty : null,
+    toTrigPct: buy && ltp !== null ? ((ltp - buy) / buy) * 100 : null,
+    currentPct,
+    additionPct,
+    totalPct,
+    capitalNeeded,
+    totalExposure: capitalNeeded !== null ? invested + capitalNeeded : null,
+    marker: allocState(totalPct, cap),
+  };
+}
+
+// ---- Open trades ----------------------------------------------------------------
+
+export interface OpenDerived {
+  cap: CapBucket | null;
+  buyValue: number;
+  allocPct: number | null;        // this lot / capital
+  symbolAllocPct: number | null;  // all OPEN lots of symbol / capital
+  cmp: number | null;
+  currentValue: number | null;
+  gainAmt: number | null;
+  gainPct: number | null;
+  dayPct: number | null;
+  remainingPct: number | null;    // (target-cmp)/cmp
+  potentialPct: number | null;    // (target-buy)/buy
+  potentialGain: number | null;   // (target-buy)*qty
+  athFallPct: number | null;
+  days: number | null;
+  annualPct: number | null;
+  marker: AllocState | null;
+}
+
+export function deriveOpenTrade(t: Trade, ctx: JournalCtx): OpenDerived {
+  const snap = ctx.snaps.get(t.symbol);
+  const cap = effectiveCap(t.cap_bucket, snap);
+  const buy = num(t.buy_price) ?? 0;
+  const target = num(t.target_price);
+  const cmp = num(snap?.close);
+  const buyValue = buy * t.qty;
+  const currentValue = cmp !== null ? cmp * t.qty : null;
+  const gainAmt = currentValue !== null ? currentValue - buyValue : null;
+  const gainPct = gainAmt !== null && buyValue ? (gainAmt / buyValue) * 100 : null;
+  const days = daysBetween(t.buy_date);
+  const symbolInvested = ctx.openInvested.get(t.symbol) ?? buyValue;
+  const symbolAllocPct = ctx.capital ? (symbolInvested / ctx.capital) * 100 : null;
+  return {
+    cap,
+    buyValue,
+    allocPct: ctx.capital ? (buyValue / ctx.capital) * 100 : null,
+    symbolAllocPct,
+    cmp,
+    currentValue,
+    gainAmt,
+    gainPct,
+    dayPct: dayPct(snap),
+    remainingPct: target && cmp ? ((target - cmp) / cmp) * 100 : null,
+    potentialPct: target && buy ? ((target - buy) / buy) * 100 : null,
+    potentialGain: target !== null ? (target - buy) * t.qty : null,
+    athFallPct: num(snap?.fall_from_ath_pct as string),
+    days,
+    annualPct: gainPct !== null && days ? (gainPct / days) * 365 : null,
+    marker: allocState(symbolAllocPct, cap),
+  };
+}
+
+// ---- Closed trades ---------------------------------------------------------------
+
+export interface ClosedDerived {
+  buyValue: number;
+  sellValue: number | null;
+  gain: number | null;
+  days: number | null;
+  gainPct: number | null;
+  annualPct: number | null;
+}
+
+export function deriveClosedTrade(t: Trade): ClosedDerived {
+  const buy = num(t.buy_price) ?? 0;
+  const sell = num(t.sell_price);
+  const buyValue = buy * t.qty;
+  const sellValue = sell !== null ? sell * t.qty : null;
+  const gain = sellValue !== null ? sellValue - buyValue : null;
+  const days = daysBetween(t.buy_date, t.sell_date);
+  const gainPct = gain !== null && buyValue ? (gain / buyValue) * 100 : null;
+  return {
+    buyValue, sellValue, gain, days, gainPct,
+    annualPct: gainPct !== null && days ? (gainPct / days) * 365 : null,
+  };
+}
+
+// ---- Portfolio -------------------------------------------------------------------
+
+export interface HoldingRow {
+  symbol: string;
+  cap: CapBucket | null;
+  qty: number;
+  invested: number;
+  allocPct: number | null;
+  currentValue: number | null;
+  pnl: number | null;
+  pnlPct: number | null;
+  marker: AllocState | null;
+  lots: number;
+}
+
+export interface CapSummaryRow {
+  cap: CapBucket | "Unknown";
+  stocks: number;
+  invested: number;
+  pctOfCapital: number | null;
+  limitPct: number | null; // per-stock limit, shown for reference
+}
+
+export function buildPortfolio(openTrades: Trade[], ctx: JournalCtx): {
+  holdings: HoldingRow[];
+  capSummary: CapSummaryRow[];
+  totals: { invested: number; currentValue: number; pnl: number;
+            deployedPct: number | null };
+} {
+  const bySymbol = new Map<string, Trade[]>();
+  for (const t of openTrades) {
+    const arr = bySymbol.get(t.symbol) ?? [];
+    arr.push(t);
+    bySymbol.set(t.symbol, arr);
+  }
+  const holdings: HoldingRow[] = [];
+  for (const [symbol, lots] of bySymbol) {
+    const snap = ctx.snaps.get(symbol);
+    const cap = effectiveCap(lots.find((l) => l.cap_bucket)?.cap_bucket ?? null, snap);
+    const qty = lots.reduce((s, l) => s + l.qty, 0);
+    const invested = lots.reduce((s, l) => s + (num(l.buy_price) ?? 0) * l.qty, 0);
+    const cmp = num(snap?.close);
+    const currentValue = cmp !== null ? cmp * qty : null;
+    const pnl = currentValue !== null ? currentValue - invested : null;
+    const allocPct = ctx.capital ? (invested / ctx.capital) * 100 : null;
+    holdings.push({
+      symbol, cap, qty, invested, allocPct, currentValue, pnl,
+      pnlPct: pnl !== null && invested ? (pnl / invested) * 100 : null,
+      marker: allocState(allocPct, cap),
+      lots: lots.length,
+    });
+  }
+  holdings.sort((a, b) => (b.invested - a.invested));
+
+  const capAgg = new Map<string, { stocks: number; invested: number }>();
+  for (const h of holdings) {
+    const key = h.cap ?? "Unknown";
+    const slot = capAgg.get(key) ?? { stocks: 0, invested: 0 };
+    slot.stocks += 1;
+    slot.invested += h.invested;
+    capAgg.set(key, slot);
+  }
+  const capSummary: CapSummaryRow[] = [...CAP_ORDER, "Unknown" as const]
+    .filter((c) => capAgg.has(c))
+    .map((c) => {
+      const s = capAgg.get(c)!;
+      return {
+        cap: c as CapSummaryRow["cap"],
+        stocks: s.stocks,
+        invested: s.invested,
+        pctOfCapital: ctx.capital ? (s.invested / ctx.capital) * 100 : null,
+        limitPct: c === "Unknown" ? null : CAP_LIMITS[c as CapBucket],
+      };
+    });
+
+  const invested = holdings.reduce((s, h) => s + h.invested, 0);
+  const currentValue = holdings.reduce((s, h) => s + (h.currentValue ?? h.invested), 0);
+  return {
+    holdings,
+    capSummary,
+    totals: {
+      invested,
+      currentValue,
+      pnl: currentValue - invested,
+      deployedPct: ctx.capital ? (invested / ctx.capital) * 100 : null,
+    },
+  };
+}

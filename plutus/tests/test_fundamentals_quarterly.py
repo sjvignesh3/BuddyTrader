@@ -134,7 +134,7 @@ class TestQuarterly:
         assert jun["sales"] == Decimal("72275")       # ₹ Cr, as printed
         assert jun["pbt"] == Decimal("17944")
         assert jun["net_profit"] == Decimal("13420")
-        assert jun["opm_pct"] == Decimal("26")
+        assert "opm_pct" not in jun  # OPM dropped from criteria (2026-09-02)
 
     def test_empty_page(self):
         assert extract_quarterly_results("<html></html>") == []
@@ -166,7 +166,7 @@ class TestRowsFromBundle:
         # ₹ Cr -> absolute rupees (x 1e7)
         assert r0["sales"] == Decimal("722750000000.00")
         assert r0["net_profit"] == Decimal("134200000000.00")
-        assert r0["operating_margin_pct"] == Decimal("26.00")
+        assert r0["operating_margin_pct"] is None  # OPM retired (2026-09-02)
 
     def test_quality_metrics_on_newest_row_only(self):
         rows = rows_from_bundle(self._bundle())

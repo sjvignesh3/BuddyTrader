@@ -50,23 +50,23 @@ export function fmtDate(iso: string | null | undefined): string {
   }).replace(/ /g, NBSP);
 }
 
-/** Colour class for a scan / sync-job status pill. */
+/** Colour class for a scan / sync-job status pill (light theme). */
 export function statusClass(status: string): string {
   switch (status) {
     // Scan-result statuses
-    case "BUY_ZONE": return "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30";
-    case "OPPORTUNITY": return "bg-amber-500/15 text-amber-400 ring-amber-500/30";
-    case "VALID": return "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30";
-    case "INVALID": return "bg-zinc-500/10 text-zinc-400 ring-zinc-500/20";
-    case "ERROR": return "bg-red-500/15 text-red-400 ring-red-500/30";
-    case "NO_SIGNAL": return "bg-zinc-500/10 text-zinc-400 ring-zinc-500/20";
-    case "PASS": return "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30";
-    case "FAIL": return "bg-red-500/15 text-red-400 ring-red-500/30";
+    case "BUY_ZONE": return "bg-teal-50 text-teal-800 ring-teal-300";
+    case "OPPORTUNITY": return "bg-amber-50 text-amber-800 ring-amber-300";
+    case "VALID": return "bg-sky-50 text-sky-800 ring-sky-300";
+    case "INVALID": return "bg-stone-100 text-stone-500 ring-stone-200";
+    case "ERROR": return "bg-rose-50 text-rose-700 ring-rose-300";
+    case "NO_SIGNAL": return "bg-stone-100 text-stone-500 ring-stone-200";
+    case "PASS": return "bg-teal-50 text-teal-800 ring-teal-300";
+    case "FAIL": return "bg-rose-50 text-rose-700 ring-rose-300";
     // Sync-job statuses
-    case "ok": return "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30";
-    case "running": return "bg-sky-500/15 text-sky-400 ring-sky-500/30";
-    case "partial": return "bg-amber-500/15 text-amber-400 ring-amber-500/30";
-    case "failed": return "bg-red-500/15 text-red-400 ring-red-500/30";
-    default: return "bg-zinc-500/10 text-zinc-400 ring-zinc-500/20";
+    case "ok": return "bg-teal-50 text-teal-800 ring-teal-300";
+    case "running": return "bg-sky-50 text-sky-800 ring-sky-300";
+    case "partial": return "bg-amber-50 text-amber-800 ring-amber-300";
+    case "failed": return "bg-rose-50 text-rose-700 ring-rose-300";
+    default: return "bg-stone-100 text-stone-500 ring-stone-200";
   }
 }

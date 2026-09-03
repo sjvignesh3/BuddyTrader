@@ -27,7 +27,6 @@ from typing import Any, Dict, List, Optional
 from plutus.registry.types import round_half_up
 
 _CRORE = Decimal(10_000_000)  # 1 Cr = 1e7 rupees
-_PCT = 2
 
 
 def _cr_to_abs(v: Optional[Decimal]) -> Optional[Decimal]:
@@ -83,7 +82,8 @@ def rows_from_bundle(bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
             "sales": _cr_to_abs(q.get("sales")),
             "pbt": _cr_to_abs(q.get("pbt")),
             "net_profit": _cr_to_abs(q.get("net_profit")),
-            "operating_margin_pct": round_half_up(q.get("opm_pct"), _PCT),
+            # OPM dropped from the criteria (2026-09-02) — column kept, NULL.
+            "operating_margin_pct": None,
             # Shareholding: latest pattern applies to the newest row.
             "promoter_holding_pct": promoter if newest else None,
             "institutional_pct": institutional if newest else None,
