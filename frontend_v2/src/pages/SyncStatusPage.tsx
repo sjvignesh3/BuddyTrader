@@ -2,6 +2,7 @@ import { useSyncJobs } from "../hooks/usePlutus";
 import { useSyncJobsRealtime } from "../hooks/useSyncJobsRealtime";
 import LoadError from "../components/LoadError";
 import StatusPill from "../components/StatusPill";
+import SyncTriggerPanel from "../components/SyncTriggerPanel";
 import { fmtDate } from "../lib/money";
 
 export default function SyncStatusPage() {
@@ -10,6 +11,7 @@ export default function SyncStatusPage() {
 
   return (
     <div>
+      <SyncTriggerPanel />
       <h1 className="text-lg font-semibold mb-4">Sync jobs</h1>
       <LoadError
         loading={isLoading}

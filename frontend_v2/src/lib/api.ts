@@ -6,14 +6,44 @@
 
 const BASE = import.meta.env.VITE_PLUTUS_API_URL ?? "";
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, headers?: Record<string, string>): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "GET",
-    headers: { Accept: "application/json" },
+    headers: { Accept: "application/json", ...headers },
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`API ${res.status} ${path}: ${body || res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// The ONE write-shaped call in this module: it never writes to the DB —
+// it asks the API to dispatch a GitHub Actions workflow (the PAT stays
+// server-side; we only send the per-browser admin token as a header).
+async function post<T>(
+  path: string,
+  body: unknown,
+  headers?: Record<string, string>
+): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const j = await res.json();
+      detail = j?.error ?? j?.detail ?? "";
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(`API ${res.status} ${path}: ${detail || res.statusText}`);
   }
   return res.json() as Promise<T>;
 }
@@ -103,6 +133,35 @@ export interface Fundamentals {
   [k: string]: unknown;
 }
 
+/** On-demand sync — workflow keys the API can dispatch on GitHub. */
+export type SyncWorkflow = "daily" | "quarterly" | "ratios";
+
+export interface TriggerStatus {
+  configured: boolean;
+  auth_required: boolean;
+  workflows: SyncWorkflow[];
+  pools: string[];
+}
+
+export interface TriggerResult {
+  queued: boolean;
+  workflow: SyncWorkflow;
+  file: string;
+  inputs: Record<string, string>;
+  runs_url: string;
+  note: string;
+}
+
+export interface WorkflowRun {
+  id: number;
+  run_number: number;
+  status: string; // queued | in_progress | completed
+  conclusion: string | null; // success | failure | cancelled | null
+  event: string;
+  created_at: string;
+  html_url: string;
+}
+
 export interface SyncJob {
   id: number;
   job_type: string;
@@ -180,6 +239,28 @@ export const api = {
   adminSync: (symbols: string[]) =>
     get<{ started: string[]; already_running: string[]; note: string }>(
       `/api/admin/sync?symbols=${encodeURIComponent(symbols.join(","))}`
+    ),
+  /** On-demand sync trigger — capability probe (no auth needed). */
+  triggerStatus: () => get<TriggerStatus>("/api/admin/trigger/status"),
+  /** Dispatch a GitHub Actions sync workflow. adminToken → header only. */
+  triggerSync: (
+    body: {
+      workflow: SyncWorkflow;
+      pool?: string;
+      symbols?: string[];
+      dry_run?: boolean;
+      limit?: number;
+    },
+    adminToken: string
+  ) =>
+    post<TriggerResult>("/api/admin/trigger", body, {
+      "X-Plutus-Admin-Token": adminToken,
+    }),
+  /** Recent GitHub runs of one workflow — shows queued/in-progress state. */
+  workflowRuns: (workflow: SyncWorkflow, adminToken: string, limit = 3) =>
+    get<{ workflow: SyncWorkflow; runs: WorkflowRun[]; count: number }>(
+      `/api/admin/trigger/runs?workflow=${workflow}&limit=${limit}`,
+      { "X-Plutus-Admin-Token": adminToken }
     ),
   syncJobs: (jobType?: string, limit = 10) =>
     get<{ jobs: SyncJob[]; count: number }>(

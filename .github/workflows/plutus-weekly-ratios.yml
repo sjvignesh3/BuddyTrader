@@ -12,7 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       pool:
-        description: "Pool code (blank = ALL)"
+        description: "Pool code (blank or ALL = every pool)"
+        required: false
+        default: ""
+      symbols:
+        description: "Comma-separated tickers (e.g. TCS.NS,INFY.NS) — overrides pool"
         required: false
         default: ""
       limit:
@@ -57,12 +61,17 @@ jobs:
         run: pip install -r plutus/requirements.txt
 
       - name: Run weekly ratios sync
+        # Inputs via env — never inline ${{ }} inside the script (injection).
+        env:
+          POOL: ${{ github.event.inputs.pool }}
+          SYMBOLS: ${{ github.event.inputs.symbols }}
+          LIMIT: ${{ github.event.inputs.limit }}
+          DRY: ${{ github.event.inputs.dry_run }}
         run: |
           ARGS=""
-          POOL="${{ github.event.inputs.pool }}"
-          LIMIT="${{ github.event.inputs.limit }}"
-          DRY="${{ github.event.inputs.dry_run }}"
-          if [ -n "$POOL" ]; then ARGS="$ARGS --pool $POOL"; fi
+          if [ "$POOL" = "ALL" ]; then POOL=""; fi
+          if [ -n "$SYMBOLS" ]; then ARGS="$ARGS --symbols $SYMBOLS"
+          elif [ -n "$POOL" ]; then ARGS="$ARGS --pool $POOL"; fi
           if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
           if [ "$DRY" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           python -m plutus.scripts.run_weekly_ratios $ARGS

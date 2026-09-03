@@ -272,4 +272,9 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
     from plutus.api.journal import register_journal_routes
     register_journal_routes(app, cli)
 
+    # -- On-demand GitHub Actions trigger (no DB writes; PAT stays server-
+    # side; gated by PLUTUS_ADMIN_TOKEN) -------------------------------------
+    from plutus.api.admin_trigger import register_admin_trigger_routes
+    register_admin_trigger_routes(app)
+
     return app

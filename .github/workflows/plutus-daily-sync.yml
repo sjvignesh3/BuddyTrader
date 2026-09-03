@@ -18,10 +18,14 @@ name: plutus-daily-sync
 on:
   schedule:
     - cron: "30 12 * * 1-5"   # 12:30 UTC weekdays
-  workflow_dispatch:           # manual "Run workflow" button
+  workflow_dispatch:           # manual "Run workflow" button / app Sync tab
     inputs:
       pool:
-        description: "Pool code (blank = ALL)"
+        description: "Pool code (blank or ALL = every pool)"
+        required: false
+        default: ""
+      symbols:
+        description: "Comma-separated tickers (e.g. TCS.NS,INFY.NS) — overrides pool for the sync step"
         required: false
         default: ""
       limit:
@@ -63,20 +67,32 @@ jobs:
         run: pip install -r plutus/requirements.txt
 
       - name: Run daily sync
+        # Inputs come in via env (not inline ${{ }} interpolation) so a
+        # crafted dispatch value can never be parsed as shell syntax.
+        env:
+          POOL: ${{ github.event.inputs.pool }}
+          SYMBOLS: ${{ github.event.inputs.symbols }}
+          LIMIT: ${{ github.event.inputs.limit }}
+          DRY: ${{ github.event.inputs.dry_run }}
         run: |
           ARGS=""
-          POOL="${{ github.event.inputs.pool }}"
-          LIMIT="${{ github.event.inputs.limit }}"
-          DRY="${{ github.event.inputs.dry_run }}"
-          if [ -n "$POOL" ]; then ARGS="$ARGS --pool $POOL"; fi
+          if [ "$POOL" = "ALL" ]; then POOL=""; fi
+          # Explicit symbols (PlayArea watchlist on-demand fetch) win over
+          # the pool filter — run_daily_sync treats --symbols as a bypass.
+          if [ -n "$SYMBOLS" ]; then ARGS="$ARGS --symbols $SYMBOLS"
+          elif [ -n "$POOL" ]; then ARGS="$ARGS --pool $POOL"; fi
           if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
           if [ "$DRY" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           python -m plutus.scripts.run_daily_sync $ARGS
 
       - name: Run scan (only if sync succeeded)
-        if: success()
+        # A dry-run writes no snapshots, so scanning after it would score
+        # stale data — skip.
+        if: success() && github.event.inputs.dry_run != 'true'
+        env:
+          POOL: ${{ github.event.inputs.pool }}
         run: |
-          POOL="${{ github.event.inputs.pool }}"
+          if [ "$POOL" = "ALL" ]; then POOL=""; fi
           POOL="${POOL:-ALL}"
           TODAY="$(date -u +%Y-%m-%d)"
           python -m plutus.scripts.run_scan \

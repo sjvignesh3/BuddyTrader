@@ -2,12 +2,15 @@
 // PlayArea watchlist manager — search the synced universe, add/remove
 // symbols, and FETCH data on demand for symbols the DB hasn't seen yet.
 // The fetch runs on the local FastAPI (/api/admin/sync: yfinance prices +
-// Screener fundamentals/ratios + a re-scan); on the read-only prod API the
-// button degrades to "fills on the next daily sync".
+// Screener fundamentals/ratios + a re-scan); in prod it falls back to
+// dispatching the daily GitHub Actions workflow with the missing symbols
+// (needs the admin token from the Sync tab); with neither available it
+// degrades to "fills on the next daily sync".
 // -----------------------------------------------------------------------------
 import { useMemo, useRef, useState } from "react";
 import type { Stock } from "../lib/api";
 import { api } from "../lib/api";
+import { loadAdminToken } from "../lib/adminToken";
 
 export default function PlayAreaManager({
   universe,
@@ -52,9 +55,22 @@ export default function PlayAreaManager({
         res.started.length
           ? `Fetching ${res.started.map((s) => s.replace(/\.(NS|BO)$/, "")).join(", ")} — prices (yfinance) + fundamentals (screener.in). Rows appear automatically.`
           : "Already fetching…");
+      return;
+    } catch {
+      /* local endpoint unavailable (prod) — try the GitHub workflow next */
+    }
+    const token = loadAdminToken();
+    try {
+      const res = await api.triggerSync(
+        { workflow: "daily", pool: "PlayArea", symbols }, token);
+      onFetchStarted(symbols);
+      setFetchNote(
+        `Queued a GitHub sync for ${symbols.map((s) => s.replace(/\.(NS|BO)$/, "")).join(", ")} — prices + fundamentals + scan land in a few minutes. ${res.runs_url ? "Track it on the Sync tab." : ""}`);
     } catch {
       setFetchNote(
-        "On-demand fetch is only available on the local API — this symbol fills on the next daily sync.");
+        token
+          ? "Could not queue the GitHub sync — check the admin token on the Sync tab. The symbols fill on the next scheduled sync."
+          : "On-demand fetch needs the admin token (Sync tab → Set admin token) — until then, symbols fill on the next scheduled sync.");
     }
   };
 

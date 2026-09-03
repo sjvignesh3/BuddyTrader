@@ -55,27 +55,109 @@
 
 ### 1.3 Apply all 13 migrations (in order)
 
-Option A — SQL Editor (no tools needed): open **SQL Editor → New query**,
-paste each file from `plutus/migrations/` **in numeric order** and Run:
+Migrations are SQL files that create the tables, views, indexes, and security
+policies required by Plutus. They must be run against the **new Supabase
+project**, not against a local Supabase project. Always run them in the order
+shown below because later files depend on objects created by earlier files.
 
-```
-001_stocks.sql … 012_screener_ratios.sql, 013_journal.sql
+#### Recommended for beginners — Supabase SQL Editor
+
+You do not need to install PostgreSQL or use a command prompt for this method.
+
+1. Open the Supabase dashboard and select the `plutus` project you created.
+2. In the left sidebar, select **SQL Editor**.
+3. Select **New query**. Leave this query open so you can reuse it.
+4. In this repository, open the `plutus/migrations` folder in VS Code.
+5. Open `001_stocks.sql`, press `Ctrl+A` to select the complete file, and
+   press `Ctrl+C` to copy it.
+6. Return to the Supabase SQL Editor, click inside the query, press `Ctrl+A`
+   to remove any old text, and press `Ctrl+V`.
+7. Click **Run** (or press `Ctrl+Enter`). Wait for the success message before
+   continuing. Do not close the tab if Supabase reports an error.
+8. Repeat steps 5–7 for each file below, in exactly this order:
+
+   1. `001_stocks.sql`
+   2. `002_pools.sql`
+   3. `003_daily_snapshots.sql`
+   4. `004_fundamentals.sql`
+   5. `005_strategy_configs.sql`
+   6. `006_scans_and_results.sql`
+   7. `007_trades.sql`
+   8. `008_sync_jobs.sql`
+   9. `009_views.sql`
+   10. `010_rls.sql`
+   11. `011_canary_checks.sql`
+   12. `012_screener_ratios.sql`
+   13. `013_journal.sql`
+
+9. After the final file succeeds, open **Table Editor** in the sidebar. You
+   should see tables including `stocks`, `pools`, `daily_snapshots`,
+   `fundamentals`, `scans`, `scan_results`, `sync_jobs`,
+   `journal_settings`, `journal_opportunities`, and `journal_trades`.
+10. In **SQL Editor → New query**, run this verification query:
+
+```sql
+select table_name
+from information_schema.tables
+where table_schema = 'public'
+  and table_name in (
+    'stocks', 'pools', 'daily_snapshots', 'fundamentals', 'scans',
+    'scan_results', 'sync_jobs', 'journal_settings',
+    'journal_opportunities', 'journal_trades'
+  )
+order by table_name;
 ```
 
-Option B — psql in one shot (get the **Session pooler** connection string
-from the dashboard **Connect** button):
+The result should contain 10 rows. Seeing the tables in Table Editor is useful
+for a quick visual check, but the query is the authoritative check. Empty
+tables are expected at this stage; the stock rows are added in §1.4.
 
-```bash
-for f in plutus/migrations/0*.sql; do
-  psql "postgresql://postgres.<ref>:<DB_PASSWORD>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres" \
-    -v ON_ERROR_STOP=1 -f "$f" || break
-done
+#### Optional — run all files from Windows PowerShell
+
+Use this only if you already have the PostgreSQL `psql` command installed.
+In Supabase, select **Connect → Session pooler**, copy the connection string,
+and replace the placeholders below. The session pooler is preferred because
+it works on networks where a direct database connection is unavailable.
+
+From the repository root (`d:\Tools\Plutus\BuddyTrader`), run:
+
+```powershell
+$env:PGPASSWORD = '<your Supabase database password>'
+$connection = 'postgresql://postgres.<project-ref>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'
+
+Get-ChildItem .\plutus\migrations\0*.sql | Sort-Object Name | ForEach-Object {
+    Write-Host "Applying $($_.Name)..."
+    psql $connection --set=ON_ERROR_STOP=1 --file $_.FullName
+    if ($LASTEXITCODE -ne 0) { throw "Migration failed: $($_.Name)" }
+}
+
+Remove-Item Env:\PGPASSWORD
 ```
+
+Use the exact host, port, username, and database shown by Supabase’s
+**Connect** dialog if they differ from the example. If your database password
+contains characters such as `@`, `:`, `/`, or `#`, use the SQL Editor method
+or URL-encode the password before putting it in a connection URL. Never paste
+the connection string or database password into Git or a frontend `.env` file.
+
+#### If a migration reports an error
+
+- **“relation already exists”**: check whether the file was already run. Do
+  not blindly continue to the next file; rerun the same file only if the
+  message is explicitly harmless and the query completed successfully.
+- **“relation does not exist”**: an earlier migration was skipped or failed.
+  Find the first file that did not succeed and run the files again from that
+  point in numeric order.
+- **Permission or connection errors**: confirm that you selected the correct
+  Supabase project and that you are using the database connection details,
+  not the `anon` or `service_role` API key.
+- If the SQL Editor shows an error, copy the error text before changing
+  anything. It identifies the migration and line that needs attention.
 
 > `013_journal.sql` creates the Trading Journal tables
-> (`journal_settings`, `journal_opportunities`, `journal_trades`) with
-> RLS locked to `service_role` — the anon key cannot touch them.
-
+> (`journal_settings`, `journal_opportunities`, `journal_trades`) with RLS
+> locked to `service_role` — the anon key cannot touch them. Do not test these
+> tables from the browser until the backend security setup is complete.
 ### 1.4 Seed the stock universe
 
 From your local machine, pointed at the **cloud** project (temporarily set the
@@ -132,8 +214,38 @@ PYTHON_VERSION=3.11.9
 ```
 
 > `PLUTUS_ENV=prod` disables the local-only `/api/admin/sync` endpoint
-> (PlayArea "Fetch now"); in prod, new symbols fill on the nightly sync.
+> (PlayArea "Fetch now"); in prod, new symbols fill on the nightly sync
+> — or instantly via the on-demand trigger below.
 > The journal endpoints stay active — they are the point of hosting this.
+
+### 2.2b On-demand sync triggers (Sync tab buttons)
+
+The Sync tab has **Run** buttons (Technical / Fundamentals, scoped by pool
+incl. PlayArea) that dispatch the scheduled GitHub Actions workflows on
+demand. To enable them, add three more env vars to the API service:
+
+```
+PLUTUS_GITHUB_TOKEN=<fine-grained PAT>
+PLUTUS_GITHUB_REPO=sjvignesh3/BuddyTrader
+PLUTUS_ADMIN_TOKEN=<any long random string you choose>
+```
+
+1. **Create the PAT:** github.com → Settings → Developer settings →
+   Fine-grained tokens → Generate new token. Repository access: **only
+   this repo**. Permissions: **Actions → Read and write** (nothing else).
+   Copy it into `PLUTUS_GITHUB_TOKEN`.
+2. **Pick an admin token:** any long random string (e.g. from a password
+   generator). Set it as `PLUTUS_ADMIN_TOKEN`, then enter the same value
+   once in the app: **Sync tab → Set admin token** (it is stored only in
+   that browser's localStorage).
+3. Redeploy/restart the API service. The Sync tab buttons go live; the
+   PlayArea "Fetch now" button also uses this path in prod (it sends your
+   watchlist symbols to the daily workflow).
+
+The PAT never reaches the browser — the API dispatches the workflow
+server-side and only checks the `X-Plutus-Admin-Token` header. Without
+`PLUTUS_ADMIN_TOKEN` set, the trigger stays disabled in prod (503). The
+cron schedules are unaffected by any of this.
 
 3. **Create Web Service** → wait for the first deploy → note your URL,
    e.g. `https://plutus-api.onrender.com`.
