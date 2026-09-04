@@ -1,11 +1,14 @@
 // -----------------------------------------------------------------------------
 // Closed trades tab — booked history with realized P&L and annualized return.
 // -----------------------------------------------------------------------------
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Trade } from "../../lib/journalApi";
 import { deriveClosedTrade, num, type ClosedDerived } from "../../lib/journal";
-import { fmtDate, fmtMoney, fmtPct } from "../../lib/money";
-import { EmptyState, Pnl, RowBtn, TableShell, Td, Th, useSort } from "./ui";
+import { fmtDate, fmtMoney } from "../../lib/money";
+import FilterBar, { CapFilter, FilterChip } from "./FilterBar";
+import { EmptyState, GhostBtn, Pnl, RowBtn, TableShell, Td, Th, useSort } from "./ui";
+
+type ResultFilter = "All" | "Wins" | "Losses";
 
 type Item = { t: Trade; d: ClosedDerived };
 
@@ -34,26 +37,66 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
   onDelete: (t: Trade) => void;
 }) {
   const { sort, toggle, apply } = useSort<Item>(ACCESSORS);
+  const [search, setSearch] = useState("");
+  const [cap, setCap] = useState<CapFilter>("All");
+  const [result, setResult] = useState<ResultFilter>("All");
+
   const derived = useMemo(
     () => rows.map((t) => ({ t, d: deriveClosedTrade(t) })), [rows]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return derived.filter(({ t, d }) => {
+      if (cap !== "All" && t.cap_bucket !== cap) return false;
+      if (result === "Wins" && !((d.gain ?? 0) > 0)) return false;
+      if (result === "Losses" && !((d.gain ?? 0) < 0)) return false;
+      if (q && ![t.symbol, t.strategy, t.comments, t.risk_notes, t.close_label]
+        .some((f) => f && f.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [derived, search, cap, result]);
+
   if (!rows.length) {
     return <EmptyState text="No closed trades yet — book an open trade to see it here." />;
   }
-  const totalGain = derived.reduce((s, x) => s + (x.d.gain ?? 0), 0);
-  const totalBuy = derived.reduce((s, x) => s + x.d.buyValue, 0);
-  const avgRoi = derived.length
-    ? derived.reduce((s, x) => s + (x.d.annualPct ?? 0), 0) / derived.length : null;
+  const clearFilters = () => { setSearch(""); setCap("All"); setResult("All"); };
+  const wins = derived.filter((x) => (x.d.gain ?? 0) > 0).length;
+  const losses = derived.filter((x) => (x.d.gain ?? 0) < 0).length;
+  // Stats follow the filters — narrow to a strategy or cap to see its own P&L.
+  const totalGain = filtered.reduce((s, x) => s + (x.d.gain ?? 0), 0);
+  const totalBuy = filtered.reduce((s, x) => s + x.d.buyValue, 0);
+  const avgRoi = filtered.length
+    ? filtered.reduce((s, x) => s + (x.d.annualPct ?? 0), 0) / filtered.length : null;
 
   return (
     <div className="space-y-3">
+      <FilterBar search={search} onSearch={setSearch} cap={cap} onCap={setCap}
+                 shown={filtered.length} total={derived.length}>
+        <div className="flex items-center gap-1">
+          <FilterChip active={result === "Wins"} count={wins}
+                      onClick={() => setResult((r) => (r === "Wins" ? "All" : "Wins"))}
+                      activeCls="bg-teal-600 text-white ring-teal-600">
+            ▲ Winners
+          </FilterChip>
+          <FilterChip active={result === "Losses"} count={losses}
+                      onClick={() => setResult((r) => (r === "Losses" ? "All" : "Losses"))}
+                      activeCls="bg-rose-600 text-white ring-rose-600">
+            ▼ Losers
+          </FilterChip>
+        </div>
+      </FilterBar>
       <div className="flex flex-wrap gap-3">
         <Stat label="Realized profit"><Pnl value={totalGain} digits={0} /></Stat>
         <Stat label="On invested">
           <Pnl value={totalBuy ? (totalGain / totalBuy) * 100 : null} suffix="%" />
         </Stat>
         <Stat label="Avg annualized"><Pnl value={avgRoi} suffix="%" digits={1} /></Stat>
-        <Stat label="Trades"><span className="tabular-nums">{rows.length}</span></Stat>
+        <Stat label="Trades"><span className="tabular-nums">{filtered.length}</span></Stat>
       </div>
+      {!filtered.length ? (
+        <EmptyState text="No closed trades match the filters."
+                    action={<GhostBtn onClick={clearFilters}>Clear filters</GhostBtn>} />
+      ) : (
       <TableShell>
         <thead>
           <tr className="bg-brand-soft">
@@ -77,7 +120,7 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
           </tr>
         </thead>
         <tbody>
-          {apply(derived).map(({ t, d }) => (
+          {apply(filtered).map(({ t, d }) => (
             <tr key={t.id} className="border-t border-brand-border/60 hover:bg-brand-soft/60">
               <Td>
                 <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold
@@ -110,6 +153,7 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
           ))}
         </tbody>
       </TableShell>
+      )}
     </div>
   );
 }

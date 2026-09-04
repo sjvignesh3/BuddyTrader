@@ -1,11 +1,15 @@
 // -----------------------------------------------------------------------------
 // Portfolio tab — capital, deployment, cap-bucket mix vs limits, holdings.
 // -----------------------------------------------------------------------------
+import { useMemo, useState } from "react";
 import type { Trade } from "../../lib/journalApi";
 import type { HoldingRow, JournalCtx } from "../../lib/journal";
 import { buildPortfolio, deriveClosedTrade, CAP_LIMITS } from "../../lib/journal";
 import { fmtMoney, fmtPct } from "../../lib/money";
-import { AllocMarker, CapChip, EmptyState, Pnl, TableShell, Td, Th, useSort } from "./ui";
+import FilterBar, { CapFilter } from "./FilterBar";
+import {
+  AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, TableShell, Td, Th, useSort,
+} from "./ui";
 
 const ACCESSORS: Record<string, (h: HoldingRow) => unknown> = {
   symbol: (h) => h.symbol,
@@ -26,12 +30,24 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
 }) {
   const { holdings, capSummary, totals } = buildPortfolio(openTrades, ctx);
   const { sort, toggle, apply } = useSort<HoldingRow>(ACCESSORS);
+  const [search, setSearch] = useState("");
+  const [cap, setCap] = useState<CapFilter>("All");
   const realized = closedTrades.reduce(
     (s, t) => s + (deriveClosedTrade(t).gain ?? 0), 0);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return holdings.filter((h) => {
+      if (cap !== "All" && h.cap !== cap) return false;
+      if (q && !h.symbol.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [holdings, search, cap]);
 
   if (!holdings.length) {
     return <EmptyState text="No open positions — the portfolio builds itself from open trades." />;
   }
+  const clearFilters = () => { setSearch(""); setCap("All"); };
 
   return (
     <div className="space-y-4">
@@ -73,6 +89,13 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
       </div>
 
       {/* Holdings */}
+      <FilterBar search={search} onSearch={setSearch} cap={cap} onCap={setCap}
+                 shown={filtered.length} total={holdings.length}
+                 placeholder="Search holdings…" />
+      {!filtered.length ? (
+        <EmptyState text="No holdings match the filters."
+                    action={<GhostBtn onClick={clearFilters}>Clear filters</GhostBtn>} />
+      ) : (
       <TableShell>
         <thead>
           <tr className="bg-brand-soft">
@@ -89,7 +112,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
           </tr>
         </thead>
         <tbody>
-          {apply(holdings).map((h) => (
+          {apply(filtered).map((h) => (
             <tr key={h.symbol} className="border-t border-brand-border/60 hover:bg-brand-soft/60">
               <Td className="font-semibold">{h.symbol}</Td>
               <Td><CapChip cap={h.cap} /></Td>
@@ -112,6 +135,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
           ))}
         </tbody>
       </TableShell>
+      )}
     </div>
   );
 }

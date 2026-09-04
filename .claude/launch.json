@@ -2,16 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "plutus-frontend",
+      "name": "frontend_v2",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "frontend_v2"],
       "port": 5173
-    },
-    {
-      "name": "plutus-frontend-5199",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend_v2", "--", "--port", "5199", "--strictPort"],
-      "port": 5199
     }
   ]
 }

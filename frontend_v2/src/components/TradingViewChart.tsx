@@ -15,6 +15,7 @@ export default function TradingViewChart({ tvSymbol }: {
     const q = new URLSearchParams({
       symbol: tvSymbol,
       interval: "D",
+      range: "12M",               // open at 1 year of daily candles
       theme: "light",
       style: "1",                 // candles
       timezone: "Asia/Kolkata",

@@ -44,6 +44,17 @@ export function allocState(totalPct: number | null, cap: CapBucket | null): Allo
   return "ok";
 }
 
+/** How close an open trade is to its target: "hit" at/above target,
+ * "near" within 10% below it, null otherwise (or no target/CMP). */
+export type TargetZone = "hit" | "near" | null;
+
+export function targetZone(remainingPct: number | null): TargetZone {
+  if (remainingPct === null) return null;
+  if (remainingPct <= 0) return "hit";
+  if (remainingPct < 10) return "near";
+  return null;
+}
+
 export function daysBetween(fromIso: string | null | undefined, toIso?: string | null): number | null {
   if (!fromIso) return null;
   const a = new Date(fromIso).getTime();

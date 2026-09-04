@@ -2,13 +2,14 @@
 // Opportunities tab — plan list. Manual columns + live fetched columns and
 // the capital-allocation marker. Every column header sorts.
 // -----------------------------------------------------------------------------
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Opportunity } from "../../lib/journalApi";
 import type { JournalCtx, OppDerived } from "../../lib/journal";
 import { deriveOpportunity, num } from "../../lib/journal";
 import { fmtDate, fmtMoney, fmtPct } from "../../lib/money";
+import FilterBar, { CapFilter, FilterChip } from "./FilterBar";
 import {
-  AllocMarker, CapChip, EmptyState, Pnl, RowBtn, TableShell, Td, Th, useSort,
+  AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, RowBtn, TableShell, Td, Th, useSort,
 } from "./ui";
 
 const ACTION_STYLES: Record<string, string> = {
@@ -16,6 +17,15 @@ const ACTION_STYLES: Record<string, string> = {
   GTT: "bg-teal-50 text-teal-800 ring-teal-300",
   "Analyse Now": "bg-amber-50 text-amber-800 ring-amber-300",
   Later: "bg-stone-100 text-stone-500 ring-stone-200",
+};
+
+const ACTIONS = ["Buy Now", "GTT", "Analyse Now", "Later"] as const;
+
+const ACTION_ACTIVE: Record<string, string> = {
+  "Buy Now": "bg-teal-700 text-white ring-teal-700",
+  GTT: "bg-teal-600 text-white ring-teal-600",
+  "Analyse Now": "bg-amber-500 text-white ring-amber-500",
+  Later: "bg-stone-500 text-white ring-stone-500",
 };
 
 type Item = { o: Opportunity; d: OppDerived };
@@ -49,15 +59,56 @@ export default function OpportunitiesTab({ rows, ctx, onEdit, onConvert, onDelet
   onDelete: (o: Opportunity) => void;
 }) {
   const { sort, toggle, apply } = useSort<Item>(ACCESSORS);
+  const [search, setSearch] = useState("");
+  const [cap, setCap] = useState<CapFilter>("All");
+  const [action, setAction] = useState<string>("All");
+
   const items = useMemo(
     () => rows.map((o) => ({ o, d: deriveOpportunity(o, ctx) })),
     [rows, ctx]);
 
+  const actionCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    items.forEach(({ o }) => {
+      if (o.action_filter) m.set(o.action_filter, (m.get(o.action_filter) ?? 0) + 1);
+    });
+    return m;
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return items.filter(({ o, d }) => {
+      if (cap !== "All" && d.cap !== cap) return false;
+      if (action !== "All" && o.action_filter !== action) return false;
+      if (q && ![o.symbol, o.strategy, o.notes, o.action_filter]
+        .some((f) => f && f.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [items, search, cap, action]);
+
   if (!rows.length) {
     return <EmptyState text="No opportunities yet — add one or import your sheet." />;
   }
+  const clearFilters = () => { setSearch(""); setCap("All"); setAction("All"); };
   const s = { sort, onSort: toggle };
   return (
+    <div>
+      <FilterBar search={search} onSearch={setSearch} cap={cap} onCap={setCap}
+                 shown={filtered.length} total={items.length}>
+        <div className="flex items-center gap-1">
+          {ACTIONS.map((a) => (
+            <FilterChip key={a} active={action === a}
+                        onClick={() => setAction((prev) => (prev === a ? "All" : a))}
+                        activeCls={ACTION_ACTIVE[a]} count={actionCounts.get(a) ?? 0}>
+              {a}
+            </FilterChip>
+          ))}
+        </div>
+      </FilterBar>
+      {!filtered.length ? (
+        <EmptyState text="No opportunities match the filters."
+                    action={<GhostBtn onClick={clearFilters}>Clear filters</GhostBtn>} />
+      ) : (
     <TableShell>
       <thead>
         <tr className="bg-brand-soft">
@@ -83,7 +134,7 @@ export default function OpportunitiesTab({ rows, ctx, onEdit, onConvert, onDelet
         </tr>
       </thead>
       <tbody>
-        {apply(items).map(({ o, d }) => (
+        {apply(filtered).map(({ o, d }) => (
           <tr key={o.id} className="border-t border-brand-border/60 hover:bg-brand-soft/60">
             <Td>{fmtDate(o.opp_date)}</Td>
             <Td className="font-semibold">{o.symbol}</Td>
@@ -130,5 +181,7 @@ export default function OpportunitiesTab({ rows, ctx, onEdit, onConvert, onDelet
         ))}
       </tbody>
     </TableShell>
+      )}
+    </div>
   );
 }

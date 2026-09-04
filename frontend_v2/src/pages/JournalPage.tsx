@@ -16,6 +16,7 @@ import {
 } from "../lib/journalCsv";
 import { fmtMoney } from "../lib/money";
 import LoadError from "../components/LoadError";
+import JournalInsights from "../components/journal/JournalInsights";
 import OpportunitiesTab from "../components/journal/OpportunitiesTab";
 import OpenTradesTab from "../components/journal/OpenTradesTab";
 import ClosedTradesTab from "../components/journal/ClosedTradesTab";
@@ -27,12 +28,18 @@ import { ConfirmDialog, GhostBtn, PrimaryBtn } from "../components/journal/ui";
 
 type TabKey = "opportunities" | "open" | "closed" | "portfolio";
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "opportunities", label: "Opportunities" },
-  { key: "open", label: "Open Trades" },
-  { key: "closed", label: "Closed Trades" },
-  { key: "portfolio", label: "Portfolio" },
+const TABS: { key: TabKey; label: string; icon: string }[] = [
+  { key: "opportunities", label: "Opportunities", icon: "🔭" },
+  { key: "open", label: "Open Trades", icon: "📈" },
+  { key: "closed", label: "Closed Trades", icon: "🏁" },
+  { key: "portfolio", label: "Portfolio", icon: "💼" },
 ];
+
+/** Restore the tab from the URL hash so a refresh doesn't reset the view. */
+const initialTab = (): TabKey => {
+  const h = window.location.hash.replace("#", "");
+  return TABS.some((t) => t.key === h) ? (h as TabKey) : "opportunities";
+};
 
 const jqk = {
   settings: ["journal", "settings"] as const,
@@ -42,7 +49,11 @@ const jqk = {
 
 export default function JournalPage() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<TabKey>("opportunities");
+  const [tab, setTabState] = useState<TabKey>(initialTab);
+  const setTab = (k: TabKey) => {
+    setTabState(k);
+    window.history.replaceState(null, "", `#${k}`);
+  };
   const [notice, setNotice] = useState<string | null>(null);
 
   // ---- Data ------------------------------------------------------------------
@@ -250,23 +261,48 @@ export default function JournalPage() {
         </div>
       </div>
 
+      {/* Insights */}
+      <JournalInsights
+        openTrades={openTrades} closedTrades={closedTrades} ctx={ctx}
+        onJumpToOpen={() => setTab("open")}
+      />
+
       {/* Tabs + actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="inline-flex max-w-full overflow-x-auto rounded-xl ring-1 ring-brand-border bg-brand-panel shadow-card p-1 gap-0.5">
-          {TABS.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)}
-              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${
-                tab === t.key ? "bg-teal-700 text-white shadow-card"
-                              : "text-brand-mute hover:text-brand-text hover:bg-brand-soft"}`}>
-              {t.label}
-              <span className={`ml-1.5 text-[10px] font-normal ${
-                tab === t.key ? "text-teal-100" : "text-brand-mute"}`}>
-                {t.key === "opportunities" ? opportunities.length
-                  : t.key === "open" ? openTrades.length
-                  : t.key === "closed" ? closedTrades.length : ""}
-              </span>
-            </button>
-          ))}
+        {/* Inactive tabs collapse to icon+count on narrow screens, so the strip
+            always fits — no horizontal scrollbar. The active pill expands. */}
+        <div role="tablist" aria-label="Journal sections"
+             className="inline-flex max-w-full overflow-x-auto no-scrollbar rounded-2xl
+                        ring-1 ring-brand-border bg-brand-panel shadow-card p-1.5 gap-1">
+          {TABS.map((t) => {
+            const active = tab === t.key;
+            const count = t.key === "opportunities" ? opportunities.length
+              : t.key === "open" ? openTrades.length
+              : t.key === "closed" ? closedTrades.length
+              : new Set(openTrades.map((x) => x.symbol)).size;
+            return (
+              <button key={t.key} role="tab" aria-selected={active}
+                onClick={() => setTab(t.key)} title={t.label}
+                className={`group flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl
+                            text-sm font-semibold whitespace-nowrap transition-all duration-300 ${
+                  active
+                    ? "bg-gradient-to-br from-teal-600 to-teal-800 text-white shadow-pop"
+                    : "text-brand-mute hover:text-brand-text hover:bg-brand-soft"}`}>
+                <span aria-hidden
+                      className={`text-base leading-none transition-transform duration-200 ${
+                        active ? "scale-110" : "grayscale group-hover:grayscale-0 group-hover:scale-110"}`}>
+                  {t.icon}
+                </span>
+                <span className={active ? "" : "hidden md:inline"}>{t.label}</span>
+                <span className={`min-w-[20px] px-1.5 py-0.5 rounded-full text-[10px]
+                                  font-bold tabular-nums text-center transition-colors ${
+                  active ? "bg-white/20 text-white"
+                         : "hidden sm:inline-block bg-brand-soft text-brand-mute ring-1 ring-brand-border"}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
         <div className="flex items-center gap-2">
           {tab !== "portfolio" && (

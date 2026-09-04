@@ -24,3 +24,7 @@ body {
 *::-webkit-scrollbar-track { background: transparent; }
 
 ::selection { background: rgba(15, 118, 110, 0.18); }
+
+/* Scroll without a visible scrollbar (journal tab strip) */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
