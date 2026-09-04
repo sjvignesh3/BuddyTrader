@@ -112,14 +112,82 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={inputCls} />;
 }
 
-export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+/** Numeric input with an optional unit prefix (₹) and an invalid state —
+ * red ring + tint while the typed value can't be parsed as a number. */
+export function NumInput({ prefix, invalid = false, ...props }: {
+  prefix?: string; invalid?: boolean;
+} & React.InputHTMLAttributes<HTMLInputElement>) {
+  const ring = invalid
+    ? "ring-rose-400 bg-rose-50/60 focus:ring-rose-500/60"
+    : "ring-brand-border bg-white focus:ring-teal-600/50";
   return (
     <span className="relative block">
-      <select {...props} className={`${inputCls} appearance-none pr-8 cursor-pointer`} />
-      <span aria-hidden
-            className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2
-                       text-brand-mute text-[9px]">▼</span>
+      {prefix && (
+        <span aria-hidden
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2
+                         text-brand-mute text-sm">{prefix}</span>
+      )}
+      <input {...props}
+             aria-invalid={invalid || undefined}
+             className={`w-full rounded-lg ring-1 px-2.5 py-1.5 text-sm tabular-nums
+                         focus:outline-none focus:ring-2
+                         placeholder:text-brand-mute/60 ${ring}
+                         ${prefix ? "pl-7" : ""}`} />
     </span>
+  );
+}
+
+/** Segmented pill picker — replaces native selects for short option lists.
+ * `activeCls` lets an option carry its own selected colour (cap buckets,
+ * action filters); unselected pills stay neutral. */
+export function Segmented<T extends string>({ options, value, onChange, ariaLabel }: {
+  options: { value: T; label: ReactNode; activeCls?: string; title?: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <div role="radiogroup" aria-label={ariaLabel}
+         className="flex flex-wrap gap-1">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button key={o.value} type="button" role="radio" aria-checked={active}
+                  title={o.title} onClick={() => onChange(o.value)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold ring-1
+                              transition-colors select-none
+                              focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/50
+                              ${active
+                                ? o.activeCls ?? "bg-teal-700 text-white ring-teal-700"
+                                : "bg-white text-brand-mute ring-brand-border hover:text-brand-text hover:bg-brand-soft"}`}>
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Clickable suggestion chips under a free-text input. */
+export function SuggestionChips({ options, current, onPick }: {
+  options: string[]; current: string; onPick: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1 mt-1.5">
+      {options.map((s) => {
+        const active = current.trim().toLowerCase() === s.toLowerCase();
+        return (
+          <button key={s} type="button" onClick={() => onPick(active ? "" : s)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium ring-1
+                              transition-colors
+                              ${active
+                                ? "bg-teal-700 text-white ring-teal-700"
+                                : "bg-brand-soft text-brand-mute ring-brand-border hover:text-brand-text"}`}>
+            {s}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -144,20 +212,9 @@ export function GhostBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   );
 }
 
-/** Known strategy names as a datalist for free-text-with-suggestions inputs. */
-export function StrategyDatalist({ id }: { id: string }) {
-  const known = ["SR", "20% rally", "Envelope", "SMA", "52WHL", "Averaging",
-                 "ABCD", "Knox", "Envelope + Knox"];
-  return (
-    <datalist id={id}>
-      {known.map((s) => <option key={s} value={s} />)}
-    </datalist>
-  );
-}
-
 // ---- Display chips ------------------------------------------------------------------
 
-const CAP_STYLES: Record<CapBucket, string> = {
+export const CAP_STYLES: Record<CapBucket, string> = {
   Large: "bg-sky-50 text-sky-800 ring-sky-200",
   Mid: "bg-violet-50 text-violet-800 ring-violet-200",
   Small: "bg-amber-50 text-amber-800 ring-amber-200",

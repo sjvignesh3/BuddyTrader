@@ -22,7 +22,7 @@ class TestPipelineHappy:
             meta={"regularMarketPrice": 100.00,
                   "fiftyTwoWeekHigh": 100.00, "fiftyTwoWeekLow": 100.00},
             # Valuation comes from the weekly Screener ratios table.
-            screener_ratios={"market_cap": Decimal(60_000 * 10_000_000),
+            screener_ratios={"market_cap": Decimal(150_000 * 10_000_000),
                              "pe": Decimal("25.00"), "pb": Decimal("3.00")},
         )
         row = compute_snapshot(inp)
@@ -36,7 +36,7 @@ class TestPipelineHappy:
         assert row["low_52w"] == Decimal("100.00")
         assert row["ath"] == Decimal("100.00")
         assert row["fall_from_ath_pct"] == Decimal("0.00")
-        assert row["market_cap"] == Decimal(60_000 * 10_000_000)
+        assert row["market_cap"] == Decimal(150_000 * 10_000_000)
         assert row["cap_bucket"] == "Large"
         assert row["pe_current"] == Decimal("25.00")
         assert row["pb_current"] == Decimal("3.00")

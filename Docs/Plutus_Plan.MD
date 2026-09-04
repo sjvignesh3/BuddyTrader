@@ -119,7 +119,7 @@ Because these change with every closing price, they belong in the **daily sync p
 |---|---|---|
 | `close` | yfinance daily close | Live from data |
 | `market_cap` | `.info["marketCap"]` | Direct |
-| `cap_bucket` | Derived | Large ≥ ₹50,000 Cr, Mid 15,000–50,000 Cr, Small 5,000–15,000 Cr, Micro < 5,000 Cr *(thresholds configurable — see §12 Q2)* |
+| `cap_bucket` | Derived | Large ≥ ₹1,00,000 Cr, Mid 30,000–1,00,000 Cr, Small 10,000–30,000 Cr, Micro < 10,000 Cr *(thresholds configurable — see §12 Q2)* |
 | `pe_current` | `.info["trailingPE"]` | Direct |
 | `pb_current` | `.info["priceToBook"]` | Direct |
 | `fall_from_ath_pct` | Derived | `(ath - close) / ath × 100` |
@@ -709,13 +709,15 @@ Where should the yfinance sync worker run?
 > **My recommendation:** A (GitHub Actions) — dead simple, no infra, no cost. Falls back to B if we later need real-time features.
 
 ### Q2 — Market Cap Bucket Thresholds
-Confirm the thresholds for the Cap Type bucket:
-- **Large Cap:** ≥ ₹50,000 Cr
-- **Mid Cap:** ₹15,000 – ₹50,000 Cr
-- **Small Cap:** ₹5,000 – ₹15,000 Cr
-- **Micro Cap:** < ₹5,000 Cr
+**RESOLVED (Sep 2026):** thresholds set to Vicky's criteria (close to the AMFI
+July 2026 cutoffs — Large ~₹1,06,300 Cr, Mid ~₹33,500 Cr):
+- **Large Cap:** ≥ ₹1,00,000 Cr
+- **Mid Cap:** ₹30,000 – ₹1,00,000 Cr
+- **Small Cap:** ₹10,000 – ₹30,000 Cr
+- **Micro Cap:** < ₹10,000 Cr
 
-*(These are approximate SEBI-style thresholds. Different from your CSV's manual `cap_type` column. Should we keep both — auto-computed and manual override?)*
+Env-overridable without a code change (values in ₹ crores):
+`PLUTUS_CAP_LARGE_MIN_CR` / `PLUTUS_CAP_MID_MIN_CR` / `PLUTUS_CAP_SMALL_MIN_CR`.
 
 ### Q3 — Promoter Pledging Data
 If yfinance does NOT expose promoter pledging (very likely for Indian stocks), what should we do?

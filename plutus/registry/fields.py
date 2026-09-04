@@ -202,7 +202,7 @@ _FIELDS: list[Field] = [
     # -- Derived cap bucket --------------------------------------------
     Field("cap_bucket", "daily_snapshots", FieldDType.STR, FieldSource.DERIVED, FieldTier.A_DAILY,
           unit="Large|Mid|Small|Micro",
-          formula="Large>=50000Cr, Mid 15000-50000Cr, Small 5000-15000Cr, Micro<5000Cr"),
+          formula="Large>=100000Cr, Mid 30000-100000Cr, Small 10000-30000Cr, Micro<10000Cr (env-overridable)"),
 
     # -- Derived from OHLCV --------------------------------------------
     Field("dma_200", "daily_snapshots", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.A_DAILY,
