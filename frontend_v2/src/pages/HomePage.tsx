@@ -27,6 +27,13 @@ const TOOLS: Tool[] = [
     accent: "from-amber-700 to-amber-500",
   },
   {
+    icon: "🪙",
+    name: "Expense Tracker",
+    desc: "Manual-first expense intelligence — two-keystroke capture, monthly insights, needs vs wants, recurring visibility.",
+    to: "/expenses",
+    accent: "from-sky-700 to-sky-500",
+  },
+  {
     icon: "🧮",
     name: "Position Sizer",
     desc: "Risk-based quantity and GTT ladder planning.",

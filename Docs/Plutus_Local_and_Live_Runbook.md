@@ -244,12 +244,18 @@ python -m pytest plutus/ --collect-only -q 2>/dev/null | tail -1
 The `supabase/` directory at repo root is initialised (`supabase/config.toml`,
 project id `plutus`). You **do not** need to run `supabase init`.
 
-> ⚠️ **Port remap:** this repo's local stack runs on **55321–55329**
-> (API 55321, DB 55322, Studio 55323, Mailpit 55324) instead of the CLI
+> ⚠️ **Port remap:** this repo's local stack runs on **56321–56329**
+> (API 56321, DB 56322, Studio 56323, Mailpit 56324) instead of the CLI
 > defaults 54321–54324, so it can coexist with other Supabase projects on
 > the same machine. Wherever this runbook or the Supabase docs mention a
-> `54xxx` port, substitute the matching `55xxx` port. The `plutus/.env`
-> and `frontend_v2/.env.local` examples below already use 55xxx.
+> `54xxx` port, substitute the matching `56xxx` port. The `plutus/.env`
+> and `frontend_v2/.env.local` examples below already use the remapped ports.
+>
+> (History: the stack originally used 55321–55329, but on 2026-09-04 Windows'
+> Hyper-V dynamic port exclusions swallowed the whole 55266–55365 range after
+> a reboot — `netsh interface ipv4 show excludedportrange protocol=tcp` shows
+> the reservations — so `supabase/config.toml` was remapped to 563xx, which
+> sits outside every excluded range.)
 
 ```bash
 supabase start

@@ -5,6 +5,7 @@ const NAV = [
   { to: "/", label: "Home", end: true },
   { to: "/pools", label: "Market Analysis" },
   { to: "/journal", label: "Journal" },
+  { to: "/expenses", label: "Expenses" },
   { to: "/status", label: "Sync" },
 ];
 

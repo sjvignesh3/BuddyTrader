@@ -2,6 +2,7 @@ import { Routes, Route } from "react-router-dom";
 import Header from "./components/Header";
 import HomePage from "./pages/HomePage";
 import JournalPage from "./pages/JournalPage";
+import ExpensesPage from "./pages/ExpensesPage";
 import PoolsPage from "./pages/PoolsPage";
 import PoolDetailPage from "./pages/PoolDetailPage";
 import StockDetailPage from "./pages/StockDetailPage";
@@ -15,6 +16,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/journal" element={<JournalPage />} />
+          <Route path="/expenses" element={<ExpensesPage />} />
           <Route path="/pools" element={<PoolsPage />} />
           <Route path="/pools/:code" element={<PoolDetailPage />} />
           <Route path="/stocks/:symbol" element={<StockDetailPage />} />

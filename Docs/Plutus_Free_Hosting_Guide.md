@@ -11,11 +11,13 @@
 >
 > **Why the FastAPI backend is now hosted (new since the Trading Journal):**
 > the original plan used the read-only Supabase Edge Function as the prod API.
-> The Trading Journal writes (add/edit/delete/import trades), and those write
-> endpoints exist only in the Python FastAPI app (`plutus/api/app.py` +
-> `plutus/api/journal.py`). Hosting FastAPI on Render gives prod both the
-> read endpoints and the journal in one service. The Edge Function can stay
-> deployed as a read-only fallback, but the frontend below points at Render.
+> The Trading Journal and the Expense Tracker write (add/edit/delete/import),
+> and those write endpoints exist only in the Python FastAPI app
+> (`plutus/api/app.py` + `plutus/api/journal.py` + `plutus/api/expenses.py`).
+> Hosting FastAPI on Render gives prod the read endpoints, the journal and the
+> expense tracker in one service. The Edge Function can stay deployed as a
+> read-only fallback, but it does NOT know the expense routes (mirroring them
+> is optional parity work) — the frontend below points at Render.
 >
 > Deep-dive topics (backups, canary, alerting, rollback) live in
 > `Docs/Plutus_Local_and_Live_Runbook.md`. This guide is the fast path.
@@ -53,7 +55,7 @@
 > ⚠️ The `service_role` key bypasses RLS. It goes into Render and GitHub
 > **secrets** only — never into the frontend or any `VITE_*` variable.
 
-### 1.3 Apply all 13 migrations (in order)
+### 1.3 Apply all 15 migrations (in order)
 
 Migrations are SQL files that create the tables, views, indexes, and security
 policies required by Plutus. They must be run against the **new Supabase
@@ -89,11 +91,15 @@ You do not need to install PostgreSQL or use a command prompt for this method.
    11. `011_canary_checks.sql`
    12. `012_screener_ratios.sql`
    13. `013_journal.sql`
+   14. `014_stock_notes.sql`
+   15. `015_expenses.sql`
 
 9. After the final file succeeds, open **Table Editor** in the sidebar. You
    should see tables including `stocks`, `pools`, `daily_snapshots`,
    `fundamentals`, `scans`, `scan_results`, `sync_jobs`,
-   `journal_settings`, `journal_opportunities`, and `journal_trades`.
+   `journal_settings`, `journal_opportunities`, `journal_trades`,
+   `journal_stock_notes`, `expenses`, `expense_categories`, `expense_items`,
+   `expense_recurring`, and `expense_budgets`.
 10. In **SQL Editor → New query**, run this verification query:
 
 ```sql
@@ -103,12 +109,14 @@ where table_schema = 'public'
   and table_name in (
     'stocks', 'pools', 'daily_snapshots', 'fundamentals', 'scans',
     'scan_results', 'sync_jobs', 'journal_settings',
-    'journal_opportunities', 'journal_trades'
+    'journal_opportunities', 'journal_trades', 'journal_stock_notes',
+    'expenses', 'expense_categories', 'expense_items',
+    'expense_recurring', 'expense_budgets'
   )
 order by table_name;
 ```
 
-The result should contain 10 rows. Seeing the tables in Table Editor is useful
+The result should contain 16 rows. Seeing the tables in Table Editor is useful
 for a quick visual check, but the query is the authoritative check. Empty
 tables are expected at this stage; the stock rows are added in §1.4.
 
@@ -158,6 +166,12 @@ the connection string or database password into Git or a frontend `.env` file.
 > (`journal_settings`, `journal_opportunities`, `journal_trades`) with RLS
 > locked to `service_role` — the anon key cannot touch them. Do not test these
 > tables from the browser until the backend security setup is complete.
+>
+> `015_expenses.sql` creates the Expense Tracker tables with the same RLS
+> lock, **and seeds them**: 12 top-level categories, 37 sub-categories and
+> ~60 item-memory entries (the "type Tea → category autofills" dictionary).
+> The seeds are idempotent (`ON CONFLICT DO NOTHING`), so rerunning the file
+> is harmless and it never duplicates or overwrites your own edits.
 ### 1.4 Seed the stock universe
 
 From your local machine, pointed at the **cloud** project (temporarily set the
@@ -183,6 +197,15 @@ Open the hosted app → Journal → **Import CSV** and load your three sheets
 (Opportunities / Open Trades / Closed Trades), exactly as you did locally.
 Set your capital with the Capital chip. Done — the cloud DB now holds your
 journal.
+
+### 1.6 Import your expense sheet (once the frontend is live)
+
+Open the hosted app → Expenses → **Import CSV** and load the Google Sheet
+export (`Expense Tracker - <year> - <year> Expense Journal.csv`, columns
+`Year,Item,Amount (₹),Day,Month,Date,Category,Notes`). Blank template rows
+and `#N/A` categories are skipped automatically; category names are matched
+case-insensitively and unknown ones are created. Repeat per year file if you
+have several — rows are always added, never overwritten.
 
 ---
 
@@ -256,10 +279,13 @@ cron schedules are unaffected by any of this.
 curl https://plutus-api.onrender.com/api/health
 curl https://plutus-api.onrender.com/api/journal/settings
 curl "https://plutus-api.onrender.com/api/pools"
+curl "https://plutus-api.onrender.com/api/expenses/categories"
 ```
 
-All three should return JSON (the first request after idle takes ~30–60 s —
-see §5 Free-tier gotchas).
+All four should return JSON (the first request after idle takes ~30–60 s —
+see §5 Free-tier gotchas). The last one proves migration `015_expenses.sql`
+was applied — it should list the seeded categories, not
+`{"error": "..."}`.
 
 ---
 
@@ -300,6 +326,9 @@ everything else out of reach.)
 - `/pools/F40` → table renders after the Render cold start.
 - `/journal` → your capital + tabs; add and delete a test opportunity.
 - Expand a stock you hold → **My positions** tab shows your lots.
+- `/expenses` → Quick Add bar with the seeded category dropdown; type a
+  known item name (e.g. "Cinema") and the category should autofill from the
+  seeded item memory. Add and delete a test expense.
 
 ---
 
@@ -348,9 +377,10 @@ rows and the frontend fills in. From then on it runs Mon–Fri 12:30 UTC
 ## 7. One-page cheat sheet
 
 ```
-Supabase  : DB + keys           → migrations 001–013, seed, secrets
+Supabase  : DB + keys           → migrations 001–015, seed, secrets
 Render    : plutus-api          → uvicorn --factory plutus.api.app:create_app
 Vercel    : frontend_v2         → VITE_PLUTUS_API_URL = Render URL
 GitHub    : Actions secrets     → PLUTUS_SUPABASE_URL / _SERVICE_KEY
-Order     : DB → seed → backend → frontend → Actions first run → import journal
+Order     : DB → seed → backend → frontend → Actions first run
+            → import journal → import expense sheet
 ```
