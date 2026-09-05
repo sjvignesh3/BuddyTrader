@@ -95,6 +95,57 @@ function dayPct(snap?: Snapshot): number | null {
   return o && c ? ((c - o) / o) * 100 : null;
 }
 
+// ---- Live plan allocation (forms) ------------------------------------------------
+
+/** What a planned buy does to a symbol's allocation, against its cap limit.
+ * Everything is a share of CAPITAL — the same base the tables use. */
+export interface PlanAllocation {
+  capital: number;
+  limitPct: number | null;   // per-stock cap-bucket limit
+  limitValue: number | null; // ₹ that limit allows in one stock
+  heldValue: number;         // ₹ already in OPEN lots of this symbol
+  heldPct: number | null;
+  addValue: number | null;   // ₹ this plan adds
+  addPct: number | null;
+  totalPct: number | null;
+  state: AllocState | null;
+  roomValue: number | null;  // ₹ still free under the limit after this plan
+  maxQty: number | null;     // largest qty at this price that stays within the limit
+  qtyDelta: number | null;   // maxQty − planned qty: + room left, − shares over
+}
+
+export function planAllocation({ symbol, cap, buyPrice, qty, ctx, excludeHeld = 0 }: {
+  symbol: string;
+  cap: CapBucket | null;
+  buyPrice: number | null;
+  qty: number | null;
+  ctx: JournalCtx;
+  /** ₹ of this symbol's OPEN value that the form itself owns — subtracted so
+   * editing an existing lot doesn't count that lot twice. */
+  excludeHeld?: number;
+}): PlanAllocation {
+  const capital = ctx.capital;
+  const heldValue = Math.max(0, (ctx.openInvested.get(symbol) ?? 0) - excludeHeld);
+  const addValue = buyPrice !== null && qty !== null ? buyPrice * qty : null;
+  const pct = (v: number | null) =>
+    v === null || !capital ? null : (v / capital) * 100;
+  const heldPct = pct(heldValue);
+  const addPct = pct(addValue);
+  const totalPct = heldPct === null ? addPct
+    : addPct === null ? heldPct : heldPct + addPct;
+  const limitPct = cap ? CAP_LIMITS[cap] : null;
+  const limitValue = limitPct !== null && capital ? (capital * limitPct) / 100 : null;
+  const maxQty = limitValue !== null && buyPrice
+    ? Math.max(0, Math.floor((limitValue - heldValue) / buyPrice)) : null;
+  return {
+    capital, limitPct, limitValue, heldValue, heldPct, addValue, addPct, totalPct,
+    state: allocState(totalPct, cap),
+    roomValue: limitValue === null ? null : limitValue - heldValue - (addValue ?? 0),
+    maxQty,
+    qtyDelta: maxQty !== null && qty !== null ? maxQty - qty : null,
+  };
+}
+
 // ---- Opportunities -------------------------------------------------------------
 
 export interface OppDerived {

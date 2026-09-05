@@ -7,7 +7,7 @@
 // prices + fundamentals; the page polls until the row appears.
 // -----------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ScanResult, Stock } from "../lib/api";
 import {
@@ -130,12 +130,25 @@ export default function PoolDetailPage() {
     heldSymbols.has(r.symbol.replace(/\.(NS|BO)$/i, ""));
 
   // ---- Filters ----------------------------------------------------------------
-  const [search, setSearch] = useState("");
-  const [capFilter, setCapFilter] = useState("");
-  const [sectorFilter, setSectorFilter] = useState("");
-  const [signalFilter, setSignalFilter] = useState("");
-  const [minScore, setMinScore] = useState(0);
-  const [holdFilter, setHoldFilter] = useState(""); // "" | "held" | "unheld"
+  // Kept in the URL query string (?q=&cap=&sector=&signal=&hold=&min=) so
+  // opening a stock page and coming back restores the exact filtered view —
+  // plain useState would reset on unmount. `replace: true` keeps typing in
+  // the search box from flooding the history stack.
+  const [filterParams, setFilterParams] = useSearchParams();
+  const search = filterParams.get("q") ?? "";
+  const capFilter = filterParams.get("cap") ?? "";
+  const sectorFilter = filterParams.get("sector") ?? "";
+  const signalFilter = filterParams.get("signal") ?? "";
+  const holdFilter = filterParams.get("hold") ?? ""; // "" | "held" | "unheld"
+  const minScore = Math.max(0, Math.min(11, Number(filterParams.get("min")) || 0));
+  const setFilter = (key: string) => (value: string) =>
+    setFilterParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set(key, value);
+      else next.delete(key);
+      return next;
+    }, { replace: true });
+  const clearFilters = () => setFilterParams(new URLSearchParams(), { replace: true });
 
   const sectors = useMemo(
     () => Array.from(new Set(rows.map((r) => r.sector).filter(Boolean) as string[])).sort(),
@@ -237,22 +250,22 @@ export default function PoolDetailPage() {
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => setFilter("q")(e.target.value)}
           placeholder="Search symbol…"
           className="bg-brand-panel ring-1 ring-brand-border rounded-xl px-3.5 py-2 w-44 shadow-card focus:ring-2 focus:ring-brand-accent/40 outline-none placeholder:text-brand-mute"
         />
-        <Dropdown value={capFilter} onChange={setCapFilter} placeholder="All caps"
+        <Dropdown value={capFilter} onChange={setFilter("cap")} placeholder="All caps"
                   options={[{ value: "", label: "All caps" },
                     ...CAP_BUCKETS.map((c) => ({ value: c, label: `${c} cap` }))]} />
-        <Dropdown value={sectorFilter} onChange={setSectorFilter} placeholder="All sectors"
+        <Dropdown value={sectorFilter} onChange={setFilter("sector")} placeholder="All sectors"
                   options={[{ value: "", label: "All sectors" },
                     ...sectors.map((s) => ({ value: s, label: s }))]} />
-        <Dropdown value={signalFilter} onChange={setSignalFilter} placeholder="All signals"
+        <Dropdown value={signalFilter} onChange={setFilter("signal")} placeholder="All signals"
                   options={[{ value: "", label: "All signals" },
                     { value: "BUY_ZONE", label: "🟢 Buy zone" },
                     { value: "OPPORTUNITY", label: "🟡 Opportunity" },
                     { value: "VALID", label: "🔵 Valid" }]} />
-        <Dropdown value={holdFilter} onChange={setHoldFilter} placeholder="Held + not held"
+        <Dropdown value={holdFilter} onChange={setFilter("hold")} placeholder="Held + not held"
                   title="Filter by your Trading Journal's open positions — applies to the radar too"
                   options={[
                     { value: "", label: "Held + not held" },
@@ -263,7 +276,7 @@ export default function PoolDetailPage() {
         <label className="flex items-center gap-2 text-[11px] text-brand-mute pl-1">
           Min score
           <input type="range" min={0} max={11} value={minScore}
-                 onChange={(e) => setMinScore(Number(e.target.value))}
+                 onChange={(e) => setFilter("min")(e.target.value === "0" ? "" : e.target.value)}
                  className="w-24 accent-teal-700" />
           <span className="font-mono w-8 font-semibold text-brand-text">
             {minScore > 0 ? `${minScore}+` : "any"}
@@ -271,7 +284,7 @@ export default function PoolDetailPage() {
         </label>
         {(search || capFilter || sectorFilter || signalFilter || holdFilter || minScore > 0) && (
           <button
-            onClick={() => { setSearch(""); setCapFilter(""); setSectorFilter(""); setSignalFilter(""); setHoldFilter(""); setMinScore(0); }}
+            onClick={clearFilters}
             className="text-[11px] text-brand-mute hover:text-brand-text underline underline-offset-2">
             Clear ({filtered.length}/{rows.length})
           </button>

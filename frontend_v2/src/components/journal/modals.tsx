@@ -8,8 +8,9 @@ import { useMemo, useState } from "react";
 import type {
   ActionFilter, CapBucket, Opportunity, OpportunityDraft, Trade, TradeDraft,
 } from "../../lib/journalApi";
-import { CAP_LIMITS } from "../../lib/journal";
+import { CAP_LIMITS, effectiveCap, num, type JournalCtx } from "../../lib/journal";
 import { fmtMoney } from "../../lib/money";
+import AllocationGauge from "./AllocationGauge";
 import {
   CAP_STYLES, Field, GhostBtn, Modal, NumInput, PrimaryBtn, Segmented,
   SuggestionChips, TextArea, TextInput,
@@ -94,10 +95,12 @@ function PlanSummary({ buy, qty, target }: { buy: string; qty: string; target: s
 
 // ---- Opportunity ---------------------------------------------------------------
 
-export function OpportunityModal({ initial, prefill, onSave, onClose, busy }: {
+export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy }: {
   initial: Opportunity | null;
   /** Defaults for a NEW opportunity (e.g. from the stock page) — ignored when editing. */
   prefill?: OpportunityDraft;
+  /** Capital + open lots, for the live allocation gauge. */
+  ctx: JournalCtx;
   onSave: (draft: OpportunityDraft) => void;
   onClose: () => void;
   busy: boolean;
@@ -130,15 +133,20 @@ export function OpportunityModal({ initial, prefill, onSave, onClose, busy }: {
     return null;
   }, [f]);
 
-  // Soft completeness — the journal computes allocation / potential from
-  // these; missing ones don't block, but the user should know.
+  // Soft completeness — what each still-empty field would unlock. Allocation
+  // itself is live in the gauge below, so this only names what's still blank.
   const missing = useMemo(() => {
     const m: string[] = [];
-    if (!numOrNull(f.buy_price)) m.push("buy price");
-    if (!intOrNull(f.qty)) m.push("qty");
-    if (!numOrNull(f.target_price)) m.push("target");
+    if (!numOrNull(f.buy_price) || !intOrNull(f.qty)) {
+      m.push("buy price + qty size the allocation above");
+    }
+    if (!numOrNull(f.target_price)) m.push("a target gives potential % and gain ₹");
     return m;
   }, [f]);
+
+  const symbolKey = f.symbol.trim().toUpperCase();
+  // Buy price is the trigger; fall back to the GTT limit when only that is set.
+  const planPrice = toNum(f.buy_price) ?? toNum(f.limit_price);
 
   const save = () => onSave({
     opp_date: f.opp_date || null,
@@ -211,10 +219,17 @@ export function OpportunityModal({ initial, prefill, onSave, onClose, busy }: {
 
       <PlanSummary buy={f.buy_price} qty={f.qty} target={f.target_price} />
 
+      <AllocationGauge
+        symbol={symbolKey}
+        cap={effectiveCap((f.cap_bucket || null) as CapBucket | null,
+                          ctx.snaps.get(symbolKey))}
+        buyPrice={planPrice} qty={intOrNull(f.qty)} ctx={ctx}
+        onUseMaxQty={(q) => setF((p) => ({ ...p, qty: String(q) }))}
+      />
+
       {problem === null && missing.length > 0 && (
         <p className="mt-2 text-[11px] text-amber-700">
-          Journal metrics (allocation, potential) need {missing.join(", ")} — you can
-          add them later.
+          Still optional: {missing.join(" · ")}.
         </p>
       )}
 
@@ -234,10 +249,12 @@ export function OpportunityModal({ initial, prefill, onSave, onClose, busy }: {
 
 // ---- Trade (add / edit; covers open and closed rows) ------------------------------
 
-export function TradeModal({ initial, closed = false, onSave, onClose, busy }: {
+export function TradeModal({ initial, closed = false, ctx, onSave, onClose, busy }: {
   initial: Trade | null;
   /** true when editing a CLOSED row (shows sell fields). */
   closed?: boolean;
+  /** Capital + open lots, for the live allocation gauge. */
+  ctx: JournalCtx;
   onSave: (draft: TradeDraft) => void;
   onClose: () => void;
   busy: boolean;
@@ -275,6 +292,12 @@ export function TradeModal({ initial, closed = false, onSave, onClose, busy }: {
     }
     return null;
   }, [f, isClosed]);
+
+  const symbolKey = f.symbol.trim().toUpperCase();
+  // Editing an open lot: its own value is already in openInvested, so drop it
+  // before adding what the form now says — otherwise it counts twice.
+  const ownHeld = initial?.status === "OPEN"
+    ? (num(initial.buy_price) ?? 0) * initial.qty : 0;
 
   const save = () => {
     const draft: TradeDraft = {
@@ -364,6 +387,17 @@ export function TradeModal({ initial, closed = false, onSave, onClose, busy }: {
 
       <PlanSummary buy={f.buy_price} qty={f.qty} target={f.target_price} />
 
+      {!isClosed && (
+        <AllocationGauge
+          symbol={symbolKey}
+          cap={effectiveCap((f.cap_bucket || null) as CapBucket | null,
+                            ctx.snaps.get(symbolKey))}
+          buyPrice={toNum(f.buy_price)} qty={intOrNull(f.qty)} ctx={ctx}
+          excludeHeld={ownHeld}
+          onUseMaxQty={(q) => setF((p) => ({ ...p, qty: String(q) }))}
+        />
+      )}
+
       <div className="mt-5 flex items-center justify-end gap-3">
         {problem && f.symbol.trim() !== "" && (
           <span className="text-[11px] text-rose-600 mr-auto">{problem}</span>
@@ -379,8 +413,10 @@ export function TradeModal({ initial, closed = false, onSave, onClose, busy }: {
 
 // ---- Convert opportunity → open trade ----------------------------------------------
 
-export function ConvertModal({ opp, onConvert, onClose, busy }: {
+export function ConvertModal({ opp, ctx, onConvert, onClose, busy }: {
   opp: Opportunity;
+  /** Capital + open lots, for the live allocation gauge. */
+  ctx: JournalCtx;
   onConvert: (overrides: TradeDraft) => void;
   onClose: () => void;
   busy: boolean;
@@ -424,6 +460,12 @@ export function ConvertModal({ opp, onConvert, onClose, busy }: {
         </Field>
       </div>
       <PlanSummary buy={f.buy_price} qty={f.qty} target={opp.target_price ?? ""} />
+      <AllocationGauge
+        symbol={opp.symbol}
+        cap={effectiveCap(opp.cap_bucket, ctx.snaps.get(opp.symbol))}
+        buyPrice={toNum(f.buy_price)} qty={intOrNull(f.qty)} ctx={ctx}
+        onUseMaxQty={(q) => setF((p) => ({ ...p, qty: String(q) }))}
+      />
       <div className="mt-5 flex justify-end gap-2">
         <GhostBtn onClick={onClose}>Cancel</GhostBtn>
         <PrimaryBtn disabled={busy || !valid} onClick={() => onConvert({

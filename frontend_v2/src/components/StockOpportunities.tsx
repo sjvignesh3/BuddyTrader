@@ -241,7 +241,7 @@ export default function StockOpportunities({ symbol, row }: {
         <OpportunityModal
           initial={modal === "add" ? null : modal}
           prefill={modal === "add" ? prefill : undefined}
-          busy={mSave.isPending}
+          ctx={ctx} busy={mSave.isPending}
           onClose={() => setModal(null)}
           onSave={(draft) => mSave.mutate(
             modal === "add" ? { draft } : { id: modal.id, draft })}
@@ -250,7 +250,7 @@ export default function StockOpportunities({ symbol, row }: {
       {convertOpp && (
         <ConvertModal
           opp={convertOpp}
-          busy={mConvert.isPending}
+          ctx={ctx} busy={mConvert.isPending}
           onClose={() => setConvertOpp(null)}
           onConvert={(overrides) => mConvert.mutate({ id: convertOpp.id, overrides })}
         />

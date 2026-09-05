@@ -393,7 +393,7 @@ export default function JournalPage() {
       {/* Modals */}
       {oppModal && (
         <OpportunityModal
-          initial={oppModal.initial} busy={mSaveOpp.isPending}
+          initial={oppModal.initial} ctx={ctx} busy={mSaveOpp.isPending}
           onClose={() => setOppModal(null)}
           onSave={(draft) => mSaveOpp.mutate({ id: oppModal.initial?.id, draft })}
         />
@@ -401,14 +401,14 @@ export default function JournalPage() {
       {tradeModal && (
         <TradeModal
           initial={tradeModal.initial} closed={tradeModal.closed}
-          busy={mSaveTrade.isPending}
+          ctx={ctx} busy={mSaveTrade.isPending}
           onClose={() => setTradeModal(null)}
           onSave={(draft) => mSaveTrade.mutate({ id: tradeModal.initial?.id, draft })}
         />
       )}
       {convertOpp && (
         <ConvertModal
-          opp={convertOpp} busy={mConvert.isPending}
+          opp={convertOpp} ctx={ctx} busy={mConvert.isPending}
           onClose={() => setConvertOpp(null)}
           onConvert={(overrides) => mConvert.mutate({ id: convertOpp.id, overrides })}
         />
