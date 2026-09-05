@@ -46,6 +46,8 @@ export interface Opportunity {
   qty: number | null;
   strategy: string | null;
   target_price: string | null;
+  /** Stop-loss — the exit that defines the trade's risk (Position Sizer). */
+  stop_price: string | null;
   action_filter: ActionFilter | null;
   notes: string | null;
   status: OppStatus;
@@ -64,6 +66,8 @@ export interface Trade {
   qty: number;
   strategy: string | null;
   target_price: string | null;
+  /** Stop-loss; open lots WITH a stop feed the Position Sizer's portfolio heat. */
+  stop_price: string | null;
   status: TradeStatus;
   close_label: string | null;
   sell_date: string | null;

@@ -3,6 +3,8 @@ import Header from "./components/Header";
 import HomePage from "./pages/HomePage";
 import JournalPage from "./pages/JournalPage";
 import ExpensesPage from "./pages/ExpensesPage";
+import PositionSizerPage from "./pages/PositionSizerPage";
+import NetWorthPage from "./pages/NetWorthPage";
 import PoolsPage from "./pages/PoolsPage";
 import PoolDetailPage from "./pages/PoolDetailPage";
 import StockDetailPage from "./pages/StockDetailPage";
@@ -17,6 +19,8 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/journal" element={<JournalPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />
+          <Route path="/position-sizer" element={<PositionSizerPage />} />
+          <Route path="/net-worth" element={<NetWorthPage />} />
           <Route path="/pools" element={<PoolsPage />} />
           <Route path="/pools/:code" element={<PoolDetailPage />} />
           <Route path="/stocks/:symbol" element={<StockDetailPage />} />

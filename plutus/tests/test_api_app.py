@@ -148,15 +148,17 @@ class TestSyncAndFund:
 
 
 class TestReadOnlyContract:
-    """Market-data routes expose zero write verbs. The personal Trading
-    Journal (/api/journal/*) and Expense Tracker (/api/expenses/*) are the
-    only DB-writable surfaces; the admin trigger (/api/admin/trigger) POSTs
-    to the GitHub API only — it never writes to the database."""
+    """Market-data routes expose zero write verbs. The personal tools —
+    Trading Journal (/api/journal/*), Expense Tracker (/api/expenses/*),
+    Position Sizer (/api/sizing/*) and Net Worth (/api/networth/*) — are
+    the only DB-writable surfaces; the admin trigger (/api/admin/trigger)
+    POSTs to the GitHub API only — it never writes to the database."""
 
     def test_no_post_routes(self, client):
         for route in client.app.routes:
             path = getattr(route, "path", "")
             if path.startswith(("/api/journal", "/api/expenses",
+                                "/api/sizing", "/api/networth",
                                 "/api/admin/trigger")):
                 continue
             methods = getattr(route, "methods", set()) or set()

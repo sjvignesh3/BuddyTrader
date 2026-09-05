@@ -36,8 +36,16 @@ const TOOLS: Tool[] = [
   {
     icon: "🧮",
     name: "Position Sizer",
-    desc: "Risk-based quantity and GTT ladder planning.",
-    accent: "from-stone-500 to-stone-400",
+    desc: "Risk-based quantity, cap-limit room, R-multiple targets, GTT ladders and portfolio heat — before you place the order.",
+    to: "/position-sizer",
+    accent: "from-rose-700 to-rose-500",
+  },
+  {
+    icon: "🏛️",
+    name: "Net Worth",
+    desc: "Equity + assets − liabilities, monthly snapshots, allocation, XIRR, runway, savings rate and milestones — your wealth command center.",
+    to: "/net-worth",
+    accent: "from-violet-700 to-violet-500",
   },
 ];
 

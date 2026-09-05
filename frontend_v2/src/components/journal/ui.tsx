@@ -112,10 +112,10 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={inputCls} />;
 }
 
-/** Numeric input with an optional unit prefix (₹) and an invalid state —
- * red ring + tint while the typed value can't be parsed as a number. */
-export function NumInput({ prefix, invalid = false, ...props }: {
-  prefix?: string; invalid?: boolean;
+/** Numeric input with an optional unit prefix (₹) / suffix (%) and an
+ * invalid state — red ring + tint while the typed value can't be parsed. */
+export function NumInput({ prefix, suffix, invalid = false, ...props }: {
+  prefix?: string; suffix?: string; invalid?: boolean;
 } & React.InputHTMLAttributes<HTMLInputElement>) {
   const ring = invalid
     ? "ring-rose-400 bg-rose-50/60 focus:ring-rose-500/60"
@@ -132,7 +132,12 @@ export function NumInput({ prefix, invalid = false, ...props }: {
              className={`w-full rounded-lg ring-1 px-2.5 py-1.5 text-sm tabular-nums
                          focus:outline-none focus:ring-2
                          placeholder:text-brand-mute/60 ${ring}
-                         ${prefix ? "pl-7" : ""}`} />
+                         ${prefix ? "pl-7" : ""} ${suffix ? "pr-8" : ""}`} />
+      {suffix && (
+        <span aria-hidden
+              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2
+                         text-brand-mute text-sm">{suffix}</span>
+      )}
     </span>
   );
 }

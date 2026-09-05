@@ -30,6 +30,8 @@ uvicorn plutus.scripts.run_api:app --reload --port 8000
 
 ```bash
 npm run typecheck
+npm run lint
+npm run test           # Vitest — pure domain math in src/lib (sizing, net worth)
 npm run build
 ```
 
@@ -37,10 +39,31 @@ npm run build
 
 ```
 src/
-  components/   Header, StatusPill, LoadError
+  components/   Header, StatusPill, LoadError + per-tool folders
+                (journal/, expenses/, sizing/, networth/)
   hooks/        usePlutus — TanStack Query wrappers, cache keys
+                useJournalCtx — capital + open lots + latest prices, shared by
+                the Position Sizer and Net Worth tools
   lib/          api.ts (fetch), money.ts (format only, never math)
-  pages/        PoolsPage, PoolDetailPage, SyncStatusPage
+                journal.ts / expenses.ts / sizing.ts / networth.ts — pure domain
+                math (the *.test.ts files next to them are the Vitest suites)
+                journalApi.ts / expensesApi.ts / sizingApi.ts / networthApi.ts —
+                the writable personal-tool clients (money as strings)
+  pages/        PoolsPage, PoolDetailPage, StockDetailPage, JournalPage,
+                ExpensesPage, PositionSizerPage, NetWorthPage, SyncStatusPage
   App.tsx       router
   main.tsx      Query client + StrictMode
 ```
+
+## Personal tools
+
+| Route | Tool | Data it derives from |
+|-------|------|----------------------|
+| `/journal` | Trading Journal | `journal_*` tables + `daily_snapshots` |
+| `/expenses` | Expense Tracker | `expense*` tables |
+| `/position-sizer` | Position Sizer | journal capital + open lots (with `stop_price`), `daily_snapshots`, `sizing_plans` |
+| `/net-worth` | Net Worth | journal open lots × latest close (equity), `networth_*` tables, expenses (burn / savings rate) |
+
+The Position Sizer and Net Worth tools never re-implement the journal's
+rules: cap-bucket limits, allocation state and portfolio value all come from
+`lib/journal.ts`, so every tool agrees on what "over the limit" means.

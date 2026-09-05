@@ -6,6 +6,8 @@ const NAV = [
   { to: "/pools", label: "Market Analysis" },
   { to: "/journal", label: "Journal" },
   { to: "/expenses", label: "Expenses" },
+  { to: "/position-sizer", label: "Sizer" },
+  { to: "/net-worth", label: "Net Worth" },
   { to: "/status", label: "Sync" },
 ];
 

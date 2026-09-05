@@ -43,8 +43,18 @@ Or one-by-one:
 012_screener_ratios.sql  -- weekly Screener PE/PB/MCap store
 013_journal.sql          -- Trading Journal (settings, opportunities, trades)
 014_stock_notes.sql      -- per-stock dated research notes (journal)
+015_expenses.sql         -- Expense Tracker (categories, items, recurring, budgets)
+016_sizing_plans.sql     -- Position Sizer saved plans + journal stop_price column
+017_net_worth.sql        -- Net Worth (assets, liabilities, monthly snapshots,
+                         --   income, milestones, freedom settings)
 ```
 
-Row-Level Security policies live in `010_rls.sql` and `011_canary_checks.sql`.
-The service_role key bypasses RLS; the anon key is read-only on every table
-except `trades` (denied entirely until V2).
+Row-Level Security policies live in `010_rls.sql` and `011_canary_checks.sql`
+for the market-data tables. The personal-tool tables (013–017: journal,
+expenses, sizing plans, net worth) each carry their own RLS block: RLS
+enabled, a `service_role` FOR ALL policy, and NO anon policy — so anon is
+denied entirely and only the FastAPI backend (service key) can read or write
+them. `plutus/tests/test_personal_migrations.py` gates these conventions.
+
+The service_role key bypasses RLS; the anon key is read-only on every
+market-data table except `trades` (denied entirely until V2).

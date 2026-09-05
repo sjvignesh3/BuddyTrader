@@ -24,12 +24,12 @@ ORDER_TYPES = {"GTT", "Instant"}
 
 OPP_FIELDS = {
     "opp_date", "symbol", "cap_bucket", "buy_price", "limit_price", "qty",
-    "strategy", "target_price", "action_filter", "notes", "status",
+    "strategy", "target_price", "stop_price", "action_filter", "notes", "status",
 }
 TRADE_FIELDS = {
     "opportunity_id", "order_type", "cap_bucket", "symbol", "buy_date",
-    "buy_price", "qty", "strategy", "target_price", "status", "close_label",
-    "sell_date", "sell_price", "comments", "risk_notes",
+    "buy_price", "qty", "strategy", "target_price", "stop_price", "status",
+    "close_label", "sell_date", "sell_price", "comments", "risk_notes",
 }
 NOTE_FIELDS = {"symbol", "note_date", "content"}
 
@@ -165,6 +165,7 @@ def register_journal_routes(app: Any, cli: Any) -> None:
             "cap_bucket": opp.get("cap_bucket"),
             "strategy": opp.get("strategy"),
             "target_price": opp.get("target_price"),
+            "stop_price": opp.get("stop_price"),
             "buy_price": opp.get("limit_price") or opp.get("buy_price"),
             "qty": opp.get("qty"),
             "order_type": "GTT" if opp.get("action_filter") == "GTT" else "Instant",

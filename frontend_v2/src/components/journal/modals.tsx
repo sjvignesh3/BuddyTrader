@@ -67,6 +67,11 @@ function toNum(s: string): number | null {
   const v = numOrNull(s);
   return v === null ? null : Number(v);
 }
+/** A stop at or above the entry defines no risk — flagged, not saved. */
+function stopAboveEntry(stop: string, entry: string): boolean {
+  const s = toNum(stop); const e = toNum(entry);
+  return s !== null && e !== null && s >= e;
+}
 
 /** Live "the plan at a glance" strip shown inside the form footer. */
 function PlanSummary({ buy, qty, target }: { buy: string; qty: string; target: string }) {
@@ -114,6 +119,7 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
     qty: initial?.qty?.toString() ?? prefill?.qty?.toString() ?? "",
     strategy: initial?.strategy ?? prefill?.strategy ?? "",
     target_price: initial?.target_price ?? prefill?.target_price ?? "",
+    stop_price: initial?.stop_price ?? prefill?.stop_price ?? "",
     action_filter: initial?.action_filter ?? prefill?.action_filter ?? "",
     notes: initial?.notes ?? prefill?.notes ?? "",
   });
@@ -130,6 +136,10 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
     if (badNum(f.limit_price)) return "Limit price must be a positive number";
     if (badInt(f.qty)) return "Qty must be a positive whole number";
     if (badNum(f.target_price)) return "Target must be a positive number";
+    if (badNum(f.stop_price)) return "Stop must be a positive number";
+    if (stopAboveEntry(f.stop_price, f.buy_price || f.limit_price)) {
+      return "Stop must be below the buy price";
+    }
     return null;
   }, [f]);
 
@@ -157,6 +167,7 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
     qty: intOrNull(f.qty),
     strategy: f.strategy.trim() || null,
     target_price: numOrNull(f.target_price),
+    stop_price: numOrNull(f.stop_price),
     action_filter: (f.action_filter || null) as OpportunityDraft["action_filter"],
     notes: f.notes.trim() || null,
   });
@@ -204,6 +215,13 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
           <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
                     value={f.target_price} invalid={badNum(f.target_price)}
                     onChange={set("target_price")} />
+        </Field>
+        <Field label="Stop loss" span2>
+          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+                    value={f.stop_price}
+                    invalid={badNum(f.stop_price)
+                             || stopAboveEntry(f.stop_price, f.buy_price || f.limit_price)}
+                    onChange={set("stop_price")} />
         </Field>
         <Field label="Strategy" span2>
           <TextInput value={f.strategy} onChange={set("strategy")}
@@ -269,6 +287,7 @@ export function TradeModal({ initial, closed = false, ctx, onSave, onClose, busy
     qty: initial?.qty?.toString() ?? "",
     strategy: initial?.strategy ?? "",
     target_price: initial?.target_price ?? "",
+    stop_price: initial?.stop_price ?? "",
     sell_date: initial?.sell_date ?? today(),
     sell_price: initial?.sell_price ?? "",
     close_label: initial?.close_label ?? "Fully Booked",
@@ -286,6 +305,8 @@ export function TradeModal({ initial, closed = false, ctx, onSave, onClose, busy
     if (!numOrNull(f.buy_price)) return "Buy price is required";
     if (!intOrNull(f.qty)) return "Qty is required (positive whole number)";
     if (badNum(f.target_price)) return "Target must be a positive number";
+    if (badNum(f.stop_price)) return "Stop must be a positive number";
+    if (stopAboveEntry(f.stop_price, f.buy_price)) return "Stop must be below the buy price";
     if (isClosed) {
       if (!f.sell_date) return "Sell date is required";
       if (!numOrNull(f.sell_price)) return "Sell price is required";
@@ -309,6 +330,7 @@ export function TradeModal({ initial, closed = false, ctx, onSave, onClose, busy
       qty: intOrNull(f.qty)!,
       strategy: f.strategy.trim() || null,
       target_price: numOrNull(f.target_price),
+      stop_price: numOrNull(f.stop_price),
       comments: f.comments.trim() || null,
       risk_notes: f.risk_notes.trim() || null,
     };
@@ -358,6 +380,15 @@ export function TradeModal({ initial, closed = false, ctx, onSave, onClose, busy
           <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
                     value={f.target_price} invalid={badNum(f.target_price)}
                     onChange={set("target_price")} />
+        </Field>
+        <Field label="Stop loss" span2>
+          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+                    value={f.stop_price}
+                    invalid={badNum(f.stop_price) || stopAboveEntry(f.stop_price, f.buy_price)}
+                    onChange={set("stop_price")} />
+          <span className="block mt-1 text-[10px] text-brand-mute">
+            Open lots with a stop feed the Position Sizer&apos;s portfolio risk.
+          </span>
         </Field>
         <Field label="Strategy" span2>
           <TextInput value={f.strategy} onChange={set("strategy")}
