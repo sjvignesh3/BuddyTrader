@@ -49,6 +49,18 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
     )
     app.state.supabase_client = supabase_client
 
+    def cli() -> Any:
+        return app.state.supabase_client
+
+    # -- Auth gate (personal tools) -----------------------------------------
+    # Registered BEFORE the CORS middleware on purpose: Starlette runs the
+    # most recently added middleware outermost, so CORS must be added last
+    # to wrap the gate — otherwise its 401/403 reaches the browser without
+    # CORS headers and shows up as an opaque network error instead of a
+    # readable "sign in" / "view-only" message.
+    from plutus.api.auth import register_auth_routes
+    register_auth_routes(app, cli)
+
     # CORS — frontend v2 lives on a different origin; allow read-only.
     app.add_middleware(
         CORSMiddleware,
@@ -58,9 +70,6 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
-
-    def cli() -> Any:
-        return app.state.supabase_client
 
     # Error envelope parity with the Edge Function: {"error": "..."} —
     # FastAPI's default HTTPException body is {"detail": "..."}.

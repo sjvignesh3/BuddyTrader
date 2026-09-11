@@ -4,6 +4,7 @@
 // delete by default (history kept), delete behind a confirm.
 // -----------------------------------------------------------------------------
 import { useMemo, useState } from "react";
+import { OwnerOnly } from "../AuthGate";
 import { fmtDate, fmtMoney } from "../../lib/money";
 import { assetGain, assetsByClass, liabilitiesByKind, num } from "../../lib/networth";
 import type { Asset, Liability } from "../../lib/networthApi";
@@ -69,7 +70,9 @@ export function AssetsTab({ assets, onAdd, onEdit, onUpdateValue, onArchive, onD
 
       {!visible.length ? (
         <EmptyState text="No manual assets yet — cash, FDs, mutual funds, gold, EPF/PPF, property. Equity comes from the journal automatically."
-                    action={<GhostBtn onClick={onAdd}>Add your first asset</GhostBtn>} />
+                    action={<OwnerOnly>
+                      <GhostBtn onClick={onAdd}>Add your first asset</GhostBtn>
+                    </OwnerOnly>} />
       ) : (
         <TableShell>
           <thead>
@@ -184,7 +187,9 @@ export function LiabilitiesTab({ liabilities, onAdd, onEdit, onArchive, onDelete
 
       {!visible.length ? (
         <EmptyState text="No liabilities — loans and card balances entered here are subtracted from your net worth."
-                    action={<GhostBtn onClick={onAdd}>Add a liability</GhostBtn>} />
+                    action={<OwnerOnly>
+                      <GhostBtn onClick={onAdd}>Add a liability</GhostBtn>
+                    </OwnerOnly>} />
       ) : (
         <TableShell>
           <thead>

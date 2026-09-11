@@ -24,6 +24,7 @@ import {
   portfolioHeat, riskFor, sizeByRisk, splitQty, suggestLevels,
 } from "../lib/sizing";
 import { sizingApi, type SizingPlan, type SizingPlanDraft } from "../lib/sizingApi";
+import { OwnerOnly } from "../components/AuthGate";
 import LoadError from "../components/LoadError";
 import { OpportunityModal } from "../components/journal/modals";
 import { ConfirmDialog, Field, GhostBtn, PrimaryBtn, TextArea } from "../components/journal/ui";
@@ -303,11 +304,13 @@ export default function PositionSizerPage() {
                           title={canSave ? "Keep these inputs as a plan" : "Needs a stock and a valid size"}>
                 {savedPlanId !== null ? "Saved ✓" : mSave.isPending ? "Saving…" : "Save plan"}
               </PrimaryBtn>
-              <GhostBtn disabled={!canSave}
-                        onClick={() => setConvert({ planId: savedPlanId, prefill: prefillFromCurrent() })}
-                        title="Open the journal's opportunity form prefilled with this plan">
-                🔭 Convert to opportunity
-              </GhostBtn>
+              <OwnerOnly>
+                <GhostBtn disabled={!canSave}
+                          onClick={() => setConvert({ planId: savedPlanId, prefill: prefillFromCurrent() })}
+                          title="Open the journal's opportunity form prefilled with this plan">
+                  🔭 Convert to opportunity
+                </GhostBtn>
+              </OwnerOnly>
             </div>
           </Card>
         </aside>

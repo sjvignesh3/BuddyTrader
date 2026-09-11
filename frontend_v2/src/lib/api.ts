@@ -4,14 +4,17 @@
 // at the boundary. Format only at render time via lib/money.ts.
 // -----------------------------------------------------------------------------
 
+import { authHeaders, handleUnauthorized } from "./auth";
+
 const BASE = import.meta.env.VITE_PLUTUS_API_URL ?? "";
 
 async function get<T>(path: string, headers?: Record<string, string>): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "GET",
-    headers: { Accept: "application/json", ...headers },
+    headers: { Accept: "application/json", ...authHeaders(), ...headers },
   });
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     const body = await res.text().catch(() => "");
     throw new Error(`API ${res.status} ${path}: ${body || res.statusText}`);
   }
@@ -31,11 +34,13 @@ async function post<T>(
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      ...authHeaders(),
       ...headers,
     },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     let detail = "";
     try {
       const j = await res.json();

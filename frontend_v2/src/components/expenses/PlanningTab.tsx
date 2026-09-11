@@ -5,6 +5,7 @@
 // linked expense.
 // -----------------------------------------------------------------------------
 import { useMemo } from "react";
+import { OwnerOnly } from "../AuthGate";
 import type { CategoryMaps, MonthStats } from "../../lib/expenses";
 import { monthKey, monthLabel, num, recurringMonthlyLoad, statsFor } from "../../lib/expenses";
 import { fmtMoney } from "../../lib/money";
@@ -149,7 +150,7 @@ export default function PlanningTab({
       {/* ---- Budgets ---- */}
       <SectionCard
         title={`Budgets — ${monthLabel(monthSel)}`}
-        right={<GhostBtn onClick={onAddBudget}>+ Budget</GhostBtn>}>
+        right={<OwnerOnly><GhostBtn onClick={onAddBudget}>+ Budget</GhostBtn></OwnerOnly>}>
         {budgetRows.length === 0 ? (
           <p className="text-sm text-brand-mute py-4 text-center">
             Budgets are optional — set one per category (or one overall cap)

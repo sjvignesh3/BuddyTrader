@@ -12,6 +12,7 @@ import { useSyncJobsRealtime } from "../hooks/useSyncJobsRealtime";
 import LoadError from "../components/LoadError";
 import StatusPill from "../components/StatusPill";
 import SyncTriggerPanel from "../components/SyncTriggerPanel";
+import { OwnerOnly } from "../components/AuthGate";
 import { fmtDateTime, fmtDuration } from "../lib/money";
 
 const JOB_META: Record<string, { name: string; icon: string; what: string }> = {
@@ -174,7 +175,11 @@ export default function SyncStatusPage() {
 
   return (
     <div>
-      <SyncTriggerPanel />
+      {/* Dispatching workflows is a write action in every sense — the sync
+          rewrites snapshots and scan results. Viewers read the log only. */}
+      <OwnerOnly>
+        <SyncTriggerPanel />
+      </OwnerOnly>
       <div className="flex items-baseline gap-2 mb-3">
         <h1 className="font-display text-lg font-semibold">Sync jobs</h1>
         <span className="text-[11px] text-brand-mute">

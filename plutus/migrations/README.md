@@ -47,11 +47,13 @@ Or one-by-one:
 016_sizing_plans.sql     -- Position Sizer saved plans + journal stop_price column
 017_net_worth.sql        -- Net Worth (assets, liabilities, monthly snapshots,
                          --   income, milestones, freedom settings)
+018_app_access.sql       -- view-only access credential (hash of the shared
+                         --   read-only password, rotated from the Console)
 ```
 
 Row-Level Security policies live in `010_rls.sql` and `011_canary_checks.sql`
-for the market-data tables. The personal-tool tables (013–017: journal,
-expenses, sizing plans, net worth) each carry their own RLS block: RLS
+for the market-data tables. The personal-tool tables (013–018: journal,
+expenses, sizing plans, net worth, app access) each carry their own RLS block: RLS
 enabled, a `service_role` FOR ALL policy, and NO anon policy — so anon is
 denied entirely and only the FastAPI backend (service key) can read or write
 them. `plutus/tests/test_personal_migrations.py` gates these conventions.

@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StockNote, StockNoteDraft } from "../lib/journalApi";
 import { journalApi } from "../lib/journalApi";
 import { ConfirmDialog, RowBtn } from "./journal/ui";
+import { OwnerOnly } from "./AuthGate";
 import { fmtDate } from "../lib/money";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -131,11 +132,13 @@ export default function StockNotes({ symbol }: {
           </button>
         )}
         {!composing && (
-          <button
-            onClick={() => { setComposing(true); setEditing(null); }}
-            className="ml-auto text-[11px] font-bold px-3 py-1.5 rounded-lg bg-brand-accent text-white shadow-card hover:opacity-90 transition-opacity">
-            ✍️ New note
-          </button>
+          <OwnerOnly>
+            <button
+              onClick={() => { setComposing(true); setEditing(null); }}
+              className="ml-auto text-[11px] font-bold px-3 py-1.5 rounded-lg bg-brand-accent text-white shadow-card hover:opacity-90 transition-opacity">
+              ✍️ New note
+            </button>
+          </OwnerOnly>
         )}
       </div>
 

@@ -5,6 +5,7 @@
 // in lib/networth.ts from the raw rows; nothing is computed here.
 // -----------------------------------------------------------------------------
 import { Link } from "react-router-dom";
+import { OwnerOnly } from "../AuthGate";
 import type { Insight } from "../../lib/expenses";
 import { monthLabel } from "../../lib/expenses";
 import { fmtMoney, fmtPct } from "../../lib/money";
@@ -91,13 +92,15 @@ export default function OverviewTab({
                   : "One snapshot so far — the line appears next month."}
               </div>
             )}
-            <div className="mt-2 flex justify-end">
-              <button type="button" onClick={onTakeSnapshot} disabled={snapshotBusy || empty}
-                      className="px-3.5 py-1.5 rounded-lg bg-teal-700 text-white text-xs font-semibold
-                                 hover:bg-teal-800 disabled:opacity-50 shadow-card">
-                {snapshotBusy ? "Saving…" : "📸 Take snapshot"}
-              </button>
-            </div>
+            <OwnerOnly>
+              <div className="mt-2 flex justify-end">
+                <button type="button" onClick={onTakeSnapshot} disabled={snapshotBusy || empty}
+                        className="px-3.5 py-1.5 rounded-lg bg-teal-700 text-white text-xs font-semibold
+                                   hover:bg-teal-800 disabled:opacity-50 shadow-card">
+                  {snapshotBusy ? "Saving…" : "📸 Take snapshot"}
+                </button>
+              </div>
+            </OwnerOnly>
           </div>
         </div>
       </section>

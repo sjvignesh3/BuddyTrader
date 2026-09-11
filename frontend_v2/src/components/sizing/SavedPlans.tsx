@@ -69,7 +69,8 @@ export default function SavedPlans({ plans, onLoad, onConvert, onDelete }: {
                 </Td>
                 <Td>
                   <span className="inline-flex gap-0.5">
-                    <RowBtn title="Load into the sizer" onClick={() => onLoad(p)}>↺</RowBtn>
+                    <RowBtn title="Load into the sizer" readOnlySafe
+                            onClick={() => onLoad(p)}>↺</RowBtn>
                     {!p.opportunity_id && (
                       <RowBtn title="Convert to a journal opportunity" onClick={() => onConvert(p)}>🔭</RowBtn>
                     )}

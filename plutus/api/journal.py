@@ -2,8 +2,9 @@
 Trading Journal routes — the ONE writable area of the Plutus API.
 
 Design contract:
-  * Personal single-user journal: no auth beyond the service-role client
-    the API already holds. Anon key has zero access to journal tables.
+  * Personal single-user journal. Anon key has zero access to journal
+    tables, and every route here sits behind the shared-credential gate in
+    plutus.api.auth (X-Plutus-Auth), so a public API URL is not an open door.
   * All writes go through a per-table field whitelist — unknown keys are
     silently dropped so a stale frontend can never poison rows.
   * Derived values (LTP, allocation %, gains) are NOT stored; the frontend

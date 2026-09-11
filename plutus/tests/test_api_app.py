@@ -152,14 +152,15 @@ class TestReadOnlyContract:
     Trading Journal (/api/journal/*), Expense Tracker (/api/expenses/*),
     Position Sizer (/api/sizing/*) and Net Worth (/api/networth/*) — are
     the only DB-writable surfaces; the admin trigger (/api/admin/trigger)
-    POSTs to the GitHub API only — it never writes to the database."""
+    POSTs to the GitHub API only — it never writes to the database, and
+    /api/auth/* writes nothing but the shared view-only credential row."""
 
     def test_no_post_routes(self, client):
         for route in client.app.routes:
             path = getattr(route, "path", "")
             if path.startswith(("/api/journal", "/api/expenses",
                                 "/api/sizing", "/api/networth",
-                                "/api/admin/trigger")):
+                                "/api/admin/trigger", "/api/auth")):
                 continue
             methods = getattr(route, "methods", set()) or set()
             assert "POST" not in methods, f"Write route leaked: {path}"

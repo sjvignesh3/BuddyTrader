@@ -2,6 +2,7 @@
 // Shared journal UI primitives — modal, form fields, chips, markers.
 // -----------------------------------------------------------------------------
 import { ReactNode, useEffect, useState } from "react";
+import { useCanEdit } from "../AuthGate";
 import type { AllocState } from "../../lib/journal";
 import { CAP_LIMITS } from "../../lib/journal";
 import type { CapBucket } from "../../lib/journalApi";
@@ -200,7 +201,16 @@ export function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
   return <textarea rows={2} {...props} className={inputCls} />;
 }
 
+/**
+ * The primary action button — across every tool this is only ever used to
+ * commit a change (add, save, convert, book, take snapshot), so it is one of
+ * the two chokepoints where a view-only session loses its write affordances.
+ * The other is RowBtn. Enforcement is server-side; this just keeps a viewer
+ * from clicking things that would fail.
+ */
 export function PrimaryBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const canEdit = useCanEdit();
+  if (!canEdit) return null;
   return (
     <button {...props}
       className={`px-4 py-1.5 rounded-lg bg-teal-700 text-white text-sm font-semibold
@@ -321,9 +331,18 @@ export function EmptyState({ text, action }: { text: string; action?: ReactNode 
   );
 }
 
-export function RowBtn({ onClick, title, children, danger = false }: {
+/**
+ * Row-level action (edit / delete / convert / archive). Hidden for view-only
+ * sessions — see PrimaryBtn. Pass `readOnlySafe` for the rare row action that
+ * changes nothing on the server (e.g. "load this plan into the sizer").
+ */
+export function RowBtn({ onClick, title, children, danger = false,
+                         readOnlySafe = false }: {
   onClick: () => void; title: string; children: ReactNode; danger?: boolean;
+  readOnlySafe?: boolean;
 }) {
+  const canEdit = useCanEdit();
+  if (!canEdit && !readOnlySafe) return null;
   return (
     <button onClick={onClick} title={title}
       className={`w-6 h-6 grid place-items-center rounded text-xs

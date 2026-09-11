@@ -25,6 +25,7 @@ import {
   BudgetModal, CategoryManagerModal, ExpenseModal, RecurringModal,
 } from "../components/expenses/modals";
 import { ConfirmDialog, GhostBtn } from "../components/journal/ui";
+import { OwnerOnly } from "../components/AuthGate";
 
 type TabKey = "overview" | "transactions" | "planning";
 
@@ -231,9 +232,12 @@ export default function ExpensesPage() {
         </div>
       </div>
 
-      {/* Quick add — always on top: capture first, everything else second */}
-      <QuickAdd items={items} maps={maps} busy={mAdd.isPending}
-                onAdd={(draft) => mAdd.mutate(draft)} />
+      {/* Quick add — always on top: capture first, everything else second.
+          A view-only session has nothing to capture, so the whole panel goes. */}
+      <OwnerOnly>
+        <QuickAdd items={items} maps={maps} busy={mAdd.isPending}
+                  onAdd={(draft) => mAdd.mutate(draft)} />
+      </OwnerOnly>
 
       {/* Tabs + actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -261,10 +265,12 @@ export default function ExpensesPage() {
           })}
         </div>
         <div className="flex items-center gap-2">
-          <GhostBtn onClick={() => setCatManager(true)}>🗂 Categories</GhostBtn>
-          <GhostBtn onClick={() => fileRef.current?.click()} disabled={busy}>
-            ⬆ Import CSV
-          </GhostBtn>
+          <OwnerOnly>
+            <GhostBtn onClick={() => setCatManager(true)}>🗂 Categories</GhostBtn>
+            <GhostBtn onClick={() => fileRef.current?.click()} disabled={busy}>
+              ⬆ Import CSV
+            </GhostBtn>
+          </OwnerOnly>
           <GhostBtn onClick={handleExport} disabled={expenses.length === 0}>⬇ Export</GhostBtn>
           <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
                  onChange={(e) => {

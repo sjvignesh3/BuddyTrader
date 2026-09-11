@@ -19,6 +19,7 @@ import {
 import type { StockRow } from "../lib/rows";
 import { ConvertModal, OpportunityModal } from "./journal/modals";
 import { AllocMarker, CapChip, ConfirmDialog, Pnl, RowBtn } from "./journal/ui";
+import { OwnerOnly } from "./AuthGate";
 import { fmtDate, fmtMoney, fmtPct } from "../lib/money";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -199,11 +200,13 @@ export default function StockOpportunities({ symbol, row }: {
         {mine.length > 0 && (
           <span className="text-[10px] text-brand-mute -mt-px">({mine.length})</span>
         )}
-        <button
-          onClick={() => setModal("add")}
-          className="ml-auto text-[11px] font-bold px-3 py-1.5 rounded-lg bg-brand-accent text-white shadow-card hover:opacity-90 transition-opacity">
-          ＋ Add opportunity
-        </button>
+        <OwnerOnly>
+          <button
+            onClick={() => setModal("add")}
+            className="ml-auto text-[11px] font-bold px-3 py-1.5 rounded-lg bg-brand-accent text-white shadow-card hover:opacity-90 transition-opacity">
+            ＋ Add opportunity
+          </button>
+        </OwnerOnly>
       </div>
 
       {err != null && (

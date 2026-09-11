@@ -25,6 +25,7 @@ import {
   CloseTradeModal, ConvertModal, OpportunityModal, TradeModal,
 } from "../components/journal/modals";
 import { ConfirmDialog, GhostBtn, PrimaryBtn } from "../components/journal/ui";
+import { OwnerOnly, useCanEdit } from "../components/AuthGate";
 
 type TabKey = "opportunities" | "open" | "closed" | "portfolio";
 
@@ -49,6 +50,7 @@ const jqk = {
 
 export default function JournalPage() {
   const qc = useQueryClient();
+  const canEdit = useCanEdit();
   const [tab, setTabState] = useState<TabKey>(initialTab);
   const setTab = (k: TabKey) => {
     setTabState(k);
@@ -245,16 +247,25 @@ export default function JournalPage() {
               <GhostBtn onClick={() => setEditingCapital(false)}>✕</GhostBtn>
             </span>
           ) : (
+            // View-only: the capital still shows (every % on the page runs
+            // off it) but the chip stops being a button.
             <button
-              onClick={() => { setCapitalDraft(String(capital || "")); setEditingCapital(true); }}
-              title="Click to change capital — every % recalculates"
+              onClick={() => {
+                if (!canEdit) return;
+                setCapitalDraft(String(capital || ""));
+                setEditingCapital(true);
+              }}
+              disabled={!canEdit}
+              title={canEdit ? "Click to change capital — every % recalculates" : "Capital"}
               className="px-3.5 py-2 rounded-xl bg-brand-panel ring-1 ring-brand-border
-                         shadow-card hover:shadow-pop transition-shadow text-left">
+                         shadow-card enabled:hover:shadow-pop transition-shadow text-left
+                         disabled:cursor-default">
               <span className="block text-[10px] font-bold uppercase tracking-wider text-brand-mute">
                 Capital
               </span>
               <span className="text-base font-display font-semibold tabular-nums">
-                ₹{fmtMoney(capital, 0)} <span className="text-brand-mute text-xs">✎</span>
+                ₹{fmtMoney(capital, 0)}
+                {canEdit && <span className="text-brand-mute text-xs"> ✎</span>}
               </span>
             </button>
           )}
@@ -307,9 +318,12 @@ export default function JournalPage() {
         <div className="flex items-center gap-2">
           {tab !== "portfolio" && (
             <>
-              <GhostBtn onClick={() => fileRef.current?.click()} disabled={busy}>
-                ⬆ Import CSV
-              </GhostBtn>
+              <OwnerOnly>
+                <GhostBtn onClick={() => fileRef.current?.click()} disabled={busy}>
+                  ⬆ Import CSV
+                </GhostBtn>
+              </OwnerOnly>
+              {/* Export stays: reading your own view out is not a write. */}
               <GhostBtn onClick={handleExport}>⬇ Export</GhostBtn>
             </>
           )}

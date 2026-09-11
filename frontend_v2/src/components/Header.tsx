@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { useAuth, signOut } from "./AuthGate";
 
 const NAV = [
   { to: "/", label: "Home", end: true },
@@ -9,6 +10,8 @@ const NAV = [
   { to: "/position-sizer", label: "Sizer" },
   { to: "/net-worth", label: "Net Worth" },
   { to: "/status", label: "Sync" },
+  // Access control — nothing a view-only session can act on.
+  { to: "/console", label: "Console", ownerOnly: true },
 ];
 
 const linkCls = ({ isActive }: { isActive: boolean }) =>
@@ -25,8 +28,56 @@ const mobileLinkCls = ({ isActive }: { isActive: boolean }) =>
       : "text-brand-text hover:bg-brand-soft"
   }`;
 
+/**
+ * Lock / sign-in control. The nav links stay visible while locked — they
+ * lead to the lock screen, same as the Home cards — so this only has to
+ * show the current state and offer the one action that changes it.
+ */
+function LockControl({ onNavigate }: { onNavigate?: () => void }) {
+  const { unlocked, required, role } = useAuth();
+  const navigate = useNavigate();
+
+  if (required === false) return null;   // gate not configured (local dev)
+
+  const cls =
+    "px-2.5 py-1.5 rounded-lg text-xs font-semibold ring-1 ring-brand-border " +
+    "bg-brand-panel shadow-card text-brand-mute hover:text-brand-text transition-colors";
+
+  if (!unlocked) {
+    return (
+      <Link to="/unlock" className={cls} onClick={onNavigate}>
+        🔒 Sign in
+      </Link>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {role === "viewer" && (
+        <span title="Read-only session"
+              className="px-2 py-1 rounded-lg text-[10px] font-bold uppercase
+                         tracking-wider bg-brand-soft text-brand-mute
+                         ring-1 ring-brand-border">
+          👁 View only
+        </span>
+      )}
+      <button
+        type="button"
+        className={cls}
+        onClick={() => {
+          signOut();
+          onNavigate?.();
+          navigate("/");
+        }}>
+        Lock
+      </button>
+    </span>
+  );
+}
+
 export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { canEdit } = useAuth();
+  const nav = NAV.filter((n) => !n.ownerOnly || canEdit);
 
   return (
     <header className="sticky top-0 z-30 border-b border-brand-border bg-brand-bg/80 backdrop-blur-md">
@@ -40,11 +91,14 @@ export default function Header() {
 
         {/* Desktop nav */}
         <nav className="hidden sm:flex items-center gap-1">
-          {NAV.map((n) => (
+          {nav.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end} className={linkCls}>
               {n.label}
             </NavLink>
           ))}
+          <span className="ml-2">
+            <LockControl />
+          </span>
         </nav>
 
         {/* Mobile hamburger */}
@@ -72,12 +126,15 @@ export default function Header() {
       {menuOpen && (
         <nav className="sm:hidden border-t border-brand-border bg-brand-bg/95 backdrop-blur-md
                         px-3 py-3 space-y-1 shadow-pop">
-          {NAV.map((n) => (
+          {nav.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end} className={mobileLinkCls}
                      onClick={() => setMenuOpen(false)}>
               {n.label}
             </NavLink>
           ))}
+          <div className="pt-2">
+            <LockControl onNavigate={() => setMenuOpen(false)} />
+          </div>
         </nav>
       )}
     </header>

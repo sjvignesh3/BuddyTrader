@@ -8,15 +8,22 @@
 // dashboard shows is derived client-side in lib/networth.ts.
 // -----------------------------------------------------------------------------
 
+import { authHeaders, handleUnauthorized } from "./auth";
+
 const BASE = import.meta.env.VITE_PLUTUS_API_URL ?? "";
 
 async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     let msg = res.statusText;
     try {
       const j = await res.json();

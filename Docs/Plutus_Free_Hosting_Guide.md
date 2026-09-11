@@ -232,6 +232,7 @@ have several — rows are always added, never overwritten.
 ```
 PLUTUS_SUPABASE_URL=https://<ref>.supabase.co
 PLUTUS_SUPABASE_SERVICE_KEY=<service_role key>
+PLUTUS_APP_PASSWORD=<a long passphrase you will remember>
 PLUTUS_ENV=prod
 PYTHON_VERSION=3.11.9
 ```
@@ -240,6 +241,74 @@ PYTHON_VERSION=3.11.9
 > (PlayArea "Fetch now"); in prod, new symbols fill on the nightly sync
 > — or instantly via the on-demand trigger below.
 > The journal endpoints stay active — they are the point of hosting this.
+
+### 2.2a App password — set this before you go live
+
+⚠️ **`PLUTUS_APP_PASSWORD` is not optional in prod.** Without it, anyone
+who finds your Vercel URL can read *and edit* your trades, expenses and
+net worth, and anyone who finds the Render URL can do the same with
+`curl` — the frontend lock alone would not stop them.
+
+How it works:
+
+* The password is set **only** on the API service. It is never built into
+  the frontend bundle and never stored in the browser.
+* The browser POSTs it once to `/api/auth/login` and receives a signed
+  token (valid 30 days; override with `PLUTUS_AUTH_TTL_DAYS`). Every
+  request to `/api/journal/*`, `/api/expenses/*`, `/api/sizing/*` and
+  `/api/networth/*` must carry that token or gets a 401.
+* Changing the password instantly invalidates every token already issued
+  — the signing key is derived from the password itself.
+* Market-data routes (`/api/pools`, `/api/stocks`, `/api/snapshots`,
+  `/api/scans`) stay open: no personal data, and the Edge Function serves
+  the same rows publicly anyway.
+
+In the app, Home stays public; every tool shows a "This tool is private"
+screen until you unlock it. The header's **Lock** button signs you out.
+
+> With `PLUTUS_ENV=prod` and **no** `PLUTUS_APP_PASSWORD`, the personal
+> routes return 503 rather than silently running unprotected. Set the
+> variable at the same time you set `PLUTUS_ENV=prod`.
+
+### 2.2b View-only access (sharing your tools read-only)
+
+There is a second credential for people you want to *show* the tools
+without letting them change anything. It is not an env var — you generate
+and rotate it yourself, from **Console** in the app.
+
+**One-time setup:** apply `plutus/migrations/018_app_access.sql` to your
+Supabase project (SQL Editor → paste → Run). It creates the single-row
+`app_access` table that holds the hash of the live view-only password.
+Until it exists, the Console simply reports view-only access as off —
+nothing else breaks.
+
+> If the API then reports *"Could not find the table 'public.app_access'
+> in the schema cache"*, PostgREST is still caching the old schema. On
+> hosted Supabase it refreshes within a minute; force it with
+> `NOTIFY pgrst, 'reload schema';`.
+
+**Using it:** Console → **Create view-only password**. The password is
+shown once, with a Copy button — share that. Plutus stores only its hash,
+so it cannot be re-read later; if you lose it, rotate again (one click).
+
+What a view-only session can and cannot do:
+
+| Can | Cannot |
+|-----|--------|
+| Open every tool, browse all data | Add, edit or delete anything |
+| Sort, filter, search, switch tabs | Import CSVs, change capital |
+| Export CSVs | Take net-worth snapshots, run syncs |
+| — | See or use the Console |
+
+**Rotate** (or **Turn off view-only access**) signs out everyone holding
+the old password immediately — the token signing key is derived from the
+password hash, so the old sessions stop verifying the moment it changes.
+Your own session is unaffected.
+
+Enforcement is server-side: viewer tokens are refused every
+POST/PUT/PATCH/DELETE on `/api/journal`, `/api/expenses`, `/api/sizing`
+and `/api/networth` with a 403. The hidden buttons are a courtesy, not
+the boundary.
 
 ### 2.2b On-demand sync triggers (Sync tab buttons)
 
@@ -361,7 +430,7 @@ rows and the frontend fills in. From then on it runs Mon–Fri 12:30 UTC
 | **Supabase free** | 500 MB DB cap | Plutus with ~250 symbols × years of snapshots stays well under 100 MB. Check Settings → Usage occasionally. |
 | **Vercel free** | Fair-use bandwidth | A personal dashboard never gets close. |
 | **GitHub Actions** | Private-repo minutes capped at 2,000/month | The daily sync uses ~5 min/day ≈ 110 min/month. Plenty. |
-| **CORS** | `plutus/api/app.py` currently allows `*` origins | Optional hardening: change `allow_origins` to your Vercel URL and redeploy. |
+| **CORS** | `plutus/api/app.py` currently allows `*` origins | Optional hardening: change `allow_origins` to your Vercel URL and redeploy. Note CORS is not a lock — `curl` ignores it; `PLUTUS_APP_PASSWORD` (§2.2a) is what actually protects the personal routes. |
 
 ---
 
