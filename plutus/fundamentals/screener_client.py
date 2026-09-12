@@ -134,8 +134,18 @@ class ScreenerClient:
         return symbol.split(".")[0].strip().upper()
 
     def fetch_company_html(self, symbol: str) -> Optional[str]:
-        """Authenticated page HTML with populated numbers, or None."""
+        """Authenticated page HTML with populated numbers, or None.
+
+        Tries /consolidated/ first, then standalone. A page is PREFERRED
+        when its #quarters table has data; a page with populated top
+        ratios but NO quarters (companies without consolidated statements:
+        banks such as AUBANK, subsidiaries such as COLPAL / PFIZER) is kept
+        only as a fallback. Before 2026-09-12 the consolidated page won as
+        soon as any number was present, so 12 such stocks failed every
+        quarterly run with "no quarterly rows extracted" and their weekly
+        PE/PB came from the empty consolidated statements."""
         code = self._code(symbol)
+        fallback_html: Optional[str] = None
         for path in (f"/company/{code}/consolidated/", f"/company/{code}/"):
             try:
                 r = self._s.get(f"{SCREENER_BASE}{path}", timeout=_TIMEOUT_S)
@@ -153,11 +163,17 @@ class ScreenerClient:
             if r.status_code != 200:
                 continue
             numbers = re.findall(r'<span class="number">([^<]+)</span>', r.text)
-            if any(n.strip() for n in numbers):
+            if not any(n.strip() for n in numbers):
+                logger.warning("%s: page loaded but numbers EMPTY on %s "
+                               "(not authenticated?)", symbol, path)
+                continue
+            if sp.extract_quarterly_results(r.text):
                 return r.text
-            logger.warning("%s: page loaded but numbers EMPTY on %s "
-                           "(not authenticated?)", symbol, path)
-        return None
+            logger.warning("%s: numbers present but NO quarterly results on "
+                           "%s — trying the other statement view", symbol, path)
+            if fallback_html is None:
+                fallback_html = r.text
+        return fallback_html
 
     def fetch_quick_ratios_html(self, warehouse_id: str, symbol: str) -> Optional[str]:
         """The Ajax fragment carrying the account's custom ratios."""

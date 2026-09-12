@@ -28,6 +28,17 @@ const JOB_META: Record<string, { name: string; icon: string; what: string }> = {
     name: "Valuation ratios", icon: "⚖️",
     what: "Screener.in PE / PB / MCap",
   },
+  // Children spawned by the daily sync for symbols that had no
+  // fundamentals / ratios yet. Own job_type so they never overwrite the
+  // scheduled run's audit row for the same date.
+  quarterly_fetch_on_miss: {
+    name: "Fundamentals (fetch-on-miss)", icon: "🧾",
+    what: "Screener.in results for symbols missing fundamentals",
+  },
+  ratios_fetch_on_miss: {
+    name: "Valuation ratios (fetch-on-miss)", icon: "⚖️",
+    what: "Screener.in PE / PB / MCap for symbols missing ratios",
+  },
 };
 
 const TRIGGER_META: Record<string, { label: string; cls: string }> = {

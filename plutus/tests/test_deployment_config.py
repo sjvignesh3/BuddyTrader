@@ -159,6 +159,13 @@ class TestStage8Hardening:
         assert "PLUTUS_ALERT_WEBHOOK" in daily_yaml
         assert "secrets.PLUTUS_ALERT_WEBHOOK" in daily_yaml
 
+    def test_daily_workflow_wires_screener_credentials(self, daily_yaml):
+        # run_daily_sync's fetch-on-miss step logs into Screener.in for
+        # symbols with no fundamentals yet. Without these the step wrote a
+        # 357-symbol "partial" sync_jobs row every day (2026-09-12).
+        assert "SCREENER_EMAIL: ${{ secrets.SCREENER_EMAIL }}" in daily_yaml
+        assert "SCREENER_PASSWORD: ${{ secrets.SCREENER_PASSWORD }}" in daily_yaml
+
     def test_daily_workflow_runs_canary_after_scan(self, daily_yaml):
         assert "plutus.scripts.run_canary" in daily_yaml
         # Canary must be `if: always()` so it also runs when scan fails.

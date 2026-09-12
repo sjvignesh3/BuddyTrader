@@ -48,6 +48,12 @@ jobs:
     env:
       PLUTUS_SUPABASE_URL: ${{ secrets.PLUTUS_SUPABASE_URL }}
       PLUTUS_SUPABASE_SERVICE_KEY: ${{ secrets.PLUTUS_SUPABASE_SERVICE_KEY }}
+      # Screener.in credentials — needed by the fetch-on-miss step inside
+      # run_daily_sync (fundamentals / ratios for symbols that have none
+      # yet). Without them that step is skipped and alerted, never failed.
+      SCREENER_EMAIL: ${{ secrets.SCREENER_EMAIL }}
+      SCREENER_PASSWORD: ${{ secrets.SCREENER_PASSWORD }}
+      PLUTUS_SCREENER_COOLDOWN_S: "15"
       # Optional — leaving blank silently disables alerting.
       PLUTUS_ALERT_WEBHOOK: ${{ secrets.PLUTUS_ALERT_WEBHOOK }}
       PLUTUS_ENV: prod

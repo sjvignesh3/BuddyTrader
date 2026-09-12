@@ -76,6 +76,39 @@ def reset_client() -> None:
 
 
 # -----------------------------------------------------------------------------
+# Paginated SELECT
+# -----------------------------------------------------------------------------
+
+# PostgREST silently caps EVERY response at 1000 rows (the Supabase
+# default `max-rows`). A `select ... in (400 symbols)` on a table with many
+# rows per symbol therefore returns a truncated page and NO error. Found
+# 2026-09-12: `fundamentals` (~12 quarters/symbol) made the daily sync
+# report ~350 symbols "missing" and the scan see only 2-3 quarters/symbol.
+PAGE_SIZE = 1000
+
+
+def fetch_all(build_query: Any, *, page_size: int = PAGE_SIZE) -> List[Dict[str, Any]]:
+    """Run a SELECT in `.range()` pages until a short page arrives.
+
+    `build_query` is a zero-arg callable returning a FRESH filtered query
+    builder each time it is called (e.g. ``lambda: cli.table("t")
+    .select("a,b").in_("symbol", syms).order("d", desc=True)``). Pagination
+    needs a fresh builder per page because ``.range()`` mutates the
+    builder in place. Callers that page over an ordered query keep their
+    ordering across pages. Any exception propagates — policy is the
+    caller's."""
+    rows: List[Dict[str, Any]] = []
+    offset = 0
+    while True:
+        res = build_query().range(offset, offset + page_size - 1).execute()
+        page = getattr(res, "data", None) or []
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+        offset += page_size
+
+
+# -----------------------------------------------------------------------------
 # Chunking helper
 # -----------------------------------------------------------------------------
 

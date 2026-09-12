@@ -150,6 +150,21 @@
 | UI | Teal chip in the quarter row: "Same Q last year (Jun 2025) ₹17,090 Cr **+19.3% YoY**" |
 | Validated live | HDFCBANK: Jun-2026 NP ₹20,383 Cr vs Jun-2025 ₹17,090 Cr → +19.3% YoY despite a QoQ dip → check passes with the cyclic tag, **score 4→8** (PASS band). TCS/INFY also flagged cyclic (IT June seasonality); ITC −15.6% / RELIANCE −24.6% YoY fail honestly. 5 new offline tests (incl. month-matched YoY lookup + ISO-string dates from PostgREST); all gates green |
 
+## 3j. Round 10 (2026-09-12) — sync "failures" root-caused from prod `sync_jobs` + `SyncLogs/`
+
+**Symptom:** every daily run left a `quarterly_sync` row with status `partial`, 357/357 failed in 0 s; the Sunday quarterly run failed the same 12 symbols each time (`no quarterly rows extracted`). The daily price sync itself was 437/437 green throughout.
+
+| # | Root cause | Fix |
+|---|---|---|
+| 1 | The daily workflow never passed `SCREENER_EMAIL` / `SCREENER_PASSWORD`, so the fetch-on-miss child failed login pre-flight and marked every "missing" symbol failed | Secrets added to `plutus-daily-sync.yml`; `enrich_missing_fundamentals` now SKIPS the Screener step when credentials are absent (recorded in `enrichment.skipped`, alerted) instead of writing a failed audit row |
+| 2 | **PostgREST 1000-row cap.** `_find_missing` did one `select symbol … in (437)` on `fundamentals` (~12 rows/symbol) → saw ~80 symbols, reported 357 "missing". Only 12 were truly missing | New `supabase_client.fetch_all()` pages with `.range()`; `_find_missing` uses it |
+| 3 | Same cap in `ScanEngine._default_fetch_fundamentals`: the S200 scan got 1000 of ~5000 rows — 2–3 newest quarters per symbol, 26 symbols dropped — so ATH-quarter / YoY rules scored on truncated history (verified against prod: 388/414 symbols, max 3 quarters) | Paginated via `fetch_all`, secondary `order("symbol")` for deterministic pages |
+| 4 | `ScreenerClient.fetch_company_html` accepted `/consolidated/` as soon as ANY top ratio was present, even with an empty `#quarters` table (no consolidated statements: AUBANK, COLPAL, PFIZER, ESABINDIA, VSTIND, GVT&D, FIVESTAR, ICICIAMC, KOVAI, ALIVUS, BLUEJET, CMPDI). Standalone was never tried; weekly PE/PB for these came from the empty consolidated view (COLPAL PE 113, GVT&D PE 624) | Prefer the statement view whose quarters table has data; keep a ratios-only page as fallback so weekly ratios still work for genuinely quarter-less pages |
+| 5 | Fetch-on-miss children wrote `job_type=quarterly_sync` / `weekly_ratios`, upserting on `(job_type, as_of_date)` — a failed child could overwrite the real scheduled run's audit row for the same date | Children now use `quarterly_fetch_on_miss` / `ratios_fetch_on_miss`; Sync page labels added |
+| 6 | Enrichment failures never changed the exit code and never alerted | `enrichment_alert_report` feeds the standard silence-on-green hook (warning severity, per-symbol reasons) |
+
+Where to see failed symbols + reasons: Sync page job card → "Failed" (reads `sync_jobs.payload_json.failed_symbols`), or the CLI JSON `enrichment.failed_symbols`. Tests: `plutus/tests/test_sync_fetch_on_miss_fixes.py` (fake capped PostgREST, fake Screener session).
+
 ## 4. Deliberate deviations / notes
 
 - **Local ports are 55321–55329** (not the CLI-default 54321–54324) so the Plutus stack coexists with the other Supabase project running on this machine (`virundhu-cartsas`). Keys/URLs in `plutus/.env` + `frontend_v2/.env.local`.
@@ -163,7 +178,7 @@
 
 1. **Rally threshold config knob is inert at sync time** — `has_valid_20pct_rally` is computed at 20%/189d in the daily sync; the strategy-config value only changes the displayed reasons. Wire `strategy_configs` into the sync pipeline if a non-20% threshold is ever needed.
 2. `run_scan` never loads `strategy_configs` from the DB — strategies always use code defaults (which match `strategy_rules.json` exactly). Fundamental screener reads `thresholds`/`enabled_rules` keys that don't match the `inputs` column shape.
-3. No pagination on universe/snapshot reads (PostgREST cap 1000 rows). Safe at 442 stocks; needed before the universe grows past ~1000, and the scan engine's multi-quarter fundamentals read may hit it sooner.
+3. ~~No pagination on universe/snapshot reads (PostgREST cap 1000 rows)~~ — the multi-row `fundamentals` reads DID hit it (Round 10, fixed via `fetch_all`). Universe / same-day snapshot reads are still single-page: safe at 442 stocks, needed before the universe grows past ~1000.
 4. ~~`pe_5y_avg` static-TTM simplification~~ — RESOLVED in Round 4: 5Y PE/PBV now come from Screener's quick ratios (chart-API average as fallback).
 5. Registry covers 6 of 10 tables (`pools`, `strategy_configs`, `trades`, `canary_checks` uncatalogued); registry `nullable` metadata drifts from SQL in places.
 6. `trades` has no natural unique key (V2 concern — writes are still gated off).

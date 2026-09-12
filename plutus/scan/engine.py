@@ -288,14 +288,18 @@ class ScanEngine:
         cols = ",".join(("symbol",) + FUNDAMENTAL_MERGE_COLS
                         + ("quarter_end_date", "quarter_label",
                            "sales", "pbt", "net_profit"))
-        res = (
-            cli.table("fundamentals")
-               .select(cols)
-               .in_("symbol", list(symbols))
-               .order("quarter_end_date", desc=True)
-               .execute()
+        # Paginated: ~12 quarter rows x 400 symbols blows through the
+        # PostgREST 1000-row cap. A single .execute() used to return only
+        # the newest 2-3 quarters per symbol (and dropped ~26 symbols
+        # outright), so the ATH-quarter rules scored on truncated history.
+        # Secondary order on symbol makes the page boundaries deterministic.
+        rows = sb.fetch_all(
+            lambda: cli.table("fundamentals")
+                       .select(cols)
+                       .in_("symbol", list(symbols))
+                       .order("quarter_end_date", desc=True)
+                       .order("symbol")
         )
-        rows = getattr(res, "data", None) or []
         by_symbol: Dict[str, List[Dict[str, Any]]] = {}
         for r in rows:
             sym = r.get("symbol")
