@@ -590,7 +590,7 @@ export default function StockDetailPage() {
       {/* ── My positions ── */}
       <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
         <SectionTitle>My positions {isHeld ? "💼" : ""}</SectionTitle>
-        <StockPositions symbol={row.symbol} cmp={row.close} />
+        <StockPositions symbol={row.symbol} cmp={row.close} snapshot={row.snapshot} />
       </div>
     </div>
   );

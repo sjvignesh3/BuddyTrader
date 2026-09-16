@@ -8,7 +8,7 @@
 // -----------------------------------------------------------------------------
 
 import type { Snapshot } from "./api";
-import type { CapBucket, Opportunity, Trade } from "./journalApi";
+import type { CapBucket, Opportunity, Trade, TradeDraft } from "./journalApi";
 
 export const CAP_LIMITS: Record<CapBucket, number> = {
   Large: 5, Mid: 3, Small: 2, Micro: 1.5,
@@ -360,5 +360,143 @@ export function buildPortfolio(openTrades: Trade[], ctx: JournalCtx): {
       pnl: currentValue - invested,
       deployedPct: ctx.capital ? (invested / ctx.capital) * 100 : null,
     },
+  };
+}
+
+// ---- ABCD averaging ---------------------------------------------------------------
+//
+// The initial lot in a stock is leg A. When CMP falls ABCD_DROP_PCT below the
+// latest leg's entry the position becomes eligible for the next leg (B, C, D…),
+// and that leg TARGETS the previous leg's entry. Nothing is persisted: the
+// signal derives from the OPEN lots + CMP, so logging the new leg moves the
+// reference and the signal clears on its own. Advisory only — the caller
+// decides whether fundamentals justify adding.
+
+/** Drop below the reference leg's entry that makes the next leg eligible. */
+export const ABCD_DROP_PCT: Record<CapBucket, number> = {
+  Large: 10, Mid: 10, Small: 15, Micro: 15,
+};
+
+/** Leg 0 → "A", 1 → "B" … past Z falls back to a number. */
+export function legLabel(index: number): string {
+  return index >= 0 && index < 26 ? String.fromCharCode(65 + index) : `#${index + 1}`;
+}
+
+/** "due": price has triggered and the cap limit leaves room · "blocked":
+ * triggered but the position is already at/over its limit · null otherwise. */
+export type AbcdZone = "due" | "blocked" | null;
+
+export interface AbcdSignal {
+  symbol: string;
+  cap: CapBucket | null;
+  /** OPEN lots, oldest first — leg A is legs[0]. */
+  legs: Trade[];
+  /** Letter of the leg that would be added next ("B" when only A is held). */
+  nextLeg: string;
+  /** The reference lot: latest leg by buy date (then id). */
+  ref: Trade;
+  refLeg: string;
+  refEntry: number;
+  /** Threshold for this cap bucket; null when the bucket is unknown. */
+  thresholdPct: number | null;
+  /** refEntry × (1 − threshold) — the suggested buy trigger. */
+  triggerPrice: number | null;
+  /** Previous leg's entry — the next leg's target. */
+  targetPrice: number;
+  cmp: number | null;
+  /** How far CMP sits below the reference entry (positive = below). */
+  fallPct: number | null;
+  /** (cmp − trigger) / cmp — further fall needed; ≤ 0 means triggered. */
+  toTriggerPct: number | null;
+  triggered: boolean;
+  /** Shares the cap limit still allows at the trigger price (null: unknown). */
+  maxQty: number | null;
+  roomValue: number | null;
+  /** Reference-leg qty, capped to what the limit allows. */
+  suggestedQty: number | null;
+  zone: AbcdZone;
+}
+
+function lotOrder(a: Trade, b: Trade): number {
+  return a.buy_date.localeCompare(b.buy_date) || a.id - b.id;
+}
+
+/** ABCD signal for one symbol's OPEN lots. Returns null with no open lots. */
+export function deriveAbcd(
+  openLots: Trade[],
+  ctx: JournalCtx,
+  thresholds: Record<CapBucket, number> = ABCD_DROP_PCT,
+): AbcdSignal | null {
+  const legs = openLots.filter((t) => t.status === "OPEN").sort(lotOrder);
+  const ref = legs[legs.length - 1];
+  if (!ref) return null;
+  const symbol = ref.symbol;
+  const snap = ctx.snaps.get(symbol);
+  const cap = effectiveCap(legs.find((l) => l.cap_bucket)?.cap_bucket ?? null, snap);
+  const refEntry = num(ref.buy_price) ?? 0;
+  const cmp = num(snap?.close);
+  const thresholdPct = cap ? thresholds[cap] : null;
+  const triggerPrice = thresholdPct !== null && refEntry
+    ? refEntry * (1 - thresholdPct / 100) : null;
+  const fallPct = cmp !== null && refEntry ? ((refEntry - cmp) / refEntry) * 100 : null;
+  const toTriggerPct = triggerPrice !== null && cmp
+    ? ((cmp - triggerPrice) / cmp) * 100 : null;
+  const triggered = fallPct !== null && thresholdPct !== null && fallPct >= thresholdPct;
+
+  // Room under the cap limit, priced at the trigger (what a GTT would fill at).
+  const alloc = planAllocation({ symbol, cap, buyPrice: triggerPrice, qty: null, ctx });
+  const maxQty = alloc.maxQty;
+  const suggestedQty = maxQty === null ? ref.qty : Math.min(ref.qty, maxQty);
+  const zone: AbcdZone = !triggered ? null
+    : maxQty === 0 ? "blocked" : "due";
+
+  return {
+    symbol, cap, legs,
+    nextLeg: legLabel(legs.length),
+    ref, refLeg: legLabel(legs.length - 1), refEntry,
+    thresholdPct, triggerPrice, targetPrice: refEntry,
+    cmp, fallPct, toTriggerPct, triggered,
+    maxQty, roomValue: alloc.roomValue,
+    suggestedQty: suggestedQty > 0 ? suggestedQty : null,
+    zone,
+  };
+}
+
+/** One signal per held symbol. CLOSED rows are ignored. */
+export function buildAbcdSignals(
+  trades: Trade[],
+  ctx: JournalCtx,
+  thresholds: Record<CapBucket, number> = ABCD_DROP_PCT,
+): Map<string, AbcdSignal> {
+  const bySymbol = new Map<string, Trade[]>();
+  for (const t of trades) {
+    if (t.status !== "OPEN") continue;
+    (bySymbol.get(t.symbol) ?? bySymbol.set(t.symbol, []).get(t.symbol)!).push(t);
+  }
+  const out = new Map<string, AbcdSignal>();
+  for (const [symbol, lots] of bySymbol) {
+    const sig = deriveAbcd(lots, ctx, thresholds);
+    if (sig) out.set(symbol, sig);
+  }
+  return out;
+}
+
+const money2 = (v: number) => (Math.round(v * 100) / 100).toString();
+
+/** Prefill for the next leg's trade form. Buy price is the CMP once the
+ * trigger has fired (an instant buy fills there), else the trigger itself
+ * (a GTT waits for it). Target = the previous leg's entry. */
+export function abcdLegDraft(sig: AbcdSignal): TradeDraft {
+  const fired = sig.triggered && sig.cmp !== null;
+  const price = fired ? sig.cmp! : sig.triggerPrice;
+  return {
+    symbol: sig.symbol,
+    cap_bucket: sig.legs.find((l) => l.cap_bucket)?.cap_bucket ?? null,
+    order_type: fired ? "Instant" : "GTT",
+    buy_price: price !== null ? money2(price) : undefined,
+    qty: sig.suggestedQty ?? undefined,
+    strategy: "ABCD",
+    target_price: money2(sig.targetPrice),
+    comments: `Leg ${sig.nextLeg} — averaging below leg ${sig.refLeg} entry ₹${money2(sig.refEntry)}`,
   };
 }

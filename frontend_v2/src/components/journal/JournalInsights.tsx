@@ -7,21 +7,24 @@ import { ReactNode, useMemo } from "react";
 import type { Trade } from "../../lib/journalApi";
 import type { JournalCtx } from "../../lib/journal";
 import {
-  buildPortfolio, deriveClosedTrade, deriveOpenTrade, targetZone,
+  buildAbcdSignals, buildPortfolio, deriveClosedTrade, deriveOpenTrade, targetZone,
 } from "../../lib/journal";
 import { fmtMoney, fmtPct } from "../../lib/money";
 import { Pnl } from "./ui";
 
 export default function JournalInsights({ openTrades, closedTrades, ctx, onJumpToOpen }: {
   openTrades: Trade[]; closedTrades: Trade[]; ctx: JournalCtx;
-  /** Clicking the target radar jumps to the Open Trades tab. */
-  onJumpToOpen: () => void;
+  /** Clicking a radar card jumps to the Open Trades tab with that chip on. */
+  onJumpToOpen: (focus: "near" | "avg") => void;
 }) {
   const s = useMemo(() => {
     const { totals } = buildPortfolio(openTrades, ctx);
     const open = openTrades.map((t) => ({ t, d: deriveOpenTrade(t, ctx) }));
     const near = open.filter((x) => targetZone(x.d.remainingPct) === "near").length;
     const hit = open.filter((x) => targetZone(x.d.remainingPct) === "hit").length;
+    const abcd = [...buildAbcdSignals(openTrades, ctx).values()];
+    const avgDue = abcd.filter((x) => x.zone === "due");
+    const avgBlocked = abcd.filter((x) => x.zone === "blocked").length;
     const best = open.reduce<{ symbol: string; gainPct: number } | null>(
       (acc, x) => x.d.gainPct !== null && (!acc || x.d.gainPct > acc.gainPct)
         ? { symbol: x.t.symbol, gainPct: x.d.gainPct } : acc,
@@ -40,6 +43,7 @@ export default function JournalInsights({ openTrades, closedTrades, ctx, onJumpT
       totals,
       unrealizedPct: totals.invested ? (totals.pnl / totals.invested) * 100 : null,
       near, hit, best, realized, avgDays, avgGainPct,
+      avgDue, avgBlocked,
       closedCount: closed.length,
     };
   }, [openTrades, closedTrades, ctx]);
@@ -53,7 +57,7 @@ export default function JournalInsights({ openTrades, closedTrades, ctx, onJumpT
       : "bg-gradient-to-br from-rose-50 to-brand-panel";
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
       <Card label="Capital deployed"
             sub={s.totals.deployedPct !== null
               ? `${fmtPct(s.totals.deployedPct)} of capital` : undefined}>
@@ -77,13 +81,25 @@ export default function JournalInsights({ openTrades, closedTrades, ctx, onJumpT
               : "book a trade first"}>
         {s.avgDays !== null ? `${Math.round(s.avgDays)}d` : "—"}
       </Card>
-      <Card label="Target radar" onClick={onJumpToOpen}
+      <Card label="Target radar" onClick={() => onJumpToOpen("near")}
             tone={radarCount ? "bg-gradient-to-br from-amber-50 to-brand-panel" : undefined}
             title="Open trades at or within 10% of target — click to review"
             sub={radarCount
               ? `${s.hit} hit · ${s.near} within 10%`
               : "nothing close yet"}>
         {radarCount ? <span>🎯 {radarCount}</span> : "0"}
+      </Card>
+      <Card label="Averaging radar" onClick={() => onJumpToOpen("avg")}
+            tone={s.avgDue.length ? "bg-gradient-to-br from-indigo-50 to-brand-panel" : undefined}
+            title="Positions whose next ABCD leg has triggered — 10% (Large/Mid) or 15% (Small/Micro) below the latest leg. Advisory: check fundamentals before adding."
+            sub={s.avgDue.length
+              ? s.avgDue.slice(0, 3).map((x) => `${x.symbol} ${x.nextLeg}`).join(" · ")
+                + (s.avgDue.length > 3 ? ` +${s.avgDue.length - 3}` : "")
+                + (s.avgBlocked ? ` · ${s.avgBlocked} no room` : "")
+              : s.avgBlocked
+                ? `${s.avgBlocked} triggered, no room under cap limit`
+                : "no leg due"}>
+        {s.avgDue.length ? <span>🪜 {s.avgDue.length}</span> : "0"}
       </Card>
       <Card label="Best open trade"
             sub={s.best ? <Pnl value={s.best.gainPct} suffix="%" /> : undefined}>

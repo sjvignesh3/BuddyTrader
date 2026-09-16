@@ -18,7 +18,7 @@ import { fmtMoney } from "../lib/money";
 import LoadError from "../components/LoadError";
 import JournalInsights from "../components/journal/JournalInsights";
 import OpportunitiesTab from "../components/journal/OpportunitiesTab";
-import OpenTradesTab from "../components/journal/OpenTradesTab";
+import OpenTradesTab, { type OpenFocus } from "../components/journal/OpenTradesTab";
 import ClosedTradesTab from "../components/journal/ClosedTradesTab";
 import PortfolioTab from "../components/journal/PortfolioTab";
 import {
@@ -159,7 +159,10 @@ export default function JournalPage() {
   // ---- Modal state ----------------------------------------------------------------
   const [oppModal, setOppModal] = useState<{ initial: Opportunity | null } | null>(null);
   const [tradeModal, setTradeModal] =
-    useState<{ initial: Trade | null; closed: boolean } | null>(null);
+    useState<{ initial: Trade | null; closed: boolean; prefill?: TradeDraft } | null>(null);
+  // Radar cards land on Open Trades with the matching chip on; the counter
+  // makes a repeat click re-apply after the user has toggled chips.
+  const [openFocus, setOpenFocus] = useState<OpenFocus>(null);
   const [convertOpp, setConvertOpp] = useState<Opportunity | null>(null);
   const [bookTrade, setBookTrade] = useState<Trade | null>(null);
   const [editingCapital, setEditingCapital] = useState(false);
@@ -275,7 +278,10 @@ export default function JournalPage() {
       {/* Insights */}
       <JournalInsights
         openTrades={openTrades} closedTrades={closedTrades} ctx={ctx}
-        onJumpToOpen={() => setTab("open")}
+        onJumpToOpen={(kind) => {
+          setTab("open");
+          setOpenFocus((p) => ({ kind, n: (p?.n ?? 0) + 1 }));
+        }}
       />
 
       {/* Tabs + actions */}
@@ -383,8 +389,9 @@ export default function JournalPage() {
       )}
       {tab === "open" && (
         <OpenTradesTab
-          rows={openTrades} ctx={ctx}
+          rows={openTrades} ctx={ctx} focus={openFocus}
           onEdit={(t) => setTradeModal({ initial: t, closed: false })}
+          onAddLeg={(draft) => setTradeModal({ initial: null, closed: false, prefill: draft })}
           onBook={setBookTrade}
           onDelete={(t) => askConfirm(`Delete ${t.symbol}?`,
             `This removes the open trade ${t.symbol} (${t.qty} qty @ ₹${t.buy_price}) permanently.\nTo sell it instead, use Book 💰.`,
@@ -415,6 +422,7 @@ export default function JournalPage() {
       {tradeModal && (
         <TradeModal
           initial={tradeModal.initial} closed={tradeModal.closed}
+          prefill={tradeModal.prefill}
           ctx={ctx} busy={mSaveTrade.isPending}
           onClose={() => setTradeModal(null)}
           onSave={(draft) => mSaveTrade.mutate({ id: tradeModal.initial?.id, draft })}

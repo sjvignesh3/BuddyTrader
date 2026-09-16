@@ -267,8 +267,10 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
 
 // ---- Trade (add / edit; covers open and closed rows) ------------------------------
 
-export function TradeModal({ initial, closed = false, ctx, onSave, onClose, busy }: {
+export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onClose, busy }: {
   initial: Trade | null;
+  /** Defaults for a NEW trade (e.g. the next ABCD leg) — ignored when editing. */
+  prefill?: TradeDraft;
   /** true when editing a CLOSED row (shows sell fields). */
   closed?: boolean;
   /** Capital + open lots, for the live allocation gauge. */
@@ -278,21 +280,22 @@ export function TradeModal({ initial, closed = false, ctx, onSave, onClose, busy
   busy: boolean;
 }) {
   const isClosed = closed || initial?.status === "CLOSED";
+  const p = initial ? undefined : prefill;
   const [f, setF] = useState({
-    order_type: initial?.order_type ?? "GTT",
-    cap_bucket: initial?.cap_bucket ?? "",
-    symbol: initial?.symbol ?? "",
-    buy_date: initial?.buy_date ?? today(),
-    buy_price: initial?.buy_price ?? "",
-    qty: initial?.qty?.toString() ?? "",
-    strategy: initial?.strategy ?? "",
-    target_price: initial?.target_price ?? "",
-    stop_price: initial?.stop_price ?? "",
+    order_type: initial?.order_type ?? p?.order_type ?? "GTT",
+    cap_bucket: initial?.cap_bucket ?? p?.cap_bucket ?? "",
+    symbol: initial?.symbol ?? p?.symbol ?? "",
+    buy_date: initial?.buy_date ?? p?.buy_date ?? today(),
+    buy_price: initial?.buy_price ?? p?.buy_price ?? "",
+    qty: initial?.qty?.toString() ?? p?.qty?.toString() ?? "",
+    strategy: initial?.strategy ?? p?.strategy ?? "",
+    target_price: initial?.target_price ?? p?.target_price ?? "",
+    stop_price: initial?.stop_price ?? p?.stop_price ?? "",
     sell_date: initial?.sell_date ?? today(),
     sell_price: initial?.sell_price ?? "",
     close_label: initial?.close_label ?? "Fully Booked",
-    comments: initial?.comments ?? "",
-    risk_notes: initial?.risk_notes ?? "",
+    comments: initial?.comments ?? p?.comments ?? "",
+    risk_notes: initial?.risk_notes ?? p?.risk_notes ?? "",
   });
   const set = (k: keyof typeof f) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
@@ -345,7 +348,9 @@ export function TradeModal({ initial, closed = false, ctx, onSave, onClose, busy
 
   return (
     <Modal onClose={onClose} wide
-           title={initial ? `Edit ${initial.symbol}` : isClosed ? "New closed trade" : "New trade"}>
+           title={initial ? `Edit ${initial.symbol}`
+             : isClosed ? "New closed trade"
+             : p?.symbol ? `New trade — ${p.symbol}` : "New trade"}>
       <div className="grid sm:grid-cols-2 gap-3">
         <Field label="Symbol *">
           <TextInput value={f.symbol} onChange={set("symbol")} autoFocus={!initial}
