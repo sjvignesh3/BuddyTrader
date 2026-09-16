@@ -6,6 +6,7 @@
 > **Sources Tested:** yfinance (Yahoo v10 API) · NSE API · BSE API
 > **Run environment:** Local Windows machine (same env as production sync worker)
 > **Previous report:** 2025-08-28 — several gaps are now resolved; see §7 for diff.
+> **Note (2026-09-16):** the generating scripts (`validate_plutus_sources.py`, `validate_plutus_live.py`) lived in the legacy `backend/` tree, which has been removed. They remain in git history.
 
 ---
 

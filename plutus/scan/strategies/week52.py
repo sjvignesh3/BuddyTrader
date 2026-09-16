@@ -1,8 +1,8 @@
 """
-52 Week High Low Strategy — bit-for-bit port of
-backend/app/strategies/week52_high_low.py.
+52 Week High Low Strategy — bit-for-bit port of the legacy Buddy
+week52_high_low strategy.
 
-Rules (from UserData/strategy_rules.json):
+Rules (defaults seeded by migrations/005_strategy_configs.sql):
   BUY_ZONE     : distance_from_52w_low_pct <= 0.5  -> Score 100
   OPPORTUNITY  : distance_from_52w_low_pct <= 5.0  -> Score 75
   NO_SIGNAL    : distance_from_52w_low_pct >  5.0  -> Score 0

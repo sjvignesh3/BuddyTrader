@@ -1,8 +1,8 @@
 """
 Screener.in authenticated client — the Tier-B (quarterly) data source.
 
-Port of the login/fetch layer proven in Buddy's
-``backend/app/services/screener_data_fetcher.py``, on `requests`:
+Port of the login/fetch layer proven in the legacy Buddy screener fetcher
+(removed 2026-09-16; see git history), on `requests`:
 
   1. GET  /login/                       -> csrfmiddlewaretoken
   2. POST /login/ (credentials + CSRF)  -> sessionid cookie (one login/run)

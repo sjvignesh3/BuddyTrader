@@ -3,7 +3,7 @@ Seed universe tests — CSV parsing only, no network / no Supabase.
 
 The master template holds three side-by-side tables; the curated universe
 is the LEFT-HAND table (positional columns 0-5, matching the legacy
-loader `backend/app/core/universe.py`):
+Buddy universe loader):
 
     0 List (symbol) | 1 Sector | 2 Short Form (pool code) |
     3 Category (pool name) | 4 For TV | 5 Market Cap (cap type)

@@ -10,7 +10,7 @@ CONTRACT:
     universe is the LEFT-HAND table (columns 0-5):
         0 List (symbol) | 1 Sector | 2 Short Form (pool code) |
         3 Category (pool name) | 4 For TV | 5 Market Cap (cap type)
-    This matches the legacy loader `backend/app/core/universe.py`. The
+    This matches the legacy Buddy universe loader. The
     right-hand "Ticker" column is the ALL-LISTED NSE dump (~4800 rows) and
     the "Flagship 40 (F40)"/"Emerging 40 (E40)"/... marker columns belong
     to the strategy × pool matrix — neither describes the curated universe.

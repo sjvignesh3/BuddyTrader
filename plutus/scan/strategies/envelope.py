@@ -1,7 +1,7 @@
 """
-Envelope Strategy — bit-for-bit port of backend/app/strategies/envelope.py.
+Envelope Strategy — bit-for-bit port of the legacy Buddy envelope strategy.
 
-Rules (from UserData/strategy_rules.json):
+Rules (defaults seeded by migrations/005_strategy_configs.sql):
   BUY_ZONE     : below_200dma_pct >= 14.0  -> Score 100
   OPPORTUNITY  : below_200dma_pct >= 9.0   -> Score 70
   NO_SIGNAL    : below_200dma_pct <  9.0   -> Score 0

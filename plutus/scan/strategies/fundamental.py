@@ -1,9 +1,8 @@
 """
 Fundamental Score Strategy — the BuddyTrader 11-check score (out of 11).
 
-Faithful port of the scoring contract in legacy
-``backend/app/api/routes.py::getFundamentalsFromCache`` (the "Score
-(out of 11)" column every Buddy view sorts by):
+Faithful port of the legacy Buddy `getFundamentalsFromCache` scoring
+contract (the "Score (out of 11)" column every Buddy view sorted by):
 
    1. PE < 70
    2. PE < 5yr Avg PE

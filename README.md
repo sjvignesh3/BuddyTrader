@@ -1,319 +1,106 @@
-# 📈 Buddy – Swing Trading Scanner Dashboard
+# Plutus — NSE Swing-Trading Toolkit
 
-An end-of-day NSE stock scanner that screens the entire universe of listed equities
-against configurable swing-trading strategies and displays results in a React dashboard.
+Plutus is a personal, scheduled end-of-day toolkit for NSE equities. It syncs
+prices and fundamentals into Supabase, runs strategy scans over a curated
+universe, and serves a React dashboard with a Trading Journal, Expense
+Tracker, Position Sizer and Net Worth tracker on top.
 
----
-
-## Table of Contents
-
-1. [Project Overview](#1-project-overview)
-2. [Architecture](#2-architecture)
-3. [Prerequisites](#3-prerequisites)
-4. [Setup Guide](#4-setup-guide)
-   - [4.1 Clone the Repository](#41-clone-the-repository)
-   - [4.2 Backend Setup](#42-backend-setup)
-   - [4.3 Frontend Setup](#43-frontend-setup)
-   - [4.4 UserData Configuration](#44-userdata-configuration)
-5. [Running the App](#5-running-the-app)
-6. [Project Structure](#6-project-structure)
-7. [Available Strategies](#7-available-strategies)
-8. [Configuration Reference](#8-configuration-reference)
-9. [Troubleshooting](#9-troubleshooting)
+Plutus is the successor to the earlier "Buddy" scanner. The legacy Buddy code
+was removed from the tree on 2026-09-16 and lives only in git history.
 
 ---
 
-## 1. Project Overview
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **Backend** | Python · FastAPI · yfinance | Fetches EOD price data, runs strategy scans, exposes REST API |
-| **Frontend** | React 18 · Vite | Interactive dashboard – scan controls, results table, strategy matrix |
-| **Data Source** | Yahoo Finance (NSE suffix `.NS`) | Free, no API key required |
-| **Universe** | `UserData/` CSV | Configurable list of NSE tickers to scan |
-
----
-
-## 2. Architecture
+## Repository layout
 
 ```
-Browser (React)
-     │  HTTP  /api/*
-     ▼
-FastAPI (port 8000)
-  ├── /api/scan        ← triggers strategy scan
-  ├── /api/strategies  ← list configured strategies
-  └── /api/universe    ← ticker universe metadata
-     │  yfinance
-     ▼
-Yahoo Finance (NSE data)
+.
+├── plutus/                 Python backend (money-safe, Decimal-only)
+│   ├── adapters/           yfinance + Supabase clients, validators
+│   ├── metrics/            Pure metric functions (52w, ATH, DMA, rally, cap bucket)
+│   ├── fundamentals/       Screener.in client + page parsers, quarterly data
+│   ├── sync/               Daily / quarterly / weekly-ratio sync workers
+│   ├── scan/               Strategy engine + strategies (envelope, week52, rally, fundamental)
+│   ├── api/                FastAPI app: read endpoints + journal / expenses / sizing / net worth
+│   ├── alerts/             Webhook alerting hooked into the sync workers
+│   ├── canary/             Drift checks against known-good fixtures
+│   ├── migrations/         Ordered SQL (001..018), idempotent, applied with psql
+│   ├── scripts/            CLI entry points (run_daily_sync, run_scan, run_api, seed_universe, ...)
+│   ├── registry/           Field catalog + Decimal primitives (single source of column names)
+│   └── tests/              Deterministic pytest suite — no network, no DB
+├── frontend_v2/            Vite + React 18 + TypeScript dashboard (see frontend_v2/README.md)
+├── supabase/               Local Supabase stack config + read-only Edge Function fallback
+├── .github/workflows/      Scheduled syncs, weekly ratios, weekly backup, CI tests
+├── UserData/               Master universe CSV (seed input) + personal notes
+└── Docs/                   Plutus plan, phased development log, runbook, hosting guide, issue log
 ```
 
----
+## Guardrails (enforced by tests and CI)
 
-## 3. Prerequisites
+1. **No `float` for money/ratio fields.** Use `plutus.registry.types.to_decimal`.
+   CI greps `plutus/metrics`, `sync`, `fundamentals` and `api` for `float(`.
+2. **No hardcoded column-name strings** outside `plutus/registry/fields.py`.
+3. **Every DB write is idempotent** (UNIQUE natural key + `ON CONFLICT`).
+4. **Every metric has a hand-computed unit test** before it goes live.
+5. **Config errors crash at import**, never mid-sync (`plutus/config.py`).
 
-Ensure the following are installed on the target machine before setup.
+## Quick start (local)
 
-| Tool | Minimum Version | Check Command |
-|------|----------------|---------------|
-| **Python** | 3.10+ | `python3 --version` |
-| **pip** | 23+ | `pip --version` |
-| **Node.js** | 18+ | `node --version` |
-| **npm** | 9+ | `npm --version` |
-| **Git** | any | `git --version` |
-
-> **Internet access** is required at runtime – the scanner fetches live/EOD price data
-> from Yahoo Finance.
-
----
-
-## 4. Setup Guide
-
-### 4.1 Clone the Repository
+Full step-by-step instructions, including the local Supabase stack and every
+CLI, are in `Docs/Plutus_Local_and_Live_Runbook.md`. The short version:
 
 ```bash
-git clone <your-repo-url> Buddy
-cd Buddy
+# 1. Python env + deps (repo root)
+python -m venv .venv
+.venv/Scripts/activate            # Windows  |  source .venv/bin/activate on macOS/Linux
+pip install -r plutus/requirements.txt
+
+# 2. Local Supabase, then migrations
+supabase start
+for f in plutus/migrations/0*.sql; do psql "$PLUTUS_SUPABASE_DB_URL" -f "$f"; done
+
+# 3. Env vars
+cp plutus/.env.example plutus/.env   # then fill in Supabase + Screener values
+
+# 4. Seed the universe, sync, scan
+python -m plutus.scripts.seed_universe --csv "UserData/Vicky - Master Template - Master.csv"
+python -m plutus.scripts.run_daily_sync
+python -m plutus.scripts.run_scan
+
+# 5. API + frontend
+python -m plutus.scripts.run_api     # http://127.0.0.1:8000 (PLUTUS_API_PORT to override)
+cd frontend_v2 && cp .env.example .env.local && npm install && npm run dev
 ```
 
----
-
-### 4.2 Backend Setup
+## Tests
 
 ```bash
-# 1 – Move into the backend directory
-cd backend
-
-# 2 – Create an isolated Python virtual environment
-python3 -m venv .venv
-
-# 3 – Activate it
-#   Linux / macOS:
-source .venv/bin/activate
-#   Windows (Command Prompt):
-.venv\Scripts\activate.bat
-#   Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-
-# 4 – Upgrade pip (recommended)
-pip install --upgrade pip
-
-# 5 – Install all Python dependencies
-pip install -r requirements.txt
-
-# 6 – Return to the project root
-cd ..
+python -m pytest plutus/ -q          # backend (pure unit tests)
+cd frontend_v2 && npm run test       # Vitest — domain math in src/lib
 ```
 
-**Verify the backend works:**
+## Scheduled jobs (GitHub Actions)
 
-```bash
-cd backend
-source .venv/bin/activate          # skip if already active
-uvicorn app.main:app --reload --port 8000
-```
+| Workflow | Schedule | Runs |
+|----------|----------|------|
+| `plutus-daily-sync.yml` | 12:30 UTC, Mon–Fri | daily sync → scan → canary |
+| `plutus-quarterly-sync.yml` | Sundays 02:00 UTC | Screener quarterly fundamentals |
+| `plutus-weekly-ratios.yml` | Fridays 23:30 UTC | Screener ratios refresh |
+| `plutus-weekly-backup.yml` | Sundays 20:00 UTC | `pg_dump` → Supabase Storage |
+| `plutus-tests.yml` | on push / PR | pytest + no-float gate |
 
-Open [http://localhost:8000/docs](http://localhost:8000/docs) – you should see the
-FastAPI Swagger UI.
+## Hosting
 
----
+Database on Supabase, FastAPI on Render, frontend on Vercel, cron on GitHub
+Actions. See `Docs/Plutus_Free_Hosting_Guide.md`.
 
-### 4.3 Frontend Setup
+## Docs
 
-Open a **new terminal tab** (keep the backend running).
-
-```bash
-# From the project root
-cd frontend
-
-# Install Node dependencies
-npm install
-
-# Start the Vite dev server
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) – the Buddy dashboard will load.
-
-> **Proxy note:** Vite is configured to proxy all `/api/*` requests to
-> `http://localhost:8000`, so no CORS issues during development.
-
----
-
-### 4.4 UserData Configuration
-
-The `UserData/` folder holds the two files that drive the scanner:
-
-#### `Vicky - Master Template - Master.csv`
-The ticker universe – one NSE symbol per row.
-
-| Column | Description |
-|--------|-------------|
-| `Symbol` | NSE ticker without suffix, e.g. `RELIANCE` |
-| `Sector` | (optional) sector label used in pool cards |
-| `Industry` | (optional) industry label |
-
-Copy your existing CSV here or use the provided template as a starting point.
-
-#### `strategy_rules.json`
-Defines scan parameters for each strategy. Edit thresholds to match your rules.
-
-```jsonc
-{
-  "week52_high_low": {
-    "proximity_pct": 5          // % within 52-week high/low
-  },
-  "envelope": {
-    "period": 20,
-    "deviation_pct": 10         // envelope band width
-  }
-}
-```
-
----
-
-## 5. Running the App
-
-Two terminal sessions are required:
-
-**Terminal 1 – Backend**
-
-```bash
-cd backend
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**Terminal 2 – Frontend**
-
-```bash
-cd frontend
-npm run dev
-```
-
-| URL | Description |
-|-----|-------------|
-| `http://localhost:3000` | React dashboard |
-| `http://localhost:8000/docs` | FastAPI interactive API docs |
-| `http://localhost:8000/redoc` | Alternative API docs |
-
-### Production Build (optional)
-
-```bash
-# Build the React app
-cd frontend
-npm run build
-# Compiled files land in frontend/dist/
-
-# Serve everything from FastAPI only (no Node needed)
-cd ../backend
-source .venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
----
-
-## 6. Project Structure
-
-```
-Buddy/
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   │   └── routes.py          # All REST endpoints
-│   │   ├── core/
-│   │   │   ├── config.py          # Paths, constants, strategy rules loader
-│   │   │   └── universe.py        # Ticker universe parser
-│   │   ├── services/
-│   │   │   ├── data_fetcher.py    # yfinance wrapper with caching
-│   │   │   ├── metrics_engine.py  # Technical indicator calculations
-│   │   │   └── scanner.py         # Orchestrates scans across universe
-│   │   ├── strategies/
-│   │   │   ├── base.py            # Abstract strategy interface
-│   │   │   ├── envelope.py        # Envelope / moving-average strategy
-│   │   │   ├── week52_high_low.py # 52-week high/low proximity strategy
-│   │   │   └── registry.py        # Strategy registry (name → class)
-│   │   └── main.py                # FastAPI app factory
-│   ├── data/                      # Runtime cache (git-ignored)
-│   └── requirements.txt
-│
-├── frontend/
-│   ├── src/
-│   │   ├── components/            # Reusable UI components
-│   │   ├── context/               # React context providers
-│   │   ├── pages/                 # Route-level page components
-│   │   └── services/api.js        # Axios/fetch wrapper for backend
-│   ├── index.html
-│   ├── vite.config.js
-│   └── package.json
-│
-├── UserData/
-│   ├── Vicky - Master Template - Master.csv   # Ticker universe
-│   ├── strategy_rules.json                    # Strategy parameters
-│   └── Fundamental POinters.md               # Research notes
-│
-├── Docs/                          # Planning and dev documentation
-├── .gitignore
-└── README.md
-```
-
----
-
-## 7. Available Strategies
-
-| Strategy ID | Description |
-|-------------|-------------|
-| `week52_high_low` | Flags stocks within a configurable % of their 52-week high or low |
-| `envelope` | Identifies stocks touching upper/lower envelope bands around a moving average |
-
-New strategies can be added by subclassing `strategies/base.py` and registering them
-in `strategies/registry.py`.
-
----
-
-## 8. Configuration Reference
-
-| File | Purpose | Tracked by Git |
-|------|---------|---------------|
-| `UserData/strategy_rules.json` | Strategy thresholds and parameters | ✅ Yes |
-| `UserData/Vicky - Master Template - Master.csv` | Ticker universe | ✅ Yes |
-| `backend/app/core/config.py` | Paths, CORS, cache TTL | ✅ Yes |
-| `backend/data/` | Runtime price cache | ❌ No (auto-generated) |
-| `frontend/.env` | Local env overrides | ❌ No |
-
----
-
-## 9. Troubleshooting
-
-### `ModuleNotFoundError` on backend start
-Virtual environment is not activated. Run:
-```bash
-source backend/.venv/bin/activate
-```
-
-### Port 8000 / 3000 already in use
-```bash
-# Find and kill the occupying process
-lsof -ti:8000 | xargs kill -9
-lsof -ti:3000 | xargs kill -9
-```
-
-### `yfinance` returns empty data
-- Yahoo Finance rate-limits aggressive requests. Wait a few minutes and retry.
-- Verify internet connectivity and that NSE market hours don't affect data availability.
-- Check ticker symbols include no `.NS` suffix in the CSV (the app appends it automatically).
-
-### Frontend shows `Network Error` / blank results
-- Confirm the backend is running on port `8000`.
-- Check browser console for CORS errors – ensure `CORS_ORIGINS = ["*"]` is set in
-  `backend/app/core/config.py` during development.
-
-### `strategy_rules.json` not found
-- Confirm the file exists at `UserData/strategy_rules.json` relative to the project root.
-- The path is resolved in `backend/app/core/config.py` (`STRATEGY_RULES_PATH`).
-
----
-
-> **Docs folder:** See `Docs/DevDoc.MD` for deeper technical decisions and
-> `Docs/Plan.MD` for the product roadmap.
+| File | Purpose |
+|------|---------|
+| `Docs/Plutus_Plan.MD` | Architecture and product plan |
+| `Docs/Plutus_Phased_Development.MD` | Stage-by-stage build log and guardrails (binding Prompt Note at top) |
+| `Docs/Plutus_Local_and_Live_Runbook.md` | Local setup, testing, live deployment, rollback |
+| `Docs/Plutus_Free_Hosting_Guide.md` | Fast path to hosting every piece on free tiers |
+| `Docs/Plutus_Issue_Log.MD` | Bugs found and fixed, with root causes |
+| `Docs/Plutus_Validation_Report.MD` | Data-source validation (yfinance / NSE / BSE) |
+| `Docs/20_Percent_Rally_PineScript` | Original V20 Pine Script that `plutus/metrics/rally.py` ports |

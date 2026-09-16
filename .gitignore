@@ -1,6 +1,5 @@
 # ─────────────────────────────────────────────
-#  Buddy – Swing Trading Scanner Dashboard
-#  .gitignore
+#  Plutus – .gitignore
 # ─────────────────────────────────────────────
 
 
@@ -42,43 +41,39 @@ htmlcov/
 .ipynb_checkpoints/
 
 
-# ── FastAPI / Uvicorn ─────────────────────────
+# ── Logs & runtime data ───────────────────────
 *.log
 uvicorn.log
-
-
-# ── Data & Cache ──────────────────────────────
-# Backend data cache directory (runtime-generated)
-backend/data/
-!backend/data/.gitkeep
+SyncLogs/
 
 # Screener session pickle — runtime auth cache, never commit
 screener_session.pkl
 *.pkl
 
-# Never commit raw market data CSVs (large files)
+# Never commit raw market / personal data CSVs
 *.csv
-# Exception – keep the master universe template tracked
+# Exception – keep the master universe template tracked (seed_universe input)
 !UserData/Vicky - Master Template - Master.csv
-!backend/UserData/Vicky - Master Template - Master.csv
 
 
-# ── Frontend (React / Vite) ───────────────────
+# ── Frontend (frontend_v2 · React / Vite) ─────
 node_modules/
-frontend/node_modules/
-
-# Vite build output
-frontend/dist/
-frontend/.vite/
+frontend_v2/dist/
+frontend_v2/.vite/
+*.tsbuildinfo
 
 # Local env overrides
-frontend/.env
-frontend/.env.*
-!frontend/.env.example
+frontend_v2/.env
+frontend_v2/.env.*
+!frontend_v2/.env.example
 
-# Parcel / CRA leftovers (just in case)
 .cache/
 .parcel-cache/
+
+
+# ── Supabase local stack ──────────────────────
+supabase/.branches/
+supabase/.temp/
 
 
 # ── OS & Editor artefacts ─────────────────────
@@ -87,32 +82,22 @@ frontend/.env.*
 ._*
 Thumbs.db
 Desktop.ini
-
-# JetBrains IDEs
 .idea/
-
-# VS Code / Zoho Code IDE
 .vscode/
 *.code-workspace
-
-# Vim / Emacs
 *.swp
 *.swo
 *~
 \#*\#
 
 
-# ── Secrets & Credentials ─────────────────────────────────
+# ── Secrets & Credentials ─────────────────────
 *.pem
 *.key
 *.p12
 *.pfx
 secrets.json
 credentials.json
-
-# App-specific env files — NEVER commit these
-backend/.env
-backend/.env.local
 
 
 # ── Misc ──────────────────────────────────────

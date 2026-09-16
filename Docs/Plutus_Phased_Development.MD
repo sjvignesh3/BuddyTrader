@@ -130,7 +130,7 @@ Stages 1 → 6 form the **critical numeric path**. No frontend work begins until
 - [x] All 9 SQL migration files are drafted and their columns cross-checked against the registry by `test_registry_columns_present_in_migration`. Full Postgres dry-run against a scratch DB will run during Stage 4 CI setup.
 - [x] `plutus/config.py` raises a clear error when env vars are missing (proven by `test_config.py` — 6 tests).
 - [x] `plutus/registry/types.py` exposes `Decimal`-based aliases and rounding helpers with unit tests for banker's rounding vs half-up (28 tests).
-- [x] `README_PLUTUS.md` at the plutus root documents the layout and how to run the test suite.
+- [x] The repo-root `README.md` documents the layout and how to run the test suite (originally `plutus/README_PLUTUS.md`, folded into the root README on 2026-09-16).
 
 **Stage 1 test run:** `66 passed in 0.05s` (pytest 8.3.5, Python 3.8.10).
 
@@ -323,7 +323,7 @@ Stages 1 → 6 form the **critical numeric path**. No frontend work begins until
 - Money-safety on the wire: every Decimal is stringified in both API implementations (`plutus/api/serializers.py` + `MONEY_KEYS` set in the edge function).
 - RLS on all 9 tables (migration 010); `trades` denies anon in prep for V2.
 - Cron replaced: `render.yaml` **removed**; `.github/workflows/plutus-daily-sync.yml` and `plutus-quarterly-sync.yml` own the schedule.
-- Frontend deploys to Cloudflare Pages / Vercel (see `frontend_v2/DEPLOY.md`).
+- Frontend deploys to Vercel (see `Docs/Plutus_Free_Hosting_Guide.md`).
 - **Exit:** every column Buddy shows is present in `frontend_v2`; API tests green (`test_api_app.py`, `test_api_repository.py`, `test_api_serializers.py`); deployment gates green (`test_deployment_config.py`, `test_rls_migration.py`).
 
 ### Stage 8 — Hardening ✅ COMPLETE

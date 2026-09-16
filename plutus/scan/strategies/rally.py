@@ -1,6 +1,6 @@
 """
-20% Rally Strategy — bit-for-bit port of
-backend/app/strategies/rally_20_percent.py.
+20% Rally Strategy — bit-for-bit port of the legacy Buddy
+rally_20_percent strategy.
 
 The heavy lifting (streak detection, pivot picking) is done upstream in
 metrics/rally.py and persisted on the daily_snapshots row. This strategy

@@ -2,7 +2,7 @@
 Envelope strategy — bit-for-bit correctness gate.
 
 Every test uses Decimals only and hand-computes the expected outcome from
-the rule spec in UserData/strategy_rules.json.
+the rule spec seeded by migrations/005_strategy_configs.sql.
 """
 from __future__ import annotations
 

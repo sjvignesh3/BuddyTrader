@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  Buddy — Git line-ending normalisation
+#  Plutus — Git line-ending normalisation
 #
 #  WHY THIS FILE EXISTS:
 #  Without it, git on Windows (core.autocrlf=true) converts LF → CRLF on

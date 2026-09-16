@@ -9,8 +9,8 @@ CONTRACT:
   * snapshot is a dict projected from the `daily_snapshots` registry
     columns — every key is registry-declared (grep-gated).
   * All numeric values in snapshot are Decimal (never float).
-  * config is the strategy's block from strategy_rules.json plus any
-    per-run overrides (thresholds live in strategy_configs table Stage 7).
+  * config is the strategy's row from the `strategy_configs` table plus
+    any per-run overrides.
   * StrategyResult is a frozen dataclass; strategies MUST NOT mutate the
     snapshot dict they receive.
 """
@@ -101,7 +101,7 @@ class Strategy(ABC):
     @property
     @abstractmethod
     def strategy_id(self) -> str:
-        """Registry code — must match strategy_rules.json 'id'."""
+        """Registry code — must match `strategy_configs.strategy_id`."""
 
     @property
     @abstractmethod

@@ -1,29 +1,30 @@
 # Plutus Frontend v2
 
 Vite + React 18 + TypeScript + TanStack Query + Tailwind.
-Read-only client for the Plutus FastAPI backend.
+Client for the Plutus FastAPI backend (`plutus/api`): read-only market
+views plus the personal tools (Journal, Expenses, Position Sizer, Net Worth).
 
 ## Money safety
 
 * All monetary and ratio fields arrive from the API as **strings** (Decimal
   preserved). Never coerce to `Number` for computation — only for
   `toLocaleString` at render time. See `src/lib/money.ts`.
-* This frontend never calls Supabase directly for writes. It reads through
-  `plutus-api` which enforces RLS. Trades UI (Stage 8) will use the anon
-  Supabase client under RLS auth.
+* This frontend never writes to Supabase directly. Every read and write
+  goes through the FastAPI backend (`VITE_PLUTUS_API_URL`); the Supabase
+  anon client is used only for the sync-jobs realtime subscription.
 
 ## Dev
 
 ```bash
 cp .env.example .env.local
 npm install
-npm run dev            # http://localhost:5173 — proxies /api → :8000
+npm run dev            # http://localhost:5173 — calls VITE_PLUTUS_API_URL
 ```
 
 Start the backend separately:
 
 ```bash
-uvicorn plutus.scripts.run_api:app --reload --port 8000
+python -m plutus.scripts.run_api        # http://127.0.0.1:8000 (PLUTUS_API_PORT to change)
 ```
 
 ## Build
@@ -34,6 +35,9 @@ npm run lint
 npm run test           # Vitest — pure domain math in src/lib (sizing, net worth)
 npm run build
 ```
+
+Deployment (Vercel + Render + Supabase) is covered in
+`Docs/Plutus_Free_Hosting_Guide.md`.
 
 ## Layout
 
