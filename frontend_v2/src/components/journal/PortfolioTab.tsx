@@ -8,7 +8,8 @@ import { buildPortfolio, deriveClosedTrade, CAP_LIMITS } from "../../lib/journal
 import { fmtMoney, fmtPct } from "../../lib/money";
 import FilterBar, { CapFilter } from "./FilterBar";
 import {
-  AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, TableShell, Td, Th, useSort,
+  AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, ROW_LINK_CLS, StockLink, TableShell, Td, Th,
+  useOpenStock, useSort,
 } from "./ui";
 
 const ACCESSORS: Record<string, (h: HoldingRow) => unknown> = {
@@ -30,6 +31,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
 }) {
   const { holdings, capSummary, totals } = buildPortfolio(openTrades, ctx);
   const { sort, toggle, apply } = useSort<HoldingRow>(ACCESSORS);
+  const openStock = useOpenStock();
   const [search, setSearch] = useState("");
   const [cap, setCap] = useState<CapFilter>("All");
   const realized = closedTrades.reduce(
@@ -113,8 +115,11 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
         </thead>
         <tbody>
           {apply(filtered).map((h) => (
-            <tr key={h.symbol} className="border-t border-brand-border/60 hover:bg-brand-soft/60">
-              <Td className="font-semibold">{h.symbol}</Td>
+            <tr key={h.symbol} onClick={() => openStock(h.symbol, ctx.snaps.get(h.symbol))}
+                className={`border-t border-brand-border/60 hover:bg-brand-soft/60 ${ROW_LINK_CLS}`}>
+              <Td className="font-semibold">
+                <StockLink symbol={h.symbol} snap={ctx.snaps.get(h.symbol)} />
+              </Td>
               <Td><CapChip cap={h.cap} /></Td>
               <Td right>{h.qty}</Td>
               <Td right className="text-brand-mute">{h.lots}</Td>

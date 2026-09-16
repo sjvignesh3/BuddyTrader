@@ -16,7 +16,8 @@ import {
 import { fmtDate, fmtMoney, fmtPct } from "../../lib/money";
 import FilterBar, { CapFilter, FilterChip } from "./FilterBar";
 import {
-  AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, RowBtn, TableShell, Td, Th, useSort,
+  AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, ROW_LINK_CLS, RowActions, RowBtn,
+  StockLink, TableShell, Td, Th, useOpenStock, useSort,
 } from "./ui";
 
 /** `sig` is the POSITION's signal, carried on every lot of that symbol;
@@ -65,6 +66,7 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
   focus?: OpenFocus;
 }) {
   const { sort, toggle, apply } = useSort<Item>(ACCESSORS);
+  const openStock = useOpenStock();
   const [search, setSearch] = useState("");
   const [cap, setCap] = useState<CapFilter>("All");
   const [nearOnly, setNearOnly] = useState(false);
@@ -187,13 +189,14 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
                       ? "bg-rose-50/40 hover:bg-rose-50/70"
                       : "hover:bg-brand-soft/60";
               return (
-                <tr key={t.id} className={`border-t border-brand-border/60 ${rowCls}`}>
+                <tr key={t.id} className={`border-t border-brand-border/60 ${ROW_LINK_CLS} ${rowCls}`}
+                    onClick={() => openStock(t.symbol, ctx.snaps.get(t.symbol))}>
                   <Td className="text-brand-mute">{t.order_type ?? "—"}</Td>
                   <Td><CapChip cap={d.cap} /></Td>
                   <Td>{fmtDate(t.buy_date)}</Td>
                   <Td className="font-semibold">
                     <span className="inline-flex items-center gap-1">
-                      {t.symbol}
+                      <StockLink symbol={t.symbol} snap={ctx.snaps.get(t.symbol)} />
                       {zone === "hit" && <span title="Target reached" aria-hidden>🎯</span>}
                       {abcd?.zone === "due" && (
                         <span title={`Averaging leg ${abcd.nextLeg} eligible`} aria-hidden>🪜</span>
@@ -243,7 +246,7 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
                     <span title={note}>{note}</span>
                   </Td>
                   <Td>
-                    <span className="inline-flex gap-0.5">
+                    <RowActions>
                       {abcd?.zone === "due" && onAddLeg && (
                         <RowBtn title={`Add averaging leg ${abcd.nextLeg} — form prefilled, target ₹${fmtMoney(abcd.targetPrice)}`}
                                 onClick={() => onAddLeg(abcdLegDraft(abcd))}>🪜</RowBtn>
@@ -251,7 +254,7 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
                       <RowBtn title="Book (sell fully or partially)" onClick={() => onBook(t)}>💰</RowBtn>
                       <RowBtn title="Edit" onClick={() => onEdit(t)}>✎</RowBtn>
                       <RowBtn title="Delete" danger onClick={() => onDelete(t)}>🗑</RowBtn>
-                    </span>
+                    </RowActions>
                   </Td>
                 </tr>
               );

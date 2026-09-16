@@ -9,7 +9,8 @@ import { deriveOpportunity, num } from "../../lib/journal";
 import { fmtDate, fmtMoney, fmtPct } from "../../lib/money";
 import FilterBar, { CapFilter, FilterChip } from "./FilterBar";
 import {
-  AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, RowBtn, TableShell, Td, Th, useSort,
+  AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, ROW_LINK_CLS, RowActions, RowBtn,
+  StockLink, TableShell, Td, Th, useOpenStock, useSort,
 } from "./ui";
 
 const ACTION_STYLES: Record<string, string> = {
@@ -59,6 +60,7 @@ export default function OpportunitiesTab({ rows, ctx, onEdit, onConvert, onDelet
   onDelete: (o: Opportunity) => void;
 }) {
   const { sort, toggle, apply } = useSort<Item>(ACCESSORS);
+  const openStock = useOpenStock();
   const [search, setSearch] = useState("");
   const [cap, setCap] = useState<CapFilter>("All");
   const [action, setAction] = useState<string>("All");
@@ -135,9 +137,12 @@ export default function OpportunitiesTab({ rows, ctx, onEdit, onConvert, onDelet
       </thead>
       <tbody>
         {apply(filtered).map(({ o, d }) => (
-          <tr key={o.id} className="border-t border-brand-border/60 hover:bg-brand-soft/60">
+          <tr key={o.id} onClick={() => openStock(o.symbol, ctx.snaps.get(o.symbol))}
+              className={`border-t border-brand-border/60 hover:bg-brand-soft/60 ${ROW_LINK_CLS}`}>
             <Td>{fmtDate(o.opp_date)}</Td>
-            <Td className="font-semibold">{o.symbol}</Td>
+            <Td className="font-semibold">
+              <StockLink symbol={o.symbol} snap={ctx.snaps.get(o.symbol)} />
+            </Td>
             <Td><CapChip cap={d.cap} /></Td>
             <Td right>{fmtMoney(o.buy_price)}</Td>
             <Td right>{fmtMoney(o.limit_price)}</Td>
@@ -170,12 +175,12 @@ export default function OpportunitiesTab({ rows, ctx, onEdit, onConvert, onDelet
               <span title={o.notes ?? ""}>{o.notes ?? ""}</span>
             </Td>
             <Td>
-              <span className="inline-flex gap-0.5">
+              <RowActions>
                 <RowBtn title="Take position (convert to open trade)"
                         onClick={() => onConvert(o)}>🛒</RowBtn>
                 <RowBtn title="Edit" onClick={() => onEdit(o)}>✎</RowBtn>
                 <RowBtn title="Delete" danger onClick={() => onDelete(o)}>🗑</RowBtn>
-              </span>
+              </RowActions>
             </Td>
           </tr>
         ))}

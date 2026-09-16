@@ -500,3 +500,13 @@ export function abcdLegDraft(sig: AbcdSignal): TradeDraft {
     comments: `Leg ${sig.nextLeg} — averaging below leg ${sig.refLeg} entry ₹${money2(sig.refEntry)}`,
   };
 }
+
+// ---- Navigation -------------------------------------------------------------------
+
+/** Route to a stock's page. The DB keys snapshots by yfinance symbol
+ * ("TCS.NS") while the journal stores plain NSE symbols ("TCS"); prefer the
+ * snapshot's spelling when we have it, else assume NSE. */
+export function stockPath(symbol: string, snap?: Snapshot): string {
+  const full = snap?.symbol ?? (symbol.includes(".") ? symbol : `${symbol}.NS`);
+  return `/stocks/${encodeURIComponent(full)}`;
+}

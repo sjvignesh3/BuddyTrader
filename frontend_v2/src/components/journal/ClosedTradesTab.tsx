@@ -6,7 +6,10 @@ import type { Trade } from "../../lib/journalApi";
 import { deriveClosedTrade, num, type ClosedDerived } from "../../lib/journal";
 import { fmtDate, fmtMoney } from "../../lib/money";
 import FilterBar, { CapFilter, FilterChip } from "./FilterBar";
-import { EmptyState, GhostBtn, Pnl, RowBtn, TableShell, Td, Th, useSort } from "./ui";
+import {
+  EmptyState, GhostBtn, Pnl, ROW_LINK_CLS, RowActions, RowBtn, StockLink, TableShell, Td, Th,
+  useOpenStock, useSort,
+} from "./ui";
 
 type ResultFilter = "All" | "Wins" | "Losses";
 
@@ -37,6 +40,7 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
   onDelete: (t: Trade) => void;
 }) {
   const { sort, toggle, apply } = useSort<Item>(ACCESSORS);
+  const openStock = useOpenStock();
   const [search, setSearch] = useState("");
   const [cap, setCap] = useState<CapFilter>("All");
   const [result, setResult] = useState<ResultFilter>("All");
@@ -121,7 +125,8 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
         </thead>
         <tbody>
           {apply(filtered).map(({ t, d }) => (
-            <tr key={t.id} className="border-t border-brand-border/60 hover:bg-brand-soft/60">
+            <tr key={t.id} onClick={() => openStock(t.symbol)}
+                className={`border-t border-brand-border/60 hover:bg-brand-soft/60 ${ROW_LINK_CLS}`}>
               <Td>
                 <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold
                                  ring-1 bg-teal-50 text-teal-800 ring-teal-300">
@@ -130,7 +135,7 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
               </Td>
               <Td className="text-brand-mute">{t.order_type ?? "—"}</Td>
               <Td>{fmtDate(t.buy_date)}</Td>
-              <Td className="font-semibold">{t.symbol}</Td>
+              <Td className="font-semibold"><StockLink symbol={t.symbol} /></Td>
               <Td right>{fmtMoney(t.buy_price)}</Td>
               <Td right>{t.qty}</Td>
               <Td>{t.strategy ?? "—"}</Td>
@@ -144,10 +149,10 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
               <Td right><Pnl value={d.gainPct} suffix="%" /></Td>
               <Td right><Pnl value={d.annualPct} suffix="%" digits={1} /></Td>
               <Td>
-                <span className="inline-flex gap-0.5">
+                <RowActions>
                   <RowBtn title="Edit" onClick={() => onEdit(t)}>✎</RowBtn>
                   <RowBtn title="Delete" danger onClick={() => onDelete(t)}>🗑</RowBtn>
-                </span>
+                </RowActions>
               </Td>
             </tr>
           ))}

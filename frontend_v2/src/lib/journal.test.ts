@@ -4,6 +4,7 @@ import type { Trade } from "./journalApi";
 import type { JournalCtx } from "./journal";
 import {
   ABCD_DROP_PCT, abcdLegDraft, buildAbcdSignals, buildOpenInvested, deriveAbcd, legLabel,
+  stockPath,
 } from "./journal";
 
 const trade = (over: Partial<Trade>): Trade => ({
@@ -233,5 +234,18 @@ describe("abcdLegDraft", () => {
     const d = abcdLegDraft(deriveAbcd([a], ctx)!);
     expect(d.cap_bucket).toBeNull();
     expect(d.target_price).toBe("100");
+  });
+});
+
+describe("stockPath", () => {
+  it("prefers the snapshot's yfinance spelling, else assumes NSE", () => {
+    expect(stockPath("TCS", snap("TCS.NS", "100"))).toBe("/stocks/TCS.NS");
+    expect(stockPath("TCS", snap("TCS.BO", "100"))).toBe("/stocks/TCS.BO");
+    expect(stockPath("TCS")).toBe("/stocks/TCS.NS");
+    expect(stockPath("TCS.BO")).toBe("/stocks/TCS.BO");
+  });
+
+  it("URL-encodes symbols with special characters", () => {
+    expect(stockPath("M&M")).toBe("/stocks/M%26M.NS");
   });
 });

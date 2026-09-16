@@ -2,10 +2,50 @@
 // Shared journal UI primitives — modal, form fields, chips, markers.
 // -----------------------------------------------------------------------------
 import { ReactNode, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useCanEdit } from "../AuthGate";
+import type { Snapshot } from "../../lib/api";
 import type { AllocState } from "../../lib/journal";
-import { CAP_LIMITS } from "../../lib/journal";
+import { CAP_LIMITS, stockPath } from "../../lib/journal";
 import type { CapBucket } from "../../lib/journalApi";
+
+// ---- Row → stock page ------------------------------------------------------------
+//
+// Every journal table row opens the stock's own page, the same way Market
+// Analysis rows do. Three pieces keep that from fighting the row's controls:
+//   useOpenStock  — the row's onClick (click anywhere on the row)
+//   StockLink     — the symbol cell as a real <Link>, so keyboard users, middle-
+//                   click and "open in new tab" all work
+//   RowActions    — wraps ✎ 🗑 💰 etc. so their clicks stay on the row
+// Links and action wrappers stop propagation, so nothing navigates twice.
+
+/** Row class for a clickable journal row. */
+export const ROW_LINK_CLS = "cursor-pointer";
+
+export function useOpenStock() {
+  const navigate = useNavigate();
+  return (symbol: string, snap?: Snapshot) => navigate(stockPath(symbol, snap));
+}
+
+export function StockLink({ symbol, snap }: { symbol: string; snap?: Snapshot }) {
+  return (
+    <Link to={stockPath(symbol, snap)} onClick={(e) => e.stopPropagation()}
+          title={`Open ${symbol} — stock view`}
+          className="hover:underline underline-offset-2 hover:text-brand-accent
+                     focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/50
+                     rounded-sm">
+      {symbol}
+    </Link>
+  );
+}
+
+export function RowActions({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+      {children}
+    </span>
+  );
+}
 
 // ---- Modal ---------------------------------------------------------------------
 
