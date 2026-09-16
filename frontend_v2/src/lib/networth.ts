@@ -48,6 +48,12 @@ export const LIQUID_CLASSES: ReadonlySet<AssetClass> = new Set<AssetClass>(["Cas
 /** Classes that are not "investable" — a home is wealth, not deployable capital. */
 export const NON_INVESTABLE_CLASSES: ReadonlySet<AssetClass> = new Set<AssetClass>(["Real Estate"]);
 
+/** Classes that ARE equity exposure, counted alongside the journal's own
+ * holdings when judging how equity-heavy the portfolio is. Mutual funds are
+ * deliberately excluded: a fund may be equity, debt or hybrid and Plutus has
+ * no way to tell, so counting one would make the observation dishonest. */
+export const EQUITY_CLASSES: ReadonlySet<AssetClass> = new Set<AssetClass>(["Direct Stocks"]);
+
 export const activeAssets = (assets: Asset[]): Asset[] => assets.filter((a) => !a.archived);
 export const activeLiabilities = (rows: Liability[]): Liability[] => rows.filter((l) => !l.archived);
 
@@ -78,6 +84,13 @@ export function liabilitiesByKind(rows: Liability[]): Map<string, number> {
 export function liquidAssets(assets: Asset[]): number {
   return activeAssets(assets)
     .filter((a) => LIQUID_CLASSES.has(a.asset_class))
+    .reduce((s, a) => s + num(a.current_value), 0);
+}
+
+/** ₹ of manual assets that are shares — equity the journal does not track. */
+export function manualEquity(assets: Asset[]): number {
+  return activeAssets(assets)
+    .filter((a) => EQUITY_CLASSES.has(a.asset_class))
     .reduce((s, a) => s + num(a.current_value), 0);
 }
 
@@ -466,13 +479,16 @@ export function concentrationChecks(p: {
       out.push({ tone: "warn", text: `${top.symbol} alone is ${share.toFixed(0)}% of your net worth.` });
     }
   }
-  // 2. Equity vs investable assets (real estate excluded).
+  // 2. Equity vs investable assets (real estate excluded). Shares logged as
+  //    Direct Stocks count here too — they are the same exposure as the
+  //    journal's holdings, just held outside it.
   const nonInvestable = activeAssets(p.assets)
     .filter((a) => NON_INVESTABLE_CLASSES.has(a.asset_class))
     .reduce((s, a) => s + num(a.current_value), 0);
   const investable = totals.totalAssets - nonInvestable;
-  if (investable > 0 && totals.equity > 0) {
-    const share = (totals.equity / investable) * 100;
+  const equityTotal = totals.equity + manualEquity(p.assets);
+  if (investable > 0 && equityTotal > 0) {
+    const share = (equityTotal / investable) * 100;
     out.push({
       tone: share >= HEALTH_LIMITS.equityOfInvestablePct ? "warn" : "info",
       text: `${share.toFixed(0)}% of your investable assets are in equities.`,

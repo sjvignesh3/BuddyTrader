@@ -6,8 +6,8 @@ import type { Asset, Liability, Milestone, NetWorthSnapshot } from "./networthAp
 import {
   allocation, assetGain, averageBurn, averageRate, baselineSnapshot, buildNetWorthInsights,
   changeSince, coastCorpus, computeNetWorth, concentrationChecks, fmtIndian,
-  freedomProjection, growthStreak, growthTrend, incomeByMonth, liquidAssets, milestoneEta,
-  milestoneProgress, portfolioCashflows, portfolioXirr, runway, savingsRate, savingsSeries,
+  freedomProjection, growthStreak, growthTrend, incomeByMonth, liquidAssets, manualEquity,
+  milestoneEta, milestoneProgress, portfolioCashflows, portfolioXirr, runway, savingsRate, savingsSeries,
   snapshotBreakdown, sumAssets, sumLiabilities, xirr,
 } from "./networth";
 
@@ -79,6 +79,17 @@ describe("aggregation", () => {
     expect(a.reduce((s, x) => s + x.pct, 0)).toBeCloseTo(100);
     expect(a.find((s) => s.key === "Equity")!.pct).toBeCloseTo(26.32, 1);
     expect(allocation(0, [])).toEqual([]);
+  });
+
+  it("counts only unarchived Direct Stocks as manual equity", () => {
+    expect(manualEquity(ASSETS)).toBe(0);            // none of the fixtures are shares
+    expect(manualEquity([
+      asset({ id: 1, asset_class: "Direct Stocks", current_value: "234996" }),
+      asset({ id: 2, asset_class: "Direct Stocks", current_value: "279373" }),
+      asset({ id: 3, asset_class: "Direct Stocks", current_value: "999", archived: true }),
+      asset({ id: 4, asset_class: "Other", current_value: "500000" }),
+      asset({ id: 5, asset_class: "Mutual Fund", current_value: "300000" }),
+    ])).toBe(514_369);
   });
 
   it("asset gain only where a cost basis exists", () => {
@@ -323,6 +334,35 @@ describe("concentrationChecks", () => {
     expect(texts).toMatch(/Liabilities are 55%/);
     expect(texts).toMatch(/ABC exceeds the Small-cap limit of 2%/);
     expect(checks.filter((c) => c.tone === "warn").length).toBe(4);
+  });
+
+  it("counts direct-stock assets as equity, where the same money as Other is invisible", () => {
+    const cash = asset({ id: 2, asset_class: "Cash", current_value: "500000" });
+    const totals = computeNetWorth({ equity: 0, assets: 1_000_000, liabilities: 0 });
+    const asStocks = concentrationChecks({
+      holdings: [], totals, runway: runway(0, 0),
+      assets: [asset({ id: 1, asset_class: "Direct Stocks", current_value: "500000" }), cash],
+    });
+    expect(asStocks.map((c) => c.text).join("\n"))
+      .toMatch(/50% of your investable assets are in equities/);
+    // Logged as "Other" the same ₹5L is opaque — no equity read at all.
+    const asOther = concentrationChecks({
+      holdings: [], totals, runway: runway(0, 0),
+      assets: [asset({ id: 1, asset_class: "Other", current_value: "500000" }), cash],
+    });
+    expect(asOther.map((c) => c.text).join("\n")).not.toMatch(/in equities/);
+  });
+
+  it("adds direct stocks to the journal's own equity", () => {
+    // 3L journal equity + 2L direct stocks = 5L of 10L investable.
+    const totals = computeNetWorth({ equity: 300_000, assets: 700_000, liabilities: 0 });
+    const checks = concentrationChecks({
+      holdings: [], totals, runway: runway(0, 0),
+      assets: [asset({ id: 1, asset_class: "Direct Stocks", current_value: "200000" }),
+               asset({ id: 2, asset_class: "Cash", current_value: "500000" })],
+    });
+    expect(checks.map((c) => c.text).join("\n"))
+      .toMatch(/50% of your investable assets are in equities/);
   });
 
   it("says nothing with nothing", () => {

@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS networth_assets (
     id            BIGSERIAL     PRIMARY KEY,
     name          VARCHAR(120)  NOT NULL,
     asset_class   VARCHAR(20)   NOT NULL
-                  CHECK (asset_class IN ('Cash','FD','Mutual Fund','Gold','EPF/PPF',
-                                         'Real Estate','Crypto','Bonds','Other')),
+                  CHECK (asset_class IN ('Cash','FD','Mutual Fund','Direct Stocks','Gold',
+                                         'EPF/PPF','Real Estate','Crypto','Bonds','Other')),
     institution   VARCHAR(120),
     current_value NUMERIC(16,2) NOT NULL CHECK (current_value >= 0),
     cost_basis    NUMERIC(16,2) CHECK (cost_basis IS NULL OR cost_basis >= 0),
@@ -53,6 +53,24 @@ DROP TRIGGER IF EXISTS trg_nwasset_touch ON networth_assets;
 CREATE TRIGGER trg_nwasset_touch
     BEFORE UPDATE ON networth_assets
     FOR EACH ROW EXECUTE FUNCTION plutus_touch_updated_at();
+
+-- ---------------------------------------------------------------
+-- Idempotent evolution (safe to re-run against an existing DB).
+-- 1) 'Direct Stocks' joined the asset classes after the first
+--    release: shares held straight in a broker account were being
+--    logged as 'Other', which hid them from the equity-exposure
+--    read. CREATE TABLE IF NOT EXISTS leaves an existing table's
+--    CHECK untouched, so swap the (Postgres-named) constraint here;
+--    the list MUST match the inline CHECK above — the test gate
+--    compares them. Existing 'Other' rows are not reclassified:
+--    Plutus cannot know which of them are shares.
+-- ---------------------------------------------------------------
+ALTER TABLE networth_assets
+    DROP CONSTRAINT IF EXISTS networth_assets_asset_class_check;
+ALTER TABLE networth_assets
+    ADD CONSTRAINT networth_assets_asset_class_check
+    CHECK (asset_class IN ('Cash','FD','Mutual Fund','Direct Stocks','Gold',
+                           'EPF/PPF','Real Estate','Crypto','Bonds','Other'));
 
 -- ---- Liabilities -------------------------------------------------------
 

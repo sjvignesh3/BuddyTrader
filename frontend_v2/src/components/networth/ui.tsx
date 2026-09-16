@@ -13,6 +13,9 @@ import type { RunwayState } from "../../lib/networth";
 /** Stable colour per allocation key (Equity + asset classes). */
 export const ALLOC_COLORS: Record<string, string> = {
   Equity: "#0f766e",
+  // Deliberately adjacent to Equity's teal — direct stocks are the same kind
+  // of exposure, just held outside the journal.
+  "Direct Stocks": "#047857",
   "Mutual Fund": "#0369a1",
   Cash: "#4d7c0f",
   FD: "#0e7490",
@@ -26,8 +29,9 @@ export const ALLOC_COLORS: Record<string, string> = {
 export const colorFor = (key: string): string => ALLOC_COLORS[key] ?? "#a8a29e";
 
 export const CLASS_ICON: Record<AssetClass, string> = {
-  Cash: "💵", FD: "🏦", "Mutual Fund": "📊", Gold: "🪙", "EPF/PPF": "🛡️",
-  "Real Estate": "🏠", Crypto: "🪐", Bonds: "📜", Other: "📦",
+  Cash: "💵", FD: "🏦", "Mutual Fund": "📊", "Direct Stocks": "📈",
+  Gold: "🪙", "EPF/PPF": "🛡️", "Real Estate": "🏠", Crypto: "🪐",
+  Bonds: "📜", Other: "📦",
 };
 
 export const RUNWAY_CLS: Record<RunwayState, string> = {

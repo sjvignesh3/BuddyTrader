@@ -51,6 +51,9 @@ class TestValidators:
         assert validate_asset(ok, partial=False) is None
         assert "name" in validate_asset({**ok, "name": None}, partial=False)
         assert "asset_class" in validate_asset({**ok, "asset_class": "Stocks"}, partial=False)
+        # 019 added Direct Stocks for shares held straight in a broker account.
+        assert validate_asset({**ok, "asset_class": "Direct Stocks"}, partial=False) is None
+        assert validate_asset({"asset_class": "Direct Stocks"}, partial=True) is None
         assert "current_value" in validate_asset({**ok, "current_value": -1}, partial=False)
         assert "cost_basis" in validate_asset({**ok, "cost_basis": "x"}, partial=False)
         # partial update: only validate what is present
@@ -97,6 +100,14 @@ class TestAssets:
         assert client.put("/api/networth/assets/999", json={"notes": "x"}).status_code == 404
         assert client.delete(f"/api/networth/assets/{aid}").status_code == 200
         assert fake.tables["networth_assets"] == []
+
+    def test_direct_stocks_class_is_accepted(self, client, fake):
+        r = client.post("/api/networth/assets", json={
+            "name": "Kite Stocks", "asset_class": "Direct Stocks", "current_value": 279373,
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["asset"]["asset_class"] == "Direct Stocks"
+        assert fake.tables["networth_assets"][0]["asset_class"] == "Direct Stocks"
 
     def test_validation_errors(self, client):
         assert client.post("/api/networth/assets", json={"asset_class": "Cash",

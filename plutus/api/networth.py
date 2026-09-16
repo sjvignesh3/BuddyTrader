@@ -27,9 +27,12 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Must stay in lockstep with the CHECK constraint in migration 017 and with
+# ASSET_CLASSES in frontend_v2/src/lib/networthApi.ts — test_personal_migrations
+# gates the SQL/Python pair.
 ASSET_CLASSES = {
-    "Cash", "FD", "Mutual Fund", "Gold", "EPF/PPF", "Real Estate", "Crypto",
-    "Bonds", "Other",
+    "Cash", "FD", "Mutual Fund", "Direct Stocks", "Gold", "EPF/PPF",
+    "Real Estate", "Crypto", "Bonds", "Other",
 }
 LIABILITY_KINDS = {"Home Loan", "Personal Loan", "Car Loan", "Credit Card", "Other"}
 

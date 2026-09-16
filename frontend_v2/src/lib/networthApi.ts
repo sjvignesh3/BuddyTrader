@@ -36,9 +36,11 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
 
 // ---- Types (wire contract) ---------------------------------------------------
 
+/** Order drives the picker in the asset modal. Mirrors ASSET_CLASSES in
+ * plutus/api/networth.py and the CHECK constraint in migration 017. */
 export const ASSET_CLASSES = [
-  "Cash", "FD", "Mutual Fund", "Gold", "EPF/PPF", "Real Estate", "Crypto",
-  "Bonds", "Other",
+  "Cash", "FD", "Mutual Fund", "Direct Stocks", "Gold", "EPF/PPF",
+  "Real Estate", "Crypto", "Bonds", "Other",
 ] as const;
 export type AssetClass = (typeof ASSET_CLASSES)[number];
 

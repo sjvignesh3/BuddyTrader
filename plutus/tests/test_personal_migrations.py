@@ -124,3 +124,28 @@ class TestPersonalMigrations:
         readme = (MIGRATIONS / "README.md").read_text(encoding="utf-8")
         for name in ("015_expenses.sql", "016_sizing_plans.sql", "017_net_worth.sql"):
             assert name in readme, f"migrations/README.md must list {name}"
+
+    def test_017_evolves_the_asset_class_constraint_idempotently(self, sqls):
+        """017 follows the 003 precedent: the table is evolved in-place, so a
+        re-run must DROP ... IF EXISTS before ADD or it fails the second time."""
+        sql = sqls["017_net_worth.sql"]
+        drop = sql.index("DROP CONSTRAINT IF EXISTS networth_assets_asset_class_check")
+        add = sql.index("ADD CONSTRAINT networth_assets_asset_class_check")
+        assert drop < add
+
+    def test_asset_classes_match_the_sql_constraint(self, sqls):
+        """The allowed classes live in three places (SQL, Python, TypeScript).
+        A row the API accepts but Postgres rejects surfaces as a 502, so gate
+        the SQL/Python pair here; TypeScript is gated by tsc against the same
+        literal union. 017 carries the list twice (inline CHECK for a fresh
+        DB, ADD CONSTRAINT for an existing one) — both must agree."""
+        from plutus.api.networth import ASSET_CLASSES
+
+        lists = re.findall(r"CHECK \(asset_class IN \((.*?)\)\)",
+                           sqls["017_net_worth.sql"], re.DOTALL)
+        assert len(lists) == 2, "017 must carry the inline CHECK and the evolution ADD"
+        inline, evolved = (set(re.findall(r"'([^']+)'", body)) for body in lists)
+        assert inline == evolved, f"017 inline vs evolution lists differ: {inline ^ evolved}"
+        assert inline == ASSET_CLASSES, (
+            f"drifted: only in SQL {inline - ASSET_CLASSES}, "
+            f"only in Python {ASSET_CLASSES - inline}")
