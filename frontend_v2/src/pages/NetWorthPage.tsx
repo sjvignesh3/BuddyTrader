@@ -1,7 +1,9 @@
 // -----------------------------------------------------------------------------
 // Net Worth — the unifying financial dashboard.
-//   Equity (journal open lots × latest close, via the journal's own
-//   buildPortfolio) + manual assets − liabilities = net worth.
+//   manual assets − liabilities = net worth
+// Shares are entered as 'Direct Stocks' assets; the Trading Journal is read
+// only for the Portfolio XIRR card (a return, not a balance), and a journal
+// outage never blocks the page.
 // Expenses feed the burn rate (runway) and savings rate; monthly snapshots
 // are the only persisted derivation and power trends, ETAs and insights.
 // Every number is computed client-side in lib/networth.ts from raw rows.
@@ -90,13 +92,11 @@ export default function NetWorthPage() {
   const milestones = useMemo(() => milestonesQ.data?.milestones ?? [], [milestonesQ.data]);
   const settings = settingsQ.data?.settings ?? null;
 
-  // ---- Derived (lib/journal.ts + lib/networth.ts) ------------------------------------------
+  // ---- Derived (lib/networth.ts) --------------------------------------------------------
   const currentMonth = thisMonthKey();
-  const portfolio = useMemo(() => buildPortfolio(j.openTrades, j.ctx), [j.openTrades, j.ctx]);
-  const equity = portfolio.totals.currentValue;
   const totals = useMemo(() => computeNetWorth({
-    equity, assets: sumAssets(assets), liabilities: sumLiabilities(liabilities),
-  }), [equity, assets, liabilities]);
+    assets: sumAssets(assets), liabilities: sumLiabilities(liabilities),
+  }), [assets, liabilities]);
 
   const maps = useMemo(() => buildCategoryMaps(categoriesQ.data?.categories ?? []), [categoriesQ.data]);
   const monthly = useMemo(() => buildMonthlyStats(expensesQ.data?.expenses ?? [], maps),
@@ -104,7 +104,7 @@ export default function NetWorthPage() {
 
   const baseline = useMemo(() => baselineSnapshot(snapshots, currentMonth), [snapshots, currentMonth]);
   const delta = changeSince(totals.netWorth, baseline ? num(baseline.net_worth) : null);
-  const alloc = useMemo(() => allocation(equity, assets), [equity, assets]);
+  const alloc = useMemo(() => allocation(assets), [assets]);
   const liquid = liquidAssets(assets);
   const burn = useMemo(() => averageBurn(monthly, currentMonth, 3), [monthly, currentMonth]);
   const rw = runway(liquid, burn.avg);
@@ -119,13 +119,17 @@ export default function NetWorthPage() {
     return pts.length ? pts.reduce((s, p) => s + ((p.income ?? 0) - p.expenses), 0) / pts.length : null;
   }, [savings]);
 
-  const xirr = useMemo(() => portfolioXirr([...j.openTrades, ...j.closedTrades], equity, todayIso()),
-    [j.openTrades, j.closedTrades, equity]);
-  const health = useMemo(() => concentrationChecks({ holdings: portfolio.holdings, totals, assets, runway: rw }),
-    [portfolio.holdings, totals, assets, rw]);
+  // The journal's only role here: value the open book for the XIRR card.
+  const xirr = useMemo(() => {
+    if (j.error) return { rate: null, flows: 0, spanDays: 0, reason: "Trading Journal is unreachable." };
+    const bookValue = buildPortfolio(j.openTrades, j.ctx).totals.currentValue;
+    return portfolioXirr([...j.openTrades, ...j.closedTrades], bookValue, todayIso());
+  }, [j.error, j.openTrades, j.closedTrades, j.ctx]);
+  const health = useMemo(() => concentrationChecks({ totals, assets, runway: rw }),
+    [totals, assets, rw]);
   const insights = useMemo(() => buildNetWorthInsights({
-    totals, snaps: snapshots, currentMonth, monthly, savings, holdings: portfolio.holdings, runway: rw,
-  }), [totals, snapshots, currentMonth, monthly, savings, portfolio.holdings, rw]);
+    totals, snaps: snapshots, currentMonth, monthly, savings, assets, runway: rw,
+  }), [totals, snapshots, currentMonth, monthly, savings, assets, rw]);
 
   // Trend = past snapshots + today's live point (replaces this month's snapshot if one exists).
   const trend: TrendPoint[] = useMemo(() => {
@@ -133,7 +137,7 @@ export default function NetWorthPage() {
       .filter((s) => monthKeyOf(s.snapshot_date) !== currentMonth)
       .map((s) => ({ key: monthKeyOf(s.snapshot_date), label: monthLabel(monthKeyOf(s.snapshot_date), true),
                      value: num(s.net_worth) }));
-    if (totals.totalAssets > 0 || totals.liabilities > 0 || pts.length) {
+    if (totals.assets > 0 || totals.liabilities > 0 || pts.length) {
       pts.push({ key: currentMonth, label: monthLabel(currentMonth, true), value: totals.netWorth, live: true });
     }
     return pts;
@@ -173,11 +177,10 @@ export default function NetWorthPage() {
     mutationFn: async () => {
       const r = await networthApi.takeSnapshot({
         snapshot_date: todayIso(),
-        equity_value: totals.equity.toFixed(2),
         assets_value: totals.assets.toFixed(2),
         liabilities_value: totals.liabilities.toFixed(2),
         net_worth: totals.netWorth.toFixed(2),
-        breakdown: snapshotBreakdown(equity, assets, liabilities, portfolio.holdings),
+        breakdown: snapshotBreakdown(assets, liabilities),
       });
       // Stamp newly-crossed milestones with the month they were reached.
       await Promise.all(milestones
@@ -223,11 +226,12 @@ export default function NetWorthPage() {
     setConfirmState({ title, message, confirmLabel: "Delete", action });
 
   // ---- Render ----------------------------------------------------------------------------------
-  if (j.isLoading || assetsQ.isLoading || liabsQ.isLoading || snapsQ.isLoading
+  if (assetsQ.isLoading || liabsQ.isLoading || snapsQ.isLoading
       || incomeQ.isLoading || milestonesQ.isLoading || settingsQ.isLoading) {
     return <LoadError loading error={null} />;
   }
-  const err = j.error ?? assetsQ.error ?? liabsQ.error ?? snapsQ.error ?? incomeQ.error
+  // The journal is deliberately NOT in this list — it only feeds XIRR.
+  const err = assetsQ.error ?? liabsQ.error ?? snapsQ.error ?? incomeQ.error
     ?? milestonesQ.error ?? settingsQ.error;
   if (err) return <LoadError loading={false} error={err} />;
 
@@ -240,12 +244,11 @@ export default function NetWorthPage() {
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">Net Worth</h1>
           <p className="text-sm text-brand-mute">
-            Equity + assets − liabilities, and whether your wealth is actually growing.
+            Assets − liabilities, and whether your wealth is actually growing.
           </p>
         </div>
         <div className="text-[11px] text-brand-mute text-right">
-          <div>Equity from {portfolio.holdings.length} holding{portfolio.holdings.length === 1 ? "" : "s"}
-            {j.snapshotDate ? ` · prices as of ${j.snapshotDate}` : ""}</div>
+          <div>{assets.filter((a) => !a.archived).length} assets · {liabilities.filter((l) => !l.archived).length} liabilities</div>
           <div>{snapshotThisMonth ? `${monthLabel(currentMonth, true)} snapshot taken` : `No ${monthLabel(currentMonth, true)} snapshot yet`}</div>
         </div>
       </div>
@@ -277,7 +280,7 @@ export default function NetWorthPage() {
       )}
       {j.snapsError && (
         <div className="mb-3 px-3.5 py-2 rounded-xl bg-amber-50 ring-1 ring-amber-200 text-amber-900 text-xs">
-          Could not load market prices — equity is shown at cost until the API is reachable.
+          Could not load market prices — Portfolio XIRR values the journal&apos;s open lots at cost until the API is reachable.
         </div>
       )}
 

@@ -1,8 +1,13 @@
 // -----------------------------------------------------------------------------
 // Net Worth domain math — pure functions, no I/O, no UI.
 //
-//   Equity (journal open lots × latest close, via lib/journal buildPortfolio)
-//   + manual assets − liabilities = net worth
+//   manual assets − liabilities = net worth
+//
+// Net worth is manual-only by design: shares are entered as 'Direct Stocks'
+// assets rather than pulled from the Trading Journal, so one number is never
+// the sum of two overlapping sources. The journal is read for exactly one
+// thing here — the money-weighted return (XIRR) of the trading book — which
+// is a performance metric, not a balance.
 //
 // then everything the dashboard shows — allocation, month-over-month change,
 // portfolio XIRR, emergency runway, savings rate, milestone ETAs, freedom
@@ -15,8 +20,6 @@
 // -----------------------------------------------------------------------------
 import type { Insight } from "./expenses";
 import { addMonths, monthLabel, type MonthStats } from "./expenses";
-import type { HoldingRow } from "./journal";
-import { CAP_LIMITS } from "./journal";
 import type { Trade } from "./journalApi";
 import type {
   Asset, AssetClass, IncomeRow, Liability, Milestone, NetWorthSnapshot,
@@ -103,30 +106,26 @@ export function assetGain(a: Asset): { gain: number; pct: number | null } | null
 }
 
 export interface NetWorthTotals {
-  equity: number;
-  assets: number;        // manual assets
+  assets: number;        // all active manual assets
   liabilities: number;
-  totalAssets: number;   // equity + manual assets
-  netWorth: number;      // totalAssets − liabilities
+  netWorth: number;      // assets − liabilities
 }
 
-export function computeNetWorth(p: { equity: number; assets: number; liabilities: number }): NetWorthTotals {
-  const totalAssets = p.equity + p.assets;
-  return { ...p, totalAssets, netWorth: totalAssets - p.liabilities };
+export function computeNetWorth(p: { assets: number; liabilities: number }): NetWorthTotals {
+  return { ...p, netWorth: p.assets - p.liabilities };
 }
 
 // ---- Allocation -----------------------------------------------------------------------
 
 export interface AllocationSlice {
-  key: string;      // "Equity" or an asset class
+  key: AssetClass;
   label: string;
   value: number;
   pct: number;      // of total assets
 }
 
-export function allocation(equity: number, assets: Asset[]): AllocationSlice[] {
+export function allocation(assets: Asset[]): AllocationSlice[] {
   const slices: AllocationSlice[] = [];
-  if (equity > 0) slices.push({ key: "Equity", label: "Equities", value: equity, pct: 0 });
   assetsByClass(assets).forEach((value, cls) => {
     if (value > 0) slices.push({ key: cls, label: cls, value, pct: 0 });
   });
@@ -138,21 +137,23 @@ export function allocation(equity: number, assets: Asset[]): AllocationSlice[] {
 
 /** The breakdown persisted with a snapshot — money as strings, so the JSONB
  * record carries exactly what was shown and never a float. */
-export function snapshotBreakdown(
-  equity: number, assets: Asset[], liabilities: Liability[], holdings: HoldingRow[] = [],
-): SnapshotBreakdown {
+export function snapshotBreakdown(assets: Asset[], liabilities: Liability[]): SnapshotBreakdown {
   const a: Record<string, string> = {};
   assetsByClass(assets).forEach((v, k) => { a[k] = v.toFixed(2); });
   const l: Record<string, string> = {};
   liabilitiesByKind(liabilities).forEach((v, k) => { l[k] = v.toFixed(2); });
-  return {
-    equity: equity.toFixed(2),
-    assets: a,
-    liabilities: l,
-    holdings: holdings.map((h) => ({
-      symbol: h.symbol, value: (h.currentValue ?? h.invested).toFixed(2),
-    })),
-  };
+  return { assets: a, liabilities: l };
+}
+
+/** Equity a snapshot recorded: its Direct Stocks bucket plus the legacy
+ * journal-derived equity_value from before Net Worth went manual-only. */
+export function snapshotEquity(s: NetWorthSnapshot): number {
+  return num(s.equity_value) + num(s.breakdown?.assets?.["Direct Stocks"]);
+}
+
+/** Everything a snapshot counted on the asset side (legacy equity included). */
+export function snapshotAssets(s: NetWorthSnapshot): number {
+  return num(s.equity_value) + num(s.assets_value);
 }
 
 // ---- History ---------------------------------------------------------------------------
@@ -458,64 +459,43 @@ export function coastCorpus(target: number, realReturnPct: number, years: number
 export interface HealthCheck { tone: "warn" | "good" | "info"; text: string }
 
 export const HEALTH_LIMITS = {
-  singleStockOfNetWorthPct: 15,    // one equity vs net worth
-  equityOfInvestablePct: 70,        // equities vs investable assets
+  equityOfInvestablePct: 70,        // direct stocks vs investable assets
   debtToAssetsPct: 50,              // liabilities vs total assets
 } as const;
 
 export function concentrationChecks(p: {
-  holdings: HoldingRow[]; totals: NetWorthTotals; assets: Asset[]; runway: Runway;
+  totals: NetWorthTotals; assets: Asset[]; runway: Runway;
 }): HealthCheck[] {
   const out: HealthCheck[] = [];
   const { totals } = p;
-  if (totals.netWorth <= 0 && totals.totalAssets <= 0) return out;
+  if (totals.netWorth <= 0 && totals.assets <= 0) return out;
 
-  // 1. One equity vs net worth.
-  const top = [...p.holdings].sort(
-    (a, b) => (b.currentValue ?? b.invested) - (a.currentValue ?? a.invested))[0];
-  if (top && totals.netWorth > 0) {
-    const share = ((top.currentValue ?? top.invested) / totals.netWorth) * 100;
-    if (share >= HEALTH_LIMITS.singleStockOfNetWorthPct) {
-      out.push({ tone: "warn", text: `${top.symbol} alone is ${share.toFixed(0)}% of your net worth.` });
-    }
-  }
-  // 2. Equity vs investable assets (real estate excluded). Shares logged as
-  //    Direct Stocks count here too — they are the same exposure as the
-  //    journal's holdings, just held outside it.
+  // 1. Equity (Direct Stocks) vs investable assets (real estate excluded).
   const nonInvestable = activeAssets(p.assets)
     .filter((a) => NON_INVESTABLE_CLASSES.has(a.asset_class))
     .reduce((s, a) => s + num(a.current_value), 0);
-  const investable = totals.totalAssets - nonInvestable;
-  const equityTotal = totals.equity + manualEquity(p.assets);
-  if (investable > 0 && equityTotal > 0) {
-    const share = (equityTotal / investable) * 100;
+  const investable = totals.assets - nonInvestable;
+  const equity = manualEquity(p.assets);
+  if (investable > 0 && equity > 0) {
+    const share = (equity / investable) * 100;
     out.push({
       tone: share >= HEALTH_LIMITS.equityOfInvestablePct ? "warn" : "info",
       text: `${share.toFixed(0)}% of your investable assets are in equities.`,
     });
   }
-  // 3. Runway.
+  // 2. Runway.
   if (p.runway.months !== null) {
     out.push({
       tone: p.runway.state === "healthy" ? "good" : p.runway.state === "caution" ? "info" : "warn",
       text: `Cash + FD cover ${p.runway.months.toFixed(1)} months of average expenses.`,
     });
   }
-  // 4. Debt load.
-  if (totals.totalAssets > 0 && totals.liabilities > 0) {
-    const ratio = (totals.liabilities / totals.totalAssets) * 100;
+  // 3. Debt load.
+  if (totals.assets > 0 && totals.liabilities > 0) {
+    const ratio = (totals.liabilities / totals.assets) * 100;
     out.push({
       tone: ratio >= HEALTH_LIMITS.debtToAssetsPct ? "warn" : "info",
       text: `Liabilities are ${ratio.toFixed(0)}% of your total assets.`,
-    });
-  }
-  // 5. Cap-limit breaches, reusing the journal's markers.
-  const over = p.holdings.filter((h) => h.marker === "over");
-  if (over.length) {
-    const h = over[0]!;
-    out.push({
-      tone: "warn",
-      text: `${over.length === 1 ? h.symbol : `${over.length} holdings`} exceed${over.length === 1 ? "s" : ""} the ${h.cap ?? ""}-cap limit of ${h.cap ? CAP_LIMITS[h.cap] : "—"}% of trading capital.`,
     });
   }
   return out;
@@ -529,7 +509,7 @@ export function buildNetWorthInsights(p: {
   currentMonth: string;
   monthly: Map<string, MonthStats>;
   savings: SavingsPoint[];        // oldest → newest, ending at currentMonth
-  holdings: HoldingRow[];
+  assets: Asset[];
   runway: Runway;
 }): Insight[] {
   const out: Insight[] = [];
@@ -555,13 +535,17 @@ export function buildNetWorthInsights(p: {
   // 2. This month's change, decomposed into its driver.
   const base = baselineSnapshot(snaps, currentMonth);
   if (base) {
+    // Stock holdings are compared like-for-like: today's Direct Stocks vs
+    // what the baseline recorded for them (plus its legacy journal equity),
+    // so re-entering the journal's positions by hand is not read as a move.
     const dNw = totals.netWorth - num(base.net_worth);
-    const dEq = totals.equity - num(base.equity_value);
-    const dAs = totals.assets - num(base.assets_value);
+    const curEq = manualEquity(p.assets);
+    const dEq = curEq - snapshotEquity(base);
+    const dAs = (totals.assets - curEq) - (snapshotAssets(base) - snapshotEquity(base));
     const dLi = -(totals.liabilities - num(base.liabilities_value));
     if (Math.abs(dNw) >= 1000) {
       const parts = [
-        { name: "equity appreciation", v: dEq },
+        { name: "your stock holdings", v: dEq },
         { name: "changes in other assets", v: dAs },
         { name: "debt paid down", v: dLi },
       ].filter((x) => Math.sign(x.v) === Math.sign(dNw));
@@ -590,17 +574,7 @@ export function buildNetWorthInsights(p: {
     }
   }
 
-  // 4. Concentration (journal's own cap-limit markers).
-  const over = p.holdings.filter((h) => h.marker === "over");
-  if (over.length) {
-    const h = over.sort((a, b) => (b.allocPct ?? 0) - (a.allocPct ?? 0))[0]!;
-    out.push({
-      tone: "warn", icon: "🎯", score: 75,
-      text: `${h.symbol} is ${(h.allocPct ?? 0).toFixed(1)}% of trading capital — above the ${h.cap}-cap limit of ${h.cap ? CAP_LIMITS[h.cap] : "—"}%.`,
-    });
-  }
-
-  // 5. Savings-rate movement over three months.
+  // 4. Savings-rate movement over three months.
   const rated = p.savings.filter((s) => s.rate !== null);
   if (rated.length >= 3) {
     const a = rated[rated.length - 3]!.rate!; const b = rated[rated.length - 1]!.rate!;
@@ -612,14 +586,14 @@ export function buildNetWorthInsights(p: {
     }
   }
 
-  // 6. Runway.
+  // 5. Runway.
   if (p.runway.months !== null) {
     out.push({
       tone: p.runway.state === "healthy" ? "good" : p.runway.state === "caution" ? "info" : "warn",
       icon: "🛟", score: 60,
       text: `Your liquid assets cover about ${p.runway.months.toFixed(1)} months of average spending.`,
     });
-  } else if (totals.totalAssets > 0) {
+  } else if (totals.assets > 0) {
     out.push({
       tone: "info", icon: "🛟", score: 20,
       text: "Runway needs a month of expenses in the Expense Tracker and a Cash or FD asset here.",

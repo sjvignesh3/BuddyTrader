@@ -66,8 +66,9 @@ src/
 | `/journal` | Trading Journal | `journal_*` tables + `daily_snapshots` |
 | `/expenses` | Expense Tracker | `expense*` tables |
 | `/position-sizer` | Position Sizer | journal capital + open lots (with `stop_price`), `daily_snapshots`, `sizing_plans` |
-| `/net-worth` | Net Worth | journal open lots × latest close (equity), `networth_*` tables, expenses (burn / savings rate) |
+| `/net-worth` | Net Worth | manual `networth_*` assets & liabilities (shares as Direct Stocks), expenses (burn / savings rate); the journal only for the XIRR card |
 
-The Position Sizer and Net Worth tools never re-implement the journal's
-rules: cap-bucket limits, allocation state and portfolio value all come from
-`lib/journal.ts`, so every tool agrees on what "over the limit" means.
+The Position Sizer never re-implements the journal's rules: cap-bucket
+limits, allocation state and portfolio value all come from `lib/journal.ts`,
+so both tools agree on what "over the limit" means. Net Worth is deliberately
+manual-only so a balance is never the sum of two overlapping sources.

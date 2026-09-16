@@ -38,7 +38,7 @@ export default function OverviewTab({
   onTakeSnapshot: () => void;
   snapshotBusy: boolean;
 }) {
-  const empty = totals.totalAssets === 0 && totals.liabilities === 0;
+  const empty = totals.assets === 0 && totals.liabilities === 0;
   const current = savings[savings.length - 1] ?? null;
   const up = (delta?.abs ?? 0) >= 0;
 
@@ -72,9 +72,9 @@ export default function OverviewTab({
               )}
             </div>
             <div className="mt-4 grid grid-cols-3 gap-3 max-w-md">
-              <Mini label="Equity" value={totals.equity} to="/journal#portfolio" />
-              <Mini label="Other assets" value={totals.assets} />
+              <Mini label="Assets" value={totals.assets} />
               <Mini label="Liabilities" value={-totals.liabilities} negative />
+              <Mini label="Liquid (Cash + FD)" value={liquid} />
             </div>
           </div>
           <div className="lg:w-[40%] w-full">
@@ -108,8 +108,9 @@ export default function OverviewTab({
       {empty && (
         <SectionCard title="Getting started">
           <p className="text-sm text-brand-mute">
-            Your equity comes from open trades in the <Link to="/journal" className="text-brand-accent font-semibold hover:underline">Trading Journal</Link>.
-            Add cash, FDs, mutual funds and loans in the Assets and Liabilities tabs, and the dashboard fills in.
+            Add what you own — cash, FDs, mutual funds, direct stocks, gold, EPF/PPF, property — in the
+            Assets tab and what you owe in Liabilities, and the dashboard fills in. Stocks are entered by
+            hand as Direct Stocks; the Trading Journal is not summed in.
           </p>
         </SectionCard>
       )}
@@ -134,7 +135,7 @@ export default function OverviewTab({
           {alloc.length ? (
             <div className="flex flex-col sm:flex-row items-center gap-5">
               <Donut slices={alloc.map((a) => ({ label: a.label, value: a.value, color: colorFor(a.key) }))}
-                     centerTop={fmtIndian(totals.totalAssets, 1)} centerBottom="total assets" />
+                     centerTop={fmtIndian(totals.assets, 1)} centerBottom="total assets" />
               <div className="flex-1 w-full space-y-2.5 min-w-0">
                 {alloc.map((a) => (
                   <BarRow key={a.key} label={a.label} value={a.value} max={alloc[0]?.value ?? 1}
@@ -225,17 +226,15 @@ export default function OverviewTab({
   );
 }
 
-function Mini({ label, value, to, negative = false }: {
-  label: string; value: number; to?: string; negative?: boolean;
+function Mini({ label, value, negative = false }: {
+  label: string; value: number; negative?: boolean;
 }) {
-  const body = (
-    <>
+  return (
+    <div className="rounded-xl bg-brand-panel/70 ring-1 ring-brand-border/60 px-3 py-2 text-left min-w-0">
       <div className="text-[10px] font-bold uppercase tracking-wider text-brand-mute">{label}</div>
       <div className={`text-sm font-display font-semibold tabular-nums ${negative && value !== 0 ? "text-rose-700" : ""}`}>
         {negative && value !== 0 ? "−" : ""}{fmtIndian(Math.abs(value), 1)}
       </div>
-    </>
+    </div>
   );
-  const cls = "rounded-xl bg-brand-panel/70 ring-1 ring-brand-border/60 px-3 py-2 text-left min-w-0";
-  return to ? <Link to={to} className={`${cls} hover:ring-teal-300 block`}>{body}</Link> : <div className={cls}>{body}</div>;
 }

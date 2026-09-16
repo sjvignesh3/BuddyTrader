@@ -3,9 +3,9 @@
 // milestones and the financial-freedom settings row. Same wire contract as the
 // journal / expenses clients: money fields travel as strings (Decimal-safe).
 //
-// The equity side is NOT fetched from here — it is the Journal's open trades ×
-// the latest daily_snapshots (lib/journal.ts buildPortfolio). Everything the
-// dashboard shows is derived client-side in lib/networth.ts.
+// Net worth is manual-only: shares are 'Direct Stocks' assets, not journal
+// positions. Everything the dashboard shows is derived client-side in
+// lib/networth.ts.
 // -----------------------------------------------------------------------------
 
 import { authHeaders, handleUnauthorized } from "./auth";
@@ -76,7 +76,9 @@ export interface Liability {
   updated_at?: string;
 }
 
-/** Allocation as it stood when the snapshot was taken (money as strings). */
+/** Allocation as it stood when the snapshot was taken (money as strings).
+ * `equity` / `holdings` only appear on rows recorded while Net Worth still
+ * read the Trading Journal; new snapshots write assets + liabilities only. */
 export interface SnapshotBreakdown {
   equity?: string;
   assets?: Record<string, string>;
@@ -87,6 +89,8 @@ export interface SnapshotBreakdown {
 export interface NetWorthSnapshot {
   id: number;
   snapshot_date: string;        // always the 1st of the month
+  /** Legacy: journal-derived equity on rows taken before Net Worth went
+   * manual-only. New rows carry "0" — shares live in assets_value now. */
   equity_value: string;
   assets_value: string;
   liabilities_value: string;
@@ -121,7 +125,7 @@ export interface NetWorthSettings {
 /** Editable payloads (id / timestamps excluded). */
 export type AssetDraft = Partial<Omit<Asset, "id" | "created_at" | "updated_at">>;
 export type LiabilityDraft = Partial<Omit<Liability, "id" | "created_at" | "updated_at">>;
-export type SnapshotDraft = Omit<NetWorthSnapshot, "id" | "created_at">;
+export type SnapshotDraft = Omit<NetWorthSnapshot, "id" | "created_at" | "equity_value">;
 export type MilestoneDraft = Partial<Omit<Milestone, "id" | "created_at">>;
 export type SettingsDraft = Partial<Omit<NetWorthSettings, "id" | "updated_at">>;
 

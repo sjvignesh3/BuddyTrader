@@ -43,7 +43,7 @@ const TOOLS: Tool[] = [
   {
     icon: "🏛️",
     name: "Net Worth",
-    desc: "Equity + assets − liabilities, monthly snapshots, allocation, XIRR, runway, savings rate and milestones — your wealth command center.",
+    desc: "Assets − liabilities, monthly snapshots, allocation, XIRR, runway, savings rate and milestones — your wealth command center.",
     to: "/net-worth",
     accent: "from-violet-700 to-violet-500",
   },

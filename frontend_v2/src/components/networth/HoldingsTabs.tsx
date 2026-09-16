@@ -69,7 +69,7 @@ export function AssetsTab({ assets, onAdd, onEdit, onUpdateValue, onArchive, onD
       </div>
 
       {!visible.length ? (
-        <EmptyState text="No manual assets yet — cash, FDs, mutual funds, gold, EPF/PPF, property. Equity comes from the journal automatically."
+        <EmptyState text="No assets yet — cash, FDs, mutual funds, direct stocks, gold, EPF/PPF, property. Everything here is entered by hand; the journal is not summed in."
                     action={<OwnerOnly>
                       <GhostBtn onClick={onAdd}>Add your first asset</GhostBtn>
                     </OwnerOnly>} />

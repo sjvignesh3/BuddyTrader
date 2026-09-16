@@ -5,12 +5,14 @@ milestones and the financial-freedom settings row.
 Design contract (mirrors plutus.api.journal / plutus.api.expenses):
   * Personal single-user tool: service-role client only; anon has zero
     access to networth_* tables (RLS).
-  * The equity side is NOT stored here — it is journal_trades × the latest
-    daily_snapshots, computed by the frontend with the Journal's existing
-    portfolio logic. Live net worth, allocation %, XIRR, runway, savings
-    rate and insights are all derived client-side; the only persisted
-    derivation is the monthly snapshot, which is a deliberate historical
-    record of "what the position was at that moment".
+  * Net worth is manual-only: shares are 'Direct Stocks' assets, not journal
+    positions, so a balance is never the sum of two overlapping sources.
+    Live net worth, allocation %, runway, savings rate and insights are all
+    derived client-side; the only persisted derivation is the monthly
+    snapshot, a deliberate historical record of "what the position was at
+    that moment". Its `equity_value` column is legacy — journal-derived
+    equity on rows taken before the manual-only rule; new rows default it
+    to 0 so old history still adds up.
   * Snapshots and income are keyed by MONTH (date normalised to the 1st):
     writing the same month again replaces the row, so "Take Snapshot" is
     idempotent within a month.
@@ -136,6 +138,9 @@ def validate_liability(row: Dict[str, Any], *, partial: bool) -> Optional[str]:
 
 
 def validate_snapshot(row: Dict[str, Any]) -> Optional[str]:
+    # Legacy column: net worth no longer reads the journal, so new snapshots
+    # simply omit it. Keep it in the identity check so old rows stay honest.
+    row.setdefault("equity_value", "0")
     for key in ("equity_value", "assets_value", "liabilities_value"):
         err = _non_negative(row, key, required=True)
         if err:
@@ -238,9 +243,9 @@ def register_networth_routes(app: Any, cli: Any) -> None:
     @app.post("/api/networth/snapshots")
     @guard
     def take_snapshot(payload: dict = Body(...)) -> dict:
-        """Record (or replace) this month's snapshot. The frontend computes
-        the values with the Journal's portfolio logic and sends them here;
-        the API only checks they are self-consistent."""
+        """Record (or replace) this month's snapshot. The frontend sums the
+        manual assets and liabilities and sends them here; the API only
+        checks the row is self-consistent."""
         row = _clean(payload, SNAPSHOT_FIELDS)
         problem = validate_snapshot(row)
         if problem:

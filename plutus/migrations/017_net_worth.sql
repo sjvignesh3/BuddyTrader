@@ -98,6 +98,8 @@ CREATE TRIGGER trg_nwliab_touch
 CREATE TABLE IF NOT EXISTS networth_snapshots (
     id                BIGSERIAL     PRIMARY KEY,
     snapshot_date     DATE          NOT NULL,   -- always the 1st of the month
+    -- Legacy: journal-derived equity on rows taken before Net Worth went
+    -- manual-only (shares are 'Direct Stocks' assets now). New rows write 0.
     equity_value      NUMERIC(16,2) NOT NULL DEFAULT 0,
     assets_value      NUMERIC(16,2) NOT NULL DEFAULT 0,
     liabilities_value NUMERIC(16,2) NOT NULL DEFAULT 0,

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { MonthStats } from "./expenses";
-import type { HoldingRow } from "./journal";
 import type { Trade } from "./journalApi";
 import type { Asset, Liability, Milestone, NetWorthSnapshot } from "./networthApi";
 import {
@@ -8,7 +7,7 @@ import {
   changeSince, coastCorpus, computeNetWorth, concentrationChecks, fmtIndian,
   freedomProjection, growthStreak, growthTrend, incomeByMonth, liquidAssets, manualEquity,
   milestoneEta, milestoneProgress, portfolioCashflows, portfolioXirr, runway, savingsRate, savingsSeries,
-  snapshotBreakdown, sumAssets, sumLiabilities, xirr,
+  snapshotAssets, snapshotBreakdown, snapshotEquity, sumAssets, sumLiabilities, xirr,
 } from "./networth";
 
 // ---- fixtures ---------------------------------------------------------------------
@@ -21,9 +20,10 @@ const liab = (o: Partial<Liability>): Liability => ({
   id: 1, name: "l", kind: "Other", outstanding: "0", interest_rate: null, emi: null,
   notes: null, archived: false, ...o,
 });
-const snap = (date: string, nw: number, eq = 0, as = nw, li = 0): NetWorthSnapshot => ({
+const snap = (date: string, nw: number, eq = 0, as = nw, li = 0,
+              breakdown: NetWorthSnapshot["breakdown"] = {}): NetWorthSnapshot => ({
   id: 1, snapshot_date: date, equity_value: String(eq), assets_value: String(as),
-  liabilities_value: String(li), net_worth: String(nw), breakdown: {},
+  liabilities_value: String(li), net_worth: String(nw), breakdown,
 });
 const trade = (o: Partial<Trade>): Trade => ({
   id: 1, opportunity_id: null, order_type: null, cap_bucket: null, symbol: "TCS",
@@ -38,11 +38,6 @@ const stats = (key: string, total: number): MonthStats => ({
 });
 const monthlyOf = (entries: [string, number][]) =>
   new Map(entries.map(([k, v]) => [k, stats(k, v)]));
-const holding = (o: Partial<HoldingRow>): HoldingRow => ({
-  symbol: "TCS", cap: "Large", qty: 10, invested: 1000, allocPct: 1, currentValue: 1000,
-  pnl: 0, pnlPct: 0, marker: "ok", lots: 1, ...o,
-});
-
 const ASSETS: Asset[] = [
   asset({ id: 1, asset_class: "Cash", current_value: "150000" }),
   asset({ id: 2, asset_class: "FD", current_value: "200000", cost_basis: "180000" }),
@@ -65,20 +60,19 @@ describe("aggregation", () => {
     expect(liquidAssets(ASSETS)).toBe(350_000);      // Cash + FD, archived excluded
   });
 
-  it("equity + assets − liabilities = net worth", () => {
-    const t = computeNetWorth({ equity: 250_000, assets: 700_000, liabilities: 120_000 });
-    expect(t.totalAssets).toBe(950_000);
-    expect(t.netWorth).toBe(830_000);
-    expect(computeNetWorth({ equity: 0, assets: 0, liabilities: 0 }).netWorth).toBe(0);
-    expect(computeNetWorth({ equity: 0, assets: 100, liabilities: 300 }).netWorth).toBe(-200);
+  it("assets − liabilities = net worth (manual-only; the journal is never summed in)", () => {
+    const t = computeNetWorth({ assets: 700_000, liabilities: 120_000 });
+    expect(t.netWorth).toBe(580_000);
+    expect(computeNetWorth({ assets: 0, liabilities: 0 }).netWorth).toBe(0);
+    expect(computeNetWorth({ assets: 100, liabilities: 300 }).netWorth).toBe(-200);
   });
 
   it("allocation is sorted by value with % of total assets", () => {
-    const a = allocation(250_000, ASSETS);
-    expect(a.map((s) => s.key)).toEqual(["Mutual Fund", "Equity", "FD", "Cash", "Gold"]);
+    const a = allocation(ASSETS);
+    expect(a.map((s) => s.key)).toEqual(["Mutual Fund", "FD", "Cash", "Gold"]);
     expect(a.reduce((s, x) => s + x.pct, 0)).toBeCloseTo(100);
-    expect(a.find((s) => s.key === "Equity")!.pct).toBeCloseTo(26.32, 1);
-    expect(allocation(0, [])).toEqual([]);
+    expect(a.find((s) => s.key === "Mutual Fund")!.pct).toBeCloseTo(42.86, 1);
+    expect(allocation([])).toEqual([]);
   });
 
   it("counts only unarchived Direct Stocks as manual equity", () => {
@@ -98,13 +92,24 @@ describe("aggregation", () => {
     expect(assetGain(asset({ current_value: "10", cost_basis: "0" }))).toEqual({ gain: 10, pct: null });
   });
 
-  it("snapshot breakdown keeps money as fixed strings", () => {
-    const b = snapshotBreakdown(250_000, ASSETS, LIABS,
-                                [holding({ symbol: "TCS", currentValue: 250_000 })]);
-    expect(b.equity).toBe("250000.00");
-    expect(b.assets).toEqual({ Cash: "150000.00", FD: "200000.00", "Mutual Fund": "300000.00", Gold: "50000.00" });
-    expect(b.liabilities).toEqual({ "Car Loan": "100000.00", "Credit Card": "20000.00" });
-    expect(b.holdings).toEqual([{ symbol: "TCS", value: "250000.00" }]);
+  it("snapshot breakdown keeps money as fixed strings and carries no journal fields", () => {
+    const b = snapshotBreakdown(ASSETS, LIABS);
+    expect(b).toEqual({
+      assets: { Cash: "150000.00", FD: "200000.00", "Mutual Fund": "300000.00", Gold: "50000.00" },
+      liabilities: { "Car Loan": "100000.00", "Credit Card": "20000.00" },
+    });
+  });
+
+  it("reads old (journal-era) and new snapshots on one scale", () => {
+    // Old row: journal equity in equity_value, nothing in the breakdown.
+    const old = snap("2026-08-01", 900_000, 500_000, 500_000, 100_000);
+    expect(snapshotEquity(old)).toBe(500_000);
+    expect(snapshotAssets(old)).toBe(1_000_000);
+    // New row: equity_value is 0, shares sit in the Direct Stocks bucket.
+    const fresh = snap("2026-09-01", 950_000, 0, 1_050_000, 100_000,
+                       { assets: { "Direct Stocks": "520000.00", Cash: "530000.00" } });
+    expect(snapshotEquity(fresh)).toBe(520_000);
+    expect(snapshotAssets(fresh)).toBe(1_050_000);
   });
 
   it("formats the Indian scale", () => {
@@ -320,53 +325,36 @@ describe("freedom", () => {
 // ---- concentration / insights ---------------------------------------------------------------
 
 describe("concentrationChecks", () => {
-  it("flags a dominant stock, heavy equity, debt and cap breaches", () => {
-    const totals = computeNetWorth({ equity: 800_000, assets: 300_000, liabilities: 600_000 });
-    const checks = concentrationChecks({
-      holdings: [holding({ symbol: "ABC", currentValue: 200_000, marker: "over", cap: "Small", allocPct: 3 }),
-                 holding({ symbol: "DEF", currentValue: 600_000 })],
-      totals, assets: [asset({ asset_class: "Real Estate", current_value: "300000" })],
-      runway: runway(0, 0),
-    });
+  it("flags heavy equity (real estate excluded) and a heavy debt load", () => {
+    const assets = [asset({ id: 1, asset_class: "Real Estate", current_value: "300000" }),
+                    asset({ id: 2, asset_class: "Direct Stocks", current_value: "800000" })];
+    const totals = computeNetWorth({ assets: 1_100_000, liabilities: 600_000 });
+    const checks = concentrationChecks({ totals, assets, runway: runway(0, 0) });
     const texts = checks.map((c) => c.text).join("\n");
-    expect(texts).toMatch(/DEF alone is 120%/);
     expect(texts).toMatch(/100% of your investable assets are in equities/); // RE excluded
     expect(texts).toMatch(/Liabilities are 55%/);
-    expect(texts).toMatch(/ABC exceeds the Small-cap limit of 2%/);
-    expect(checks.filter((c) => c.tone === "warn").length).toBe(4);
+    expect(checks.filter((c) => c.tone === "warn").length).toBe(2);
   });
 
   it("counts direct-stock assets as equity, where the same money as Other is invisible", () => {
     const cash = asset({ id: 2, asset_class: "Cash", current_value: "500000" });
-    const totals = computeNetWorth({ equity: 0, assets: 1_000_000, liabilities: 0 });
+    const totals = computeNetWorth({ assets: 1_000_000, liabilities: 0 });
     const asStocks = concentrationChecks({
-      holdings: [], totals, runway: runway(0, 0),
+      totals, runway: runway(0, 0),
       assets: [asset({ id: 1, asset_class: "Direct Stocks", current_value: "500000" }), cash],
     });
     expect(asStocks.map((c) => c.text).join("\n"))
       .toMatch(/50% of your investable assets are in equities/);
     // Logged as "Other" the same ₹5L is opaque — no equity read at all.
     const asOther = concentrationChecks({
-      holdings: [], totals, runway: runway(0, 0),
+      totals, runway: runway(0, 0),
       assets: [asset({ id: 1, asset_class: "Other", current_value: "500000" }), cash],
     });
     expect(asOther.map((c) => c.text).join("\n")).not.toMatch(/in equities/);
   });
 
-  it("adds direct stocks to the journal's own equity", () => {
-    // 3L journal equity + 2L direct stocks = 5L of 10L investable.
-    const totals = computeNetWorth({ equity: 300_000, assets: 700_000, liabilities: 0 });
-    const checks = concentrationChecks({
-      holdings: [], totals, runway: runway(0, 0),
-      assets: [asset({ id: 1, asset_class: "Direct Stocks", current_value: "200000" }),
-               asset({ id: 2, asset_class: "Cash", current_value: "500000" })],
-    });
-    expect(checks.map((c) => c.text).join("\n"))
-      .toMatch(/50% of your investable assets are in equities/);
-  });
-
   it("says nothing with nothing", () => {
-    expect(concentrationChecks({ holdings: [], totals: computeNetWorth({ equity: 0, assets: 0, liabilities: 0 }),
+    expect(concentrationChecks({ totals: computeNetWorth({ assets: 0, liabilities: 0 }),
                                  assets: [], runway: runway(0, 0) })).toEqual([]);
   });
 });
@@ -376,39 +364,56 @@ describe("buildNetWorthInsights", () => {
 
   it("asks for snapshots before it has two", () => {
     const ins = buildNetWorthInsights({
-      totals: computeNetWorth({ equity: 0, assets: 100, liabilities: 0 }), snaps: [],
-      currentMonth: "2026-09", monthly, savings: [], holdings: [], runway: runway(0, 0),
+      totals: computeNetWorth({ assets: 100, liabilities: 0 }), snaps: [],
+      currentMonth: "2026-09", monthly, savings: [], assets: [], runway: runway(0, 0),
     });
     expect(ins[0]!.text).toMatch(/first monthly snapshot/);
   });
 
   it("attributes this month's change to its driver and notices a streak", () => {
+    // Journal-era baselines: their equity lives in equity_value.
     const snaps = [snap("2026-06-01", 900_000, 400_000, 600_000, 100_000),
                    snap("2026-07-01", 950_000, 450_000, 600_000, 100_000),
                    snap("2026-08-01", 1_000_000, 500_000, 600_000, 100_000)];
-    const totals = computeNetWorth({ equity: 580_000, assets: 610_000, liabilities: 100_000 }); // +90k, 80k equity
+    // Today, manual-only: 5.8L Direct Stocks + 6.1L cash − 1L debt = 10.9L (+90k, of which +80k stocks).
+    const assets = [asset({ id: 1, asset_class: "Direct Stocks", current_value: "580000" }),
+                    asset({ id: 2, asset_class: "Cash", current_value: "610000" })];
+    const totals = computeNetWorth({ assets: 1_190_000, liabilities: 100_000 });
     const ins = buildNetWorthInsights({
-      totals, snaps, currentMonth: "2026-09", monthly,
+      totals, snaps, currentMonth: "2026-09", monthly, assets,
       savings: [{ key: "2026-07", income: 100_000, expenses: 69_000, rate: 31 },
                 { key: "2026-08", income: 100_000, expenses: 65_000, rate: 35 },
                 { key: "2026-09", income: 100_000, expenses: 62_000, rate: 38 }],
-      holdings: [holding({ symbol: "ABC", marker: "over", cap: "Micro", allocPct: 2.1 })],
       runway: runway(350_000, 60_000),
     });
     const texts = ins.map((i) => i.text);
     expect(texts).toContainEqual(expect.stringMatching(/increased for 2 consecutive months/));
-    expect(texts).toContainEqual(expect.stringMatching(/89% of this month's net-worth increase came from equity appreciation/));
+    expect(texts).toContainEqual(expect.stringMatching(/89% of this month's net-worth increase came from your stock holdings/));
     expect(texts).toContainEqual(expect.stringMatching(/savings rate improved from 31% to 38%/));
-    expect(texts).toContainEqual(expect.stringMatching(/ABC is 2.1% of trading capital — above the Micro-cap limit of 1.5%/));
     expect(texts).toContainEqual(expect.stringMatching(/cover about 5.8 months/));
     expect(ins.length).toBeLessThanOrEqual(6);
   });
 
+  it("does not read re-entering journal equity by hand as a wealth move", () => {
+    // Aug: 5L journal equity + 6L other. Sep: the same 5L typed in as Direct Stocks.
+    const snaps = [snap("2026-07-01", 1_050_000, 500_000, 600_000, 50_000),
+                   snap("2026-08-01", 1_100_000, 500_000, 600_000, 0)];
+    const assets = [asset({ id: 1, asset_class: "Direct Stocks", current_value: "500000" }),
+                    asset({ id: 2, asset_class: "Cash", current_value: "700000" })];  // +1L cash
+    const totals = computeNetWorth({ assets: 1_200_000, liabilities: 0 });
+    const ins = buildNetWorthInsights({
+      totals, snaps, currentMonth: "2026-09", monthly, assets, savings: [], runway: runway(0, 0),
+    });
+    const texts = ins.map((i) => i.text).join("\n");
+    expect(texts).toMatch(/100% of this month's net-worth increase came from changes in other assets/);
+    expect(texts).not.toMatch(/stock holdings/);
+  });
+
   it("links a slowdown to a spending jump", () => {
     const snaps = [snap("2026-07-01", 900_000), snap("2026-08-01", 1_000_000)];  // +100k last month
-    const totals = computeNetWorth({ equity: 0, assets: 1_020_000, liabilities: 0 }); // only +20k now
+    const totals = computeNetWorth({ assets: 1_020_000, liabilities: 0 }); // only +20k now
     const ins = buildNetWorthInsights({
-      totals, snaps, currentMonth: "2026-09", monthly, savings: [], holdings: [], runway: runway(0, 0),
+      totals, snaps, currentMonth: "2026-09", monthly, savings: [], assets: [], runway: runway(0, 0),
     });
     expect(ins.map((i) => i.text)).toContainEqual(expect.stringMatching(/growth slowed.*expenses rose 30%/));
   });

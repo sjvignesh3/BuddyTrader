@@ -72,6 +72,13 @@ class TestValidators:
         good = {"equity_value": "100", "assets_value": "50", "liabilities_value": "30",
                 "net_worth": "120"}
         assert validate_snapshot(good) is None
+        # Manual-only snapshots omit the legacy equity_value; it defaults to 0
+        # and still takes part in the identity check.
+        fresh = {"assets_value": "150", "liabilities_value": "30", "net_worth": "120"}
+        assert validate_snapshot(fresh) is None
+        assert fresh["equity_value"] == "0"
+        assert "must equal" in validate_snapshot(
+            {"assets_value": "150", "liabilities_value": "30", "net_worth": "150"})
         assert "net_worth must equal" in validate_snapshot({**good, "net_worth": "130"})
         assert "equity_value" in validate_snapshot({**good, "equity_value": None})
         assert "breakdown" in validate_snapshot({**good, "breakdown": []})
@@ -156,6 +163,14 @@ class TestSnapshots:
         client.post("/api/networth/snapshots", json={**self.BODY, "snapshot_date": "2026-10-05"})
         rows = client.get("/api/networth/snapshots").json()["snapshots"]
         assert [s["snapshot_date"] for s in rows] == ["2026-10-01", "2026-09-01"]
+
+    def test_snapshot_without_equity_value_stores_zero(self, client, fake):
+        r = client.post("/api/networth/snapshots", json={
+            "snapshot_date": "2026-10-01", "assets_value": "1164369",
+            "liabilities_value": "100000", "net_worth": "1064369",
+            "breakdown": {"assets": {"Direct Stocks": "514369.00"}}})
+        assert r.status_code == 200, r.text
+        assert str(fake.tables["networth_snapshots"][0]["equity_value"]) == "0"
 
     def test_snapshot_rejects_inconsistent_total(self, client):
         r = client.post("/api/networth/snapshots", json={**self.BODY, "net_worth": "1"})

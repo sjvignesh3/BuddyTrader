@@ -4,7 +4,7 @@
 // -----------------------------------------------------------------------------
 import { monthLabel } from "../../lib/expenses";
 import { fmtDate, fmtMoney } from "../../lib/money";
-import { num, sortSnapshots, type SavingsPoint } from "../../lib/networth";
+import { num, snapshotAssets, sortSnapshots, type SavingsPoint } from "../../lib/networth";
 import type { NetWorthSnapshot } from "../../lib/networthApi";
 import { SectionCard } from "../expenses/ui";
 import { EmptyState, Pnl, PrimaryBtn, RowBtn, TableShell, Td, Th } from "../journal/ui";
@@ -66,7 +66,7 @@ export default function HistoryTab({ snapshots, trend, savings, onTakeSnapshot, 
         <TableShell>
           <thead>
             <tr className="bg-brand-soft">
-              <Th>Month</Th><Th right>Equity</Th><Th right>Other assets</Th>
+              <Th>Month</Th><Th right>Assets</Th>
               <Th right>Liabilities</Th><Th right>Net worth</Th><Th right>Change</Th>
               <Th>Taken</Th><Th />
             </tr>
@@ -79,8 +79,7 @@ export default function HistoryTab({ snapshots, trend, savings, onTakeSnapshot, 
               return (
                 <tr key={s.id} className="border-t border-brand-border/60 hover:bg-brand-soft/60">
                   <Td className="font-semibold">{monthLabel(s.snapshot_date.slice(0, 7))}</Td>
-                  <Td right>{fmtMoney(s.equity_value, 0)}</Td>
-                  <Td right>{fmtMoney(s.assets_value, 0)}</Td>
+                  <Td right>{fmtMoney(snapshotAssets(s), 0)}</Td>
                   <Td right className="text-rose-700">{num(s.liabilities_value) ? `−${fmtMoney(s.liabilities_value, 0)}` : "—"}</Td>
                   <Td right className="font-semibold">{fmtMoney(s.net_worth, 0)}</Td>
                   <Td right>
