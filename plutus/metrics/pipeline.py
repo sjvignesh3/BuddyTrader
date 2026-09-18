@@ -40,7 +40,7 @@ class SnapshotInputs:
     """Everything the pipeline needs. Kept as a dataclass so Stage 4 sync
     worker builds it once from Result[dict] payloads."""
     symbol: str
-    snapshot_date: date
+    snapshot_date: date                     # as-of UPPER BOUND — see compute_snapshot
     bars: Sequence[OHLCVBar]                # sorted oldest → newest
     info: Dict[str, Any]                    # yfinance .info payload
     meta: Dict[str, Any] = field(default_factory=dict)
@@ -65,8 +65,12 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
     Build a `daily_snapshots` row from raw inputs.
 
     Returns a dict with:
-        - 'symbol', 'snapshot_date'
-        - OHLCV of the latest bar
+        - 'symbol', 'snapshot_date' — the SESSION date of the newest bar on
+          or before `inp.snapshot_date`. The row is labelled by the session
+          it describes, never by the run date: a pre-market or weekend run
+          refreshes the last session's row instead of stamping its prices
+          with a date on which the market has not traded yet.
+        - OHLCV of that bar
         - Every derived metric (DMA / 52W / ATH / rally / market cap / PE/PB)
         - 'errors': list[str] — empty on a clean run
     """
@@ -110,6 +114,10 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
         return row
 
     latest = bars[-1]
+    row["snapshot_date"] = latest.d
+    if inp.meta and str(inp.meta.get("marketState") or "").upper() == "REGULAR":
+        errors.append("close is intraday (market open at fetch time) — "
+                      "not a settled session close")
     row["open"] = _safe(sanity_check_price, latest.open,
                         errors=errors, label="open", field="open")
     row["high"] = _safe(sanity_check_price, latest.high,

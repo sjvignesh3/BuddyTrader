@@ -138,7 +138,10 @@ class TestRunSymbol:
         assert rep.ok
         assert row is not None
         assert row["symbol"] == "RELIANCE.NS"
-        assert row["snapshot_date"] == date(2024, 6, 1)
+        # Labelled by the SESSION the row describes — the newest bar on or
+        # before as_of (the fake history ends 2023-09-08) — not the run date.
+        assert row["snapshot_date"] == date(2023, 9, 8)
+        assert rep.session_date == date(2023, 9, 8)
         assert row["cap_bucket"] in ("Large", "Mid", "Small", "Micro")
         # market_cap must be Decimal, never float — money-safety gate
         assert isinstance(row["market_cap"], Decimal)
@@ -245,6 +248,27 @@ class TestRunAll:
         if payload is not None:
             assert "BROKEN.NS" in payload["failed_symbols"]
 
+    def test_sync_jobs_payload_carries_session_accounting(self):
+        upserter = _FakeUpsert()
+        w = DailySyncWorker(
+            fetch_info=_ok_fetch_info,
+            fetch_history=_ok_fetch_history,
+            upsert=upserter,
+        )
+        # Saturday as_of: expected session is Friday 2024-05-31; the fake
+        # history ends 2023-09-08, so the run reports lag, not failure.
+        rep = w.run_all(["A.NS"], as_of=date(2024, 6, 1))
+        assert rep.session_date == date(2023, 9, 8)
+        assert rep.expected_session_date == date(2024, 5, 31)
+        assert rep.stale_symbols == {}
+        assert rep.symbols_failed == 0
+        job_call = next(c for c in upserter.calls if c["table"] == "sync_jobs")
+        payload = job_call["rows"][0].get("payload_json")
+        if payload is not None:
+            assert payload["session_date"] == "2023-09-08"
+            assert payload["expected_session_date"] == "2024-05-31"
+            assert payload["stale_symbols"] == {}
+
     def test_upsert_failure_recorded(self):
         upserter = _FakeUpsert(fail_table="daily_snapshots")
         w = DailySyncWorker(
@@ -255,3 +279,95 @@ class TestRunAll:
         rep = w.run_all(["A.NS"], as_of=date(2024, 6, 1))
         assert rep.upsert_errors == ["simulated failure"]
         assert rep.snapshots_written == 0
+
+
+# ---------------------------------------------------------------------------
+# Quote-derived session bar — Yahoo's daily bar for the last session lags
+# overnight (NaN, dropped) while the quote already carries its close.
+# ---------------------------------------------------------------------------
+def _epoch_ist(y, m, d, hh=15, mm=30):
+    from datetime import datetime, timedelta, timezone
+    ist = timezone(timedelta(hours=5, minutes=30))
+    return int(datetime(y, m, d, hh, mm, tzinfo=ist).timestamp())
+
+
+def _quote_info(session=(2023, 9, 11), state="CLOSED", price=225.0):
+    info = _fake_info()
+    info.update({
+        "marketState": state,
+        "regularMarketTime": _epoch_ist(*session),
+        "regularMarketPrice": price,
+        "regularMarketOpen": price - 2,
+        "regularMarketDayHigh": price + 3,
+        "regularMarketDayLow": price - 4,
+        "regularMarketVolume": 123_456,
+    })
+    return info
+
+
+class TestQuoteSessionBar:
+    def test_quote_newer_than_history_is_appended_and_labels_the_row(self):
+        # History ends Fri 2023-09-08; the quote is Mon 2023-09-11's close.
+        w = DailySyncWorker(
+            fetch_info=lambda s: Result.success(_quote_info(), symbol=s, attempts=1),
+            fetch_history=_ok_fetch_history,
+            upsert=_FakeUpsert(),
+            load_screener_ratios=_fake_ratios_loader,
+        )
+        rep, row = w.run_symbol("RELIANCE.NS", date(2023, 9, 12))
+        assert rep.ok
+        assert row["snapshot_date"] == date(2023, 9, 11)
+        assert row["close"] == Decimal("225.00")
+        assert row["open"] == Decimal("223.00")
+        assert row["high"] == Decimal("228.00")
+        assert row["low"] == Decimal("221.00")
+        assert row["volume"] == 123_456
+        assert any("synthesized from the quote" in wmsg for wmsg in rep.warnings)
+
+    def test_quote_beyond_as_of_is_ignored_for_backfills(self):
+        # --as-of 2023-09-08 must reproduce THAT session even though the
+        # quote already describes 2023-09-11.
+        w = DailySyncWorker(
+            fetch_info=lambda s: Result.success(_quote_info(), symbol=s, attempts=1),
+            fetch_history=_ok_fetch_history,
+            upsert=_FakeUpsert(),
+            load_screener_ratios=_fake_ratios_loader,
+        )
+        rep, row = w.run_symbol("RELIANCE.NS", date(2023, 9, 8))
+        assert row["snapshot_date"] == date(2023, 9, 8)
+        assert not any("synthesized" in wmsg for wmsg in rep.warnings)
+
+    def test_regular_session_quote_is_not_synthesized_and_row_is_flagged(self):
+        # Market open: history is authoritative; the row carries an
+        # "intraday" note so nobody mistakes it for a settled close.
+        w = DailySyncWorker(
+            fetch_info=lambda s: Result.success(
+                _quote_info(state="REGULAR"), symbol=s, attempts=1),
+            fetch_history=_ok_fetch_history,
+            upsert=_FakeUpsert(),
+            load_screener_ratios=_fake_ratios_loader,
+        )
+        rep, row = w.run_symbol("RELIANCE.NS", date(2023, 9, 12))
+        assert row["snapshot_date"] == date(2023, 9, 8)
+        assert any("intraday" in wmsg for wmsg in rep.warnings)
+
+    def test_stale_symbols_reported_when_one_symbol_lags(self):
+        def _info(sym):
+            if sym == "LAG.NS":
+                return _ok_fetch_info(sym)          # no quote -> ends 2023-09-08
+            return Result.success(_quote_info(), symbol=sym, attempts=1)
+        upserter = _FakeUpsert()
+        w = DailySyncWorker(
+            fetch_info=_info,
+            fetch_history=_ok_fetch_history,
+            upsert=upserter,
+            load_screener_ratios=_fake_ratios_loader,
+        )
+        rep = w.run_all(["A.NS", "LAG.NS"], as_of=date(2023, 9, 12))
+        assert rep.session_date == date(2023, 9, 11)
+        assert rep.stale_symbols == {"LAG.NS": "2023-09-08"}
+        assert rep.symbols_failed == 0            # stale is a warning, not a failure
+        job_call = next(c for c in upserter.calls if c["table"] == "sync_jobs")
+        payload = job_call["rows"][0].get("payload_json")
+        if payload is not None:
+            assert payload["stale_symbols"] == {"LAG.NS": "2023-09-08"}

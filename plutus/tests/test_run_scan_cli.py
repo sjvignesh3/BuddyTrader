@@ -48,6 +48,19 @@ class _StubEngine:
         )
 
 
+class _ResolvingEngine(_StubEngine):
+    """Stub with the real engine's `resolve_snapshot_date` hook."""
+
+    def __init__(self, *, resolved, **kw):
+        super().__init__(**kw)
+        self.resolved = resolved
+        self.asked = []
+
+    def resolve_snapshot_date(self, on_or_before):
+        self.asked.append(on_or_before)
+        return self.resolved
+
+
 class TestCLI:
     def test_happy_path_exit_0(self, capsys):
         eng = _StubEngine()
@@ -96,13 +109,40 @@ class TestCLI:
         )
         assert rc == 1
 
-    def test_per_symbol_error_returns_1(self):
+    def test_per_symbol_error_is_logged_not_fatal(self, caplog):
+        # One symbol's strategy error must not fail the workflow while the
+        # other results were written — it is logged as a warning instead.
         eng = _StubEngine(result_error=True)
+        with caplog.at_level("WARNING", logger="plutus.run_scan"):
+            rc = run_scan.main(
+                ["--pool", "F40", "--as-of", "2024-06-01"],
+                engine=eng,
+            )
+        assert rc == 0
+        assert "strategy evaluation error" in caplog.text
+        assert "F40/X/envelope_200dma: boom" in caplog.text
+
+    def test_as_of_defaults_to_today_ist(self):
+        eng = _StubEngine()
+        rc = run_scan.main(["--pool", "F40"], engine=eng)
+        assert rc == 0
+        assert eng.calls[0]["snapshot_date"] == run_scan._today_ist()
+
+    def test_resolver_picks_newest_session_on_or_before(self):
+        # Rows are labelled by SESSION date: a Saturday run must scan Friday.
+        eng = _ResolvingEngine(resolved=date(2024, 5, 31))
         rc = run_scan.main(
-            ["--pool", "F40", "--as-of", "2024-06-01"],
-            engine=eng,
-        )
-        assert rc == 1
+            ["--pool", "F40", "--as-of", "2024-06-01"], engine=eng)
+        assert rc == 0
+        assert eng.asked == [date(2024, 6, 1)]
+        assert eng.calls[0]["snapshot_date"] == date(2024, 5, 31)
+
+    def test_resolver_none_means_no_snapshots_exit_2(self):
+        eng = _ResolvingEngine(resolved=None)
+        rc = run_scan.main(
+            ["--pool", "F40", "--as-of", "2024-06-01"], engine=eng)
+        assert rc == 2
+        assert eng.calls == []
 
     def test_triggered_by_recorded(self):
         eng = _StubEngine()

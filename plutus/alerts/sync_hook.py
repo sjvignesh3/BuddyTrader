@@ -43,6 +43,7 @@ def _summary_lines(run_report_json: Dict[str, Any]) -> list[str]:
     lines = [
         f"job_type: {run_report_json.get('job_type')}",
         f"as_of:    {run_report_json.get('as_of_date')}",
+        f"session:  {run_report_json.get('session_date', 'n/a')}",
         f"total:    {run_report_json.get('symbols_total')}",
         f"ok:       {run_report_json.get('symbols_ok')}",
         f"failed:   {run_report_json.get('symbols_failed')}",
@@ -53,6 +54,9 @@ def _summary_lines(run_report_json: Dict[str, Any]) -> list[str]:
     upsert = run_report_json.get("upsert_errors") or []
     if upsert:
         lines.append(f"upsert_errors ({len(upsert)}): {upsert[:3]}")
+    stale = run_report_json.get("stale_symbols") or {}
+    if stale:
+        lines.append(f"stale_symbols ({len(stale)}): {list(stale)[:10]}")
     failed_syms = [
         s.get("symbol") for s in (run_report_json.get("per_symbol") or [])
         if not s.get("ok")

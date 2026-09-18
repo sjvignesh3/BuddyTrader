@@ -248,8 +248,10 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
             except Exception as exc:  # noqa: BLE001
                 log.warning("pool lookup failed: %s", exc)
             eng = ScanEngine(supabase_client=client)
+            # Rows are labelled by session date — scan the one just written.
+            scan_date = eng.resolve_snapshot_date(as_of) or as_of
             for pool in sorted(pools):
-                eng.run(pool_code=pool, snapshot_date=as_of,
+                eng.run(pool_code=pool, snapshot_date=scan_date,
                         triggered_by="api")
             log.info("on-demand sync done: %s (pools %s)", symbols, sorted(pools))
         except Exception as exc:  # noqa: BLE001

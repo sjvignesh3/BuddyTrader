@@ -17,7 +17,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field as dc_field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from plutus.adapters import supabase_client as sb
@@ -25,7 +25,12 @@ from plutus.adapters import yf_client as yf
 from plutus.adapters.result import Result
 from plutus.metrics.pipeline import SnapshotInputs, compute_snapshot
 from plutus.registry.fields import fields_for
-from plutus.sync.history_builder import bars_from_df, extract_meta
+from plutus.sync.history_builder import (
+    bars_from_df,
+    extract_meta,
+    merge_quote_bar,
+    quote_bar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +84,8 @@ class SymbolReport:
     fetch_attempts: int
     warnings: List[str] = dc_field(default_factory=list)
     error: Optional[str] = None
+    # The trading session the written row describes (its snapshot_date).
+    session_date: Optional[date] = None
 
     def as_json(self) -> Dict[str, Any]:
         return {
@@ -88,6 +95,7 @@ class SymbolReport:
             "fetch_attempts": self.fetch_attempts,
             "warnings": list(self.warnings),
             "error": self.error,
+            "session_date": self.session_date.isoformat() if self.session_date else None,
         }
 
 
@@ -105,10 +113,20 @@ class RunReport:
     per_symbol: List[SymbolReport] = dc_field(default_factory=list)
     upsert_errors: List[str] = dc_field(default_factory=list)
     sync_job_id: Optional[str] = None
+    # Session accounting — rows are labelled by the session they describe,
+    # so a run can legitimately land on a date before `as_of_date` (weekend,
+    # holiday, or Yahoo not having published the last session yet).
+    session_date: Optional[date] = None            # newest session any symbol reached
+    expected_session_date: Optional[date] = None   # last weekday <= as_of
+    stale_symbols: Dict[str, str] = dc_field(default_factory=dict)  # symbol -> older session
 
     def as_json(self) -> Dict[str, Any]:
         return {
             "as_of_date": self.as_of_date.isoformat(),
+            "session_date": self.session_date.isoformat() if self.session_date else None,
+            "expected_session_date": (self.expected_session_date.isoformat()
+                                      if self.expected_session_date else None),
+            "stale_symbols": dict(self.stale_symbols),
             "job_type": self.job_type,
             "dry_run": self.dry_run,
             "started_at": self.started_at.isoformat(),
@@ -124,6 +142,16 @@ class RunReport:
             "upsert_errors": list(self.upsert_errors),
             "sync_job_id": self.sync_job_id,
         }
+
+
+def expected_session_date(as_of: date) -> date:
+    """Last weekday on or before `as_of` — the session a run SHOULD reach.
+    Exchange holidays are not modelled; a run landing one session earlier on
+    a holiday is reported as lag, which is the honest answer."""
+    d = as_of
+    while d.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+        d -= timedelta(days=1)
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +231,15 @@ class DailySyncWorker:
                 rep.error = "empty history after normalisation"
                 return rep, None
 
+            # Yahoo's daily bar for the last session lags overnight (it comes
+            # back NaN and is dropped above) while the quote already carries
+            # that close — stand the quote in so the row describes the LAST
+            # session rather than the one before it.
+            qbar = quote_bar(info_res.value or {})
+            if qbar is not None and qbar.d > as_of:
+                qbar = None  # backfill run: the quote describes a later session
+            bars, synthesized = merge_quote_bar(bars, qbar)
+
             meta = extract_meta(info_res.value or {})
             if self._ratios_by_symbol is None:
                 # run_symbol called directly (not via run_all) — load once.
@@ -217,8 +254,12 @@ class DailySyncWorker:
                 screener_ratios=self._ratios_by_symbol.get(symbol),
             )
             snap = compute_snapshot(inputs)
-            if snap.get("errors"):
-                rep.warnings = list(snap["errors"])
+            rep.warnings = list(snap.get("errors") or [])
+            rep.session_date = snap.get("snapshot_date")
+            if synthesized:
+                rep.warnings.append(
+                    f"session bar {rep.session_date} synthesized from the quote "
+                    "(daily history bar missing / NaN)")
             row = _project_to_snapshot_row(snap)
             rep.ok = True
             rep.snapshot_written = not dry_run
@@ -279,6 +320,27 @@ class DailySyncWorker:
                         rep.error = rep.error or "upsert failed"
                         fail_marker -= 1
 
+        # Session accounting: the run describes the newest session any symbol
+        # reached; symbols behind it are stale (Yahoo lag, or no trade).
+        dates = [r.session_date for r in per_symbol if r.ok and r.session_date]
+        session_date = max(dates) if dates else None
+        expected = expected_session_date(as_of)
+        stale = {
+            r.symbol: r.session_date.isoformat() for r in per_symbol
+            if r.ok and r.session_date and session_date
+            and r.session_date < session_date
+        }
+        if session_date is not None and session_date < expected:
+            _warn("sync.session_lag", as_of=as_of.isoformat(),
+                  expected_session_date=expected.isoformat(),
+                  session_date=session_date.isoformat(),
+                  hint="market holiday, or Yahoo has not published the "
+                       "last session yet — re-run after ~16:00 IST")
+        if stale:
+            _warn("sync.stale_symbols", count=len(stale),
+                  session_date=session_date.isoformat() if session_date else None,
+                  sample=dict(list(stale.items())[:10]))
+
         finished = datetime.now(timezone.utc)
         run_rep = RunReport(
             as_of_date=as_of,
@@ -292,6 +354,9 @@ class DailySyncWorker:
             snapshots_written=snapshots_written,
             per_symbol=per_symbol,
             upsert_errors=upsert_errors,
+            session_date=session_date,
+            expected_session_date=expected,
+            stale_symbols=stale,
         )
 
         if not dry_run:
@@ -319,6 +384,10 @@ class DailySyncWorker:
             "snapshots_written": r.snapshots_written,
             "payload_json": {
                 "dry_run": r.dry_run,
+                "session_date": r.session_date.isoformat() if r.session_date else None,
+                "expected_session_date": (r.expected_session_date.isoformat()
+                                          if r.expected_session_date else None),
+                "stale_symbols": dict(r.stale_symbols),
                 "duration_ms": int(
                     (r.finished_at - r.started_at).total_seconds() * 1000),
                 "context": dict(self.run_context or {}),
@@ -352,3 +421,10 @@ def _log(event: str, **fields: Any) -> None:
         logger.info(json.dumps({"event": event, **fields}, default=str))
     except Exception:
         logger.info("event=%s %s", event, fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    try:
+        logger.warning(json.dumps({"event": event, **fields}, default=str))
+    except Exception:
+        logger.warning("event=%s %s", event, fields)

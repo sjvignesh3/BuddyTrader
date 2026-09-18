@@ -7,14 +7,16 @@ into the metrics engine.
 
 Also exposes `extract_meta(info)` which lifts the small set of `.info` keys
 we care about into a stable dict shape (regularMarketPrice, 52W high/low),
-so the pipeline never depends on yfinance-specific key naming.
+so the pipeline never depends on yfinance-specific key naming, and
+`quote_bar(info)` / `merge_quote_bar(...)` which stand the QUOTE in for the
+last session's daily bar while Yahoo's chart feed still lags overnight.
 """
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from plutus.metrics.rally import OHLCVBar
 from plutus.registry.types import to_decimal
@@ -139,6 +141,8 @@ def extract_meta(info: Dict[str, Any]) -> Dict[str, Any]:
       - regularMarketPrice
       - fiftyTwoWeekHigh
       - fiftyTwoWeekLow
+      - marketState        (Yahoo's "REGULAR" / "CLOSED" / "PRE" / ...)
+      - quoteSessionDate   (IST date of regularMarketTime)
     """
     if not info:
         return {}
@@ -152,4 +156,99 @@ def extract_meta(info: Dict[str, Any]) -> Dict[str, Any]:
     lo = _first_positive(info, _META_52W_LOW)
     if lo is not None:
         out["fiftyTwoWeekLow"] = lo
+    state = info.get("marketState")
+    if state:
+        out["marketState"] = str(state)
+    qd = quote_session_date(info)
+    if qd is not None:
+        out["quoteSessionDate"] = qd
     return out
+
+
+# -----------------------------------------------------------------------------
+# Quote -> session bar
+#
+# Yahoo serves two feeds that finalise at very different times. The daily-bar
+# chart lags: from midnight IST until some time the next morning the previous
+# session's row comes back NaN (and is dropped by bars_from_df), while the
+# QUOTE (regularMarketPrice + regularMarketTime) carries that session's close
+# within minutes of 15:30. Standing the quote in for the missing bar makes an
+# off-hours run describe the LAST session instead of silently falling back to
+# the one before it (2026-09-18 diagnosis: a 07:26 IST run wrote Sep-16 closes
+# for 27 of 64 journal symbols).
+# -----------------------------------------------------------------------------
+IST = timezone(timedelta(hours=5, minutes=30))
+
+# During the regular session history already carries a live bar for today, so
+# the quote adds nothing; in pre-open the quote may be today's indicative price,
+# which is never a settled close.
+_LIVE_MARKET_STATES = frozenset({"REGULAR"})
+_PRE_MARKET_STATES = frozenset({"PRE", "PREPRE"})
+
+
+def quote_session_date(info: Dict[str, Any], tz: timezone = IST) -> Optional[date]:
+    """IST calendar date of the quote's `regularMarketTime` (epoch seconds)."""
+    ts = info.get("regularMarketTime") if info else None
+    if ts is None or _is_nan(ts):
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz).date()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def quote_bar(info: Dict[str, Any], *, today: Optional[date] = None,
+              tz: timezone = IST) -> Optional[OHLCVBar]:
+    """
+    The latest session as an `OHLCVBar` built from the quote fields of `.info`.
+
+    Returns None when the quote cannot stand in for a settled session bar:
+      * no `regularMarketTime` or non-positive `regularMarketPrice`;
+      * `marketState` REGULAR — the history bar is live and authoritative;
+      * pre-open (PRE / PREPRE) with the quote already dated today.
+    Open / High / Low fall back to the price when Yahoo omits them (and are
+    widened so High >= Open, Close >= Low); volume is optional.
+    """
+    if not info:
+        return None
+    d = quote_session_date(info, tz)
+    if d is None:
+        return None
+    state = str(info.get("marketState") or "").upper()
+    if state in _LIVE_MARKET_STATES:
+        return None
+    today = today or datetime.now(tz).date()
+    if state in _PRE_MARKET_STATES and d >= today:
+        return None
+    px = _first_positive(info, ("regularMarketPrice",))
+    if px is None:
+        return None
+    o = _first_positive(info, ("regularMarketOpen", "open")) or px
+    h = _first_positive(info, ("regularMarketDayHigh", "dayHigh")) or px
+    lo = _first_positive(info, ("regularMarketDayLow", "dayLow")) or px
+    h = max(h, o, px)
+    lo = min(lo, o, px)
+    vol_raw = info.get("regularMarketVolume", info.get("volume"))
+    try:
+        vol = int(vol_raw) if vol_raw is not None and not _is_nan(vol_raw) else None
+    except (TypeError, ValueError):
+        vol = None
+    try:
+        return OHLCVBar.make(d, o, h, lo, px, adj_c=px, volume=vol)
+    except Exception:
+        return None
+
+
+def merge_quote_bar(bars: List[OHLCVBar],
+                    qbar: Optional[OHLCVBar]) -> Tuple[List[OHLCVBar], bool]:
+    """
+    Append `qbar` when it is NEWER than the last history bar.
+
+    Same date -> the history bar wins (it is the session's real OHLCV and the
+    two agree on close anyway); older -> ignored. Returns (bars, appended).
+    """
+    if qbar is None:
+        return list(bars), False
+    if bars and bars[-1].d >= qbar.d:
+        return list(bars), False
+    return [*bars, qbar], True

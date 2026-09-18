@@ -7,9 +7,15 @@ Usage:
         --strategies envelope_200dma,week52_high_low \
         --triggered-by manual --dry-run
 
+`--as-of` is an UPPER BOUND (default: today, IST). Snapshot rows are labelled
+by the session they describe, so "today" has no rows before the evening sync
+and none on a weekend — the scan runs on the newest session on or before it.
+
 Exit codes:
-    0 — scan completed with no errors.
-    1 — one or more per-symbol errors OR upsert errors.
+    0 — scan completed. Per-symbol strategy errors are LOGGED, not fatal:
+        one recently-listed stock without a 200-DMA must not paint the
+        whole workflow red while 2,000 results landed fine.
+    1 — upsert errors: computed results did NOT all reach the DB.
     2 — fatal orchestration error (bad args, no snapshots).
 """
 from __future__ import annotations
@@ -18,7 +24,7 @@ import argparse
 import json
 import logging
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, List, Optional, Sequence
 
 from plutus.scan.engine import ScanEngine
@@ -35,8 +41,10 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     ap.add_argument("--pool", required=True,
                     help="Pool code (F40, E40, S200, PlayArea) or ALL "
                          "to scan every pool in sequence.")
-    ap.add_argument("--as-of", required=True,
-                    help="Snapshot date (YYYY-MM-DD).")
+    ap.add_argument("--as-of", default=None,
+                    help="Upper bound for the snapshot date (YYYY-MM-DD, "
+                         "default today IST); the newest session on or "
+                         "before it is scanned.")
     ap.add_argument("--strategies", default=None,
                     help=("Comma-separated strategy ids to run. "
                           f"Default: all registered ({','.join(list_strategy_ids())})."))
@@ -52,6 +60,11 @@ def _resolve_date(raw: str) -> date:
     return datetime.strptime(raw, "%Y-%m-%d").date()
 
 
+def _today_ist() -> date:
+    # The market's calendar, regardless of runner TZ (Actions runs in UTC).
+    return datetime.now(tz=timezone(timedelta(hours=5, minutes=30))).date()
+
+
 def main(
     argv: Optional[Sequence[str]] = None,
     *,
@@ -64,7 +77,7 @@ def main(
     )
 
     try:
-        as_of = _resolve_date(args.as_of)
+        as_of = _resolve_date(args.as_of) if args.as_of else _today_ist()
     except ValueError as exc:
         logger.error("bad --as-of value: %s", exc)
         return 2
@@ -75,6 +88,19 @@ def main(
 
     eng = engine or ScanEngine()
 
+    # Rows are labelled by SESSION date — scan the newest one on or before
+    # as_of. Engines without a resolver (test stubs) scan as_of literally.
+    resolver = getattr(eng, "resolve_snapshot_date", None)
+    if callable(resolver):
+        resolved = resolver(as_of)
+        if resolved is None:
+            logger.error("no snapshots on or before %s", as_of)
+            return 2
+        if resolved != as_of:
+            logger.info("scanning session %s (newest on or before %s)",
+                        resolved, as_of)
+        as_of = resolved
+
     # `--pool ALL` (the workflow's cron default) fans out over every pool.
     # A pool with zero snapshots is skipped with a warning; the run only
     # fails hard (exit 2) when NO pool had anything to scan.
@@ -83,6 +109,7 @@ def main(
     exit_code = 0
     scanned_any = False
     reports = []
+    strategy_errors = []
     for pool in pools:
         report = eng.run(
             pool_code=pool,
@@ -97,11 +124,19 @@ def main(
             logger.warning("no snapshots found for pool=%s date=%s", pool, as_of)
             continue
         scanned_any = True
-        if report.upsert_errors or any(r.error for r in report.per_result):
+        if report.upsert_errors:
             exit_code = 1
+        strategy_errors.extend(
+            f"{pool}/{r.symbol}/{r.strategy_id}: {r.error}"
+            for r in report.per_result if r.error)
 
     print(json.dumps(reports if len(reports) > 1 else reports[0],
                      indent=2, default=str))
+
+    if strategy_errors:
+        logger.warning("%d strategy evaluation error(s) — results for the "
+                       "other symbols were written: %s",
+                       len(strategy_errors), strategy_errors[:5])
 
     if not scanned_any:
         return 2

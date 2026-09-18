@@ -5,6 +5,8 @@ Rules (defaults seeded by migrations/005_strategy_configs.sql):
   BUY_ZONE     : below_200dma_pct >= 14.0  -> Score 100
   OPPORTUNITY  : below_200dma_pct >= 9.0   -> Score 70
   NO_SIGNAL    : below_200dma_pct <  9.0   -> Score 0
+  NO_SIGNAL    : below_200dma_pct missing  -> Score 0  (fewer than 200
+                 sessions of history — a recent listing; not an error)
 
 All comparisons use Decimal — no float() calls anywhere.
 """
@@ -64,14 +66,17 @@ class EnvelopeStrategy(Strategy):
             )
 
         if below_dma_pct is None:
-            errors.append("below_200dma_pct missing — cannot evaluate envelope")
+            # No 200-DMA yet (fewer than 200 sessions — a recent listing) is
+            # a legitimate "nothing to say", not an evaluation failure; an
+            # ERROR here used to fail the whole scan workflow for one IPO.
             return StrategyResult(
                 strategy_id=self.strategy_id,
                 strategy_name=self.strategy_name,
                 symbol=symbol,
-                status=STATUS_ERROR,
+                status=STATUS_NO_SIGNAL,
                 score=0,
-                reasons=errors,
+                reasons=["200 DMA unavailable — fewer than 200 sessions of "
+                         "history; envelope not evaluated"],
                 metrics_snapshot={
                     "below_200dma_pct": None,
                     "dma_200": dma_200,

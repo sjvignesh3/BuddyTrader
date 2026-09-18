@@ -85,12 +85,17 @@ class TestEnvelopeConfigOverrides:
 
 
 class TestEnvelopeSafety:
-    def test_missing_input_returns_error_not_raise(self, strat):
+    def test_missing_dma_is_no_signal_not_error(self, strat):
+        # A recent listing has no 200-DMA yet — that is "nothing to say",
+        # not a failure. An ERROR here used to turn the whole scan workflow
+        # red for one IPO (BLIL.NS, 2026-09-18).
         snap = {"symbol": "X", "below_200dma_pct": None, "dma_200": None, "close": None}
         r = strat.evaluate(snap, {})
-        assert r.status == STATUS_ERROR
+        assert r.status == STATUS_NO_SIGNAL
         assert r.score == 0
-        assert r.errors  # non-empty
+        assert not r.errors
+        assert "200 DMA unavailable" in "; ".join(r.reasons)
+        assert r.metrics_snapshot["below_200dma_pct"] is None
 
     def test_float_input_rejected(self, strat):
         # If a caller sneaks a float in, we must NOT silently convert.

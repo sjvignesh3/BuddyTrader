@@ -61,7 +61,9 @@ class TestWeek52ConfigOverrides:
 
 
 class TestWeek52Safety:
-    def test_missing_input_is_error(self, strat):
+    def test_missing_input_is_no_signal_not_error(self, strat):
+        # A session without a usable close / 52W low is a data gap, not an
+        # evaluation failure — the scan must stay green for everyone else.
         snap = {
             "symbol": "X",
             "distance_from_52w_low_pct": None,
@@ -69,7 +71,10 @@ class TestWeek52Safety:
             "low_52w": None, "high_52w": None, "close": None,
         }
         r = strat.evaluate(snap, {})
-        assert r.status == STATUS_ERROR
+        assert r.status == STATUS_NO_SIGNAL
+        assert r.score == 0
+        assert not r.errors
+        assert "unavailable" in "; ".join(r.reasons)
 
     def test_float_rejected(self, strat):
         snap = {

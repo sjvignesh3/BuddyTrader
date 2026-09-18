@@ -1,7 +1,7 @@
 """Integration tests for compute_snapshot orchestrator."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from plutus.metrics.pipeline import SnapshotInputs, compute_snapshot
@@ -114,3 +114,38 @@ class TestPipelineRegistryContract:
             f"compute_snapshot returned unregistered keys: {unknown}. "
             f"Either add them to the registry or remove from pipeline."
         )
+
+
+class TestPipelineSessionLabelling:
+    def test_row_is_labelled_by_newest_bar_not_as_of(self) -> None:
+        # as-of is an upper bound: a weekend / pre-market run must describe
+        # the LAST session, never stamp its prices with the run date.
+        bars = flat_series(price="100.00", n=210)
+        as_of = bars[-1].d + timedelta(days=2)
+        row = compute_snapshot(SnapshotInputs(
+            symbol="TEST.NS", snapshot_date=as_of, bars=bars, info={}, meta={}))
+        assert row["snapshot_date"] == bars[-1].d
+        assert row["close"] == Decimal("100.00")
+
+    def test_backfill_as_of_reproduces_that_session(self) -> None:
+        bars = linear_up_series(n=30)
+        target = bars[10].d
+        row = compute_snapshot(SnapshotInputs(
+            symbol="LIN.NS", snapshot_date=target, bars=bars, info={}, meta={}))
+        assert row["snapshot_date"] == target
+        assert row["close"] == bars[10].close
+
+    def test_regular_market_state_flags_intraday_close(self) -> None:
+        bars = flat_series(price="100.00", n=210)
+        row = compute_snapshot(SnapshotInputs(
+            symbol="TEST.NS", snapshot_date=bars[-1].d, bars=bars, info={},
+            meta={"marketState": "REGULAR"}))
+        assert any("intraday" in e for e in row["errors"])
+
+    def test_closed_market_state_is_clean(self) -> None:
+        bars = flat_series(price="100.00", n=210)
+        row = compute_snapshot(SnapshotInputs(
+            symbol="TEST.NS", snapshot_date=bars[-1].d, bars=bars, info={},
+            meta={"marketState": "CLOSED"},
+            screener_ratios={"market_cap": Decimal(1), "pe": Decimal(1), "pb": Decimal(1)}))
+        assert not any("intraday" in e for e in row["errors"])

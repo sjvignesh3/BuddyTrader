@@ -273,6 +273,31 @@ class ScanEngine:
             self._normalise_decimals(r)
         return snap_rows
 
+    def resolve_snapshot_date(self, on_or_before: date) -> Optional[date]:
+        """
+        Newest `daily_snapshots.snapshot_date` on or before `on_or_before`.
+
+        Rows are labelled by the SESSION they describe, so the run date itself
+        has no rows before the evening sync (or on a weekend). None when the
+        table holds nothing that old.
+        """
+        cli = self.supabase_client or sb.get_client()
+        res = (
+            cli.table("daily_snapshots")
+               .select("snapshot_date")
+               .lte("snapshot_date", on_or_before.isoformat())
+               .order("snapshot_date", desc=True)
+               .limit(1)
+               .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        if not rows:
+            return None
+        raw = rows[0].get("snapshot_date")
+        if isinstance(raw, date):
+            return raw
+        return date.fromisoformat(str(raw)[:10])
+
     def _default_fetch_fundamentals(
         self, symbols: Sequence[str]
     ) -> Dict[str, Dict[str, Any]]:

@@ -6,7 +6,10 @@ Options:
     --symbols A,B,C    : sync just these tickers (bypasses DB lookup).
     --pool F40         : filter universe to a pool tag.
     --limit N          : cap the number of symbols processed.
-    --as-of YYYY-MM-DD : override snapshot_date (default = today, IST).
+    --as-of YYYY-MM-DD : upper bound for the session date (default = today,
+                         IST). Rows are labelled by the newest SESSION on or
+                         before it — a pre-market run refreshes yesterday's
+                         row; a weekend run refreshes Friday's.
 
 Exit codes:
     0 — all symbols succeeded (or dry-run completed).
@@ -71,7 +74,8 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     ap.add_argument("--limit", type=int, default=None,
                     help="Cap number of symbols processed.")
     ap.add_argument("--as-of", type=str, default=None,
-                    help="Override snapshot date (YYYY-MM-DD).")
+                    help="Upper bound for the session date (YYYY-MM-DD); "
+                         "the newest session on or before it is written.")
     ap.add_argument("--no-enrich", action="store_true",
                     help="Skip the fetch-on-miss Screener enrichment for "
                          "symbols with no fundamentals / ratios in the DB.")
@@ -306,6 +310,19 @@ def main(
         report_json["enrichment"] = enrichment
 
     print(json.dumps(report_json, indent=2, default=str))
+
+    # Session lag is visible in the report/sync_jobs, but say it plainly too:
+    # a stale row is the one failure mode that looks like success.
+    if (report.session_date and report.expected_session_date
+            and report.session_date < report.expected_session_date):
+        logger.warning(
+            "snapshots describe session %s, expected %s — market holiday, or "
+            "Yahoo has not published the last session yet (re-run after "
+            "~16:00 IST)", report.session_date, report.expected_session_date)
+    if report.stale_symbols:
+        logger.warning("%d symbols landed on an older session than %s: %s",
+                       len(report.stale_symbols), report.session_date,
+                       ", ".join(list(report.stale_symbols)[:10]))
 
     # Silence-on-green alerting. Never raises — returns None if disabled.
     # Fetch-on-miss failures never touch the exit code, so they get their

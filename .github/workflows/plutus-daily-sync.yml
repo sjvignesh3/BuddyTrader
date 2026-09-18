@@ -93,17 +93,18 @@ jobs:
 
       - name: Run scan (only if sync succeeded)
         # A dry-run writes no snapshots, so scanning after it would score
-        # stale data — skip.
+        # stale data — skip. No --as-of: run_scan defaults to today (IST)
+        # and scans the newest session on or before it, so an off-hours
+        # dispatch scores the last close instead of finding no rows for
+        # "today" (snapshot rows are labelled by SESSION date).
         if: success() && github.event.inputs.dry_run != 'true'
         env:
           POOL: ${{ github.event.inputs.pool }}
         run: |
           if [ "$POOL" = "ALL" ]; then POOL=""; fi
           POOL="${POOL:-ALL}"
-          TODAY="$(date -u +%Y-%m-%d)"
           python -m plutus.scripts.run_scan \
             --pool "$POOL" \
-            --as-of "$TODAY" \
             --triggered-by cron
 
       - name: Verify canary fixtures

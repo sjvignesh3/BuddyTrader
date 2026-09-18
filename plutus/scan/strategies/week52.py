@@ -6,6 +6,8 @@ Rules (defaults seeded by migrations/005_strategy_configs.sql):
   BUY_ZONE     : distance_from_52w_low_pct <= 0.5  -> Score 100
   OPPORTUNITY  : distance_from_52w_low_pct <= 5.0  -> Score 75
   NO_SIGNAL    : distance_from_52w_low_pct >  5.0  -> Score 0
+  NO_SIGNAL    : distance_from_52w_low_pct missing -> Score 0 (no usable
+                 close / 52W low for the session; not an error)
 
 All comparisons use Decimal.
 """
@@ -65,16 +67,17 @@ class Week52HighLowStrategy(Strategy):
             )
 
         if dist_from_low is None:
-            errors.append(
-                "distance_from_52w_low_pct missing — cannot evaluate 52W High/Low"
-            )
+            # Missing input is a data gap for this session, not an
+            # evaluation failure — report NO_SIGNAL with the reason so the
+            # scan workflow stays green for the other symbols.
             return StrategyResult(
                 strategy_id=self.strategy_id,
                 strategy_name=self.strategy_name,
                 symbol=symbol,
-                status=STATUS_ERROR,
+                status=STATUS_NO_SIGNAL,
                 score=0,
-                reasons=errors,
+                reasons=["52W low distance unavailable — no usable close / "
+                         "52W low for this session; not evaluated"],
                 metrics_snapshot={
                     "distance_from_52w_low_pct": None,
                     "distance_from_52w_high_pct": dist_from_high,

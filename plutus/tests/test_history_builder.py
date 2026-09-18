@@ -8,7 +8,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from plutus.sync.history_builder import bars_from_df, extract_meta
+from plutus.sync.history_builder import (
+    bars_from_df,
+    extract_meta,
+    merge_quote_bar,
+    quote_bar,
+    quote_session_date,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -129,3 +135,125 @@ class TestExtractMeta:
     def test_nan_ignored(self) -> None:
         info = {"regularMarketPrice": float("nan"), "previousClose": 10}
         assert extract_meta(info)["regularMarketPrice"] == Decimal("10")
+
+
+# ---------------------------------------------------------------------------
+# quote_bar / merge_quote_bar
+# ---------------------------------------------------------------------------
+def _epoch_ist(y, m, d, hh=15, mm=29):
+    from datetime import datetime, timedelta, timezone
+    ist = timezone(timedelta(hours=5, minutes=30))
+    return int(datetime(y, m, d, hh, mm, tzinfo=ist).timestamp())
+
+
+def _quote(state="CLOSED", **over):
+    info = {
+        "marketState": state,
+        "regularMarketTime": _epoch_ist(2026, 9, 17),
+        "regularMarketPrice": 1553.0,
+        "regularMarketOpen": 1499.9,
+        "regularMarketDayHigh": 1558.0,
+        "regularMarketDayLow": 1492.0,
+        "regularMarketVolume": 517409,
+    }
+    info.update(over)
+    return info
+
+
+class TestQuoteBar:
+    def test_settled_quote_becomes_a_decimal_bar(self) -> None:
+        b = quote_bar(_quote(), today=date(2026, 9, 18))
+        assert b is not None
+        assert b.d == date(2026, 9, 17)
+        assert (b.open, b.high, b.low, b.close) == (
+            Decimal("1499.9"), Decimal("1558.0"), Decimal("1492.0"), Decimal("1553.0"))
+        assert b.adj_close == b.close
+        assert b.volume == 517409
+
+    def test_session_date_is_ist_calendar_day(self) -> None:
+        # 15:29 IST on Sep 17 is 09:59 UTC — the IST date must win.
+        assert quote_session_date(_quote()) == date(2026, 9, 17)
+        # Just after midnight IST is still the previous day in UTC.
+        assert quote_session_date(
+            {"regularMarketTime": _epoch_ist(2026, 9, 18, 0, 5)}) == date(2026, 9, 18)
+
+    @pytest.mark.parametrize("state", ["PREPRE", "PRE", "POST", "CLOSED", ""])
+    def test_pre_and_post_market_quotes_for_yesterday_are_accepted(self, state) -> None:
+        assert quote_bar(_quote(state), today=date(2026, 9, 18)) is not None
+
+    def test_regular_session_quote_is_rejected(self) -> None:
+        # Live session: history already carries today's bar.
+        assert quote_bar(_quote("REGULAR"), today=date(2026, 9, 17)) is None
+
+    def test_pre_open_quote_already_dated_today_is_rejected(self) -> None:
+        # Pre-open indicative price for TODAY is not a settled close.
+        assert quote_bar(_quote("PRE"), today=date(2026, 9, 17)) is None
+        assert quote_bar(_quote("PREPRE"), today=date(2026, 9, 17)) is None
+
+    def test_missing_time_or_price_returns_none(self) -> None:
+        assert quote_bar(_quote(regularMarketTime=None)) is None
+        assert quote_bar(_quote(regularMarketPrice=0)) is None
+        assert quote_bar(_quote(regularMarketPrice=float("nan"))) is None
+        assert quote_bar({}) is None
+        assert quote_bar(None) is None
+
+    def test_missing_ohl_fall_back_to_price(self) -> None:
+        b = quote_bar(_quote(regularMarketOpen=None, regularMarketDayHigh=None,
+                             regularMarketDayLow=None, regularMarketVolume=None),
+                      today=date(2026, 9, 18))
+        assert (b.open, b.high, b.low, b.close) == (b.close,) * 4
+        assert b.volume is None
+
+    def test_high_low_widened_to_contain_open_and_close(self) -> None:
+        b = quote_bar(_quote(regularMarketDayHigh=1500.0, regularMarketDayLow=1520.0),
+                      today=date(2026, 9, 18))
+        assert b.high == Decimal("1553.0")
+        assert b.low == Decimal("1499.9")
+
+
+class TestMergeQuoteBar:
+    def _bars(self):
+        return bars_from_df(_FakeDF([
+            _bar(date(2026, 9, 15), 100, 105, 99, 104),
+            _bar(date(2026, 9, 16), 104, 108, 103, 107),
+        ]))
+
+    def test_newer_quote_is_appended(self) -> None:
+        q = quote_bar(_quote(), today=date(2026, 9, 18))
+        bars, appended = merge_quote_bar(self._bars(), q)
+        assert appended is True
+        assert [b.d for b in bars] == [date(2026, 9, 15), date(2026, 9, 16), date(2026, 9, 17)]
+
+    def test_same_date_history_bar_wins(self) -> None:
+        q = quote_bar(_quote(regularMarketTime=_epoch_ist(2026, 9, 16)),
+                      today=date(2026, 9, 18))
+        bars, appended = merge_quote_bar(self._bars(), q)
+        assert appended is False
+        assert bars[-1].close == Decimal("107")
+
+    def test_older_quote_is_ignored(self) -> None:
+        q = quote_bar(_quote(regularMarketTime=_epoch_ist(2026, 9, 10)),
+                      today=date(2026, 9, 18))
+        bars, appended = merge_quote_bar(self._bars(), q)
+        assert appended is False and len(bars) == 2
+
+    def test_none_quote_is_a_no_op(self) -> None:
+        bars, appended = merge_quote_bar(self._bars(), None)
+        assert appended is False and len(bars) == 2
+
+    def test_empty_history_takes_the_quote(self) -> None:
+        q = quote_bar(_quote(), today=date(2026, 9, 18))
+        bars, appended = merge_quote_bar([], q)
+        assert appended is True and bars == [q]
+
+
+class TestExtractMetaSessionKeys:
+    def test_market_state_and_quote_date_lifted(self) -> None:
+        m = extract_meta(_quote("PREPRE"))
+        assert m["marketState"] == "PREPRE"
+        assert m["quoteSessionDate"] == date(2026, 9, 17)
+        assert m["regularMarketPrice"] == Decimal("1553.0")
+
+    def test_absent_keys_are_omitted(self) -> None:
+        m = extract_meta({"regularMarketPrice": 10.0})
+        assert "marketState" not in m and "quoteSessionDate" not in m
