@@ -11,6 +11,7 @@ import PoolsPage from "./pages/PoolsPage";
 import PoolDetailPage from "./pages/PoolDetailPage";
 import StockDetailPage from "./pages/StockDetailPage";
 import SyncStatusPage from "./pages/SyncStatusPage";
+import UniversePage from "./pages/UniversePage";
 
 /** One gate for the whole protected branch of the route tree. */
 function ProtectedLayout() {
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="/position-sizer" element={<PositionSizerPage />} />
             <Route path="/net-worth" element={<NetWorthPage />} />
             <Route path="/pools" element={<PoolsPage />} />
+            <Route path="/universe" element={<UniversePage />} />
             <Route path="/pools/:code" element={<PoolDetailPage />} />
             <Route path="/stocks/:symbol" element={<StockDetailPage />} />
             <Route path="/status" element={<SyncStatusPage />} />

@@ -48,6 +48,7 @@ Or one-by-one:
 017_net_worth.sql        -- Net Worth (assets, liabilities, monthly snapshots,
                          --   income, milestones, freedom settings)
 018_app_access.sql       -- view-only access credential (hash of the shared
+019_universe.sql         -- stocks.sector_group, universe_syncs, S200 criteria (Universe page)
                          --   read-only password, rotated from the Console)
 ```
 

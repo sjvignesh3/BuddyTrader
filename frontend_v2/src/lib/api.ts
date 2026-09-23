@@ -74,6 +74,8 @@ export interface Stock {
   active: boolean;
   pools: string[];
   cap_type_manual: string | null;
+  /** S200 criteria group — Banks | NBFC | Normal (migration 019). */
+  sector_group?: string | null;
 }
 
 /** All monetary / ratio fields are strings — precision-safe. */

@@ -36,3 +36,12 @@ DROP TRIGGER IF EXISTS trg_stocks_touch ON stocks;
 CREATE TRIGGER trg_stocks_touch
     BEFORE UPDATE ON stocks
     FOR EACH ROW EXECUTE FUNCTION plutus_touch_updated_at();
+
+-- ---------------------------------------------------------------
+-- Idempotent evolution (safe to re-run against an existing DB).
+-- 019_universe.sql: which S200 screening criteria set applies —
+-- 'Banks' | 'NBFC' (ROE + Net profit) or 'Normal' (Net D/E + ROCE +
+-- Net profit). NULL = not classified yet. The CHECK constraint, the
+-- backfill and the index live in 019.
+-- ---------------------------------------------------------------
+ALTER TABLE stocks ADD COLUMN IF NOT EXISTS sector_group VARCHAR(10);

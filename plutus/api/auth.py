@@ -60,6 +60,8 @@ PROTECTED_PREFIXES: Tuple[str, ...] = (
     "/api/expenses",
     "/api/sizing",
     "/api/networth",
+    # Pool membership edits rewrite the universe every scan and view reads.
+    "/api/universe",
 )
 # Deliberately NOT listed: /api/admin/trigger enforces its own dedicated
 # PLUTUS_ADMIN_TOKEN, and its /status probe is public by design so the Sync

@@ -138,7 +138,12 @@ _FIELDS: list[Field] = [
     Field("pools", "stocks", FieldDType.TEXT_ARRAY, FieldSource.CSV, FieldTier.UNIVERSE,
           notes="Pool tags: F40, E40, S200, PlayArea."),
     Field("cap_type_manual", "stocks", FieldDType.STR, FieldSource.CSV, FieldTier.UNIVERSE,
-          notes="Optional CSV override for cap bucket."),
+          notes="Optional manual cap bucket: Large | Mid | Small | Micro (Universe page / CSV)."),
+    Field("sector_group", "stocks", FieldDType.STR, FieldSource.MANUAL, FieldTier.UNIVERSE,
+          unit="Banks|NBFC|Normal",
+          notes="Which S200 screening criteria set applies (migration 019). "
+                "Banks/NBFC: ROE + Net profit. Normal: Net D/E + ROCE + Net profit. "
+                "Set on the Universe page or by import; NULL = not classified yet."),
     Field("metadata", "stocks", FieldDType.JSONB, FieldSource.CSV, FieldTier.UNIVERSE,
           notes="Free-form CSV extras (Priority, Volatility, etc.)."),
 

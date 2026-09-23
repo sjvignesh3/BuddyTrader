@@ -27,6 +27,7 @@ FILES = {
     "016_sizing_plans.sql": ["sizing_plans"],
     "017_net_worth.sql": ["networth_assets", "networth_liabilities", "networth_snapshots",
                           "networth_income", "networth_milestones", "networth_settings"],
+    "019_universe.sql": ["universe_syncs"],
 }
 
 

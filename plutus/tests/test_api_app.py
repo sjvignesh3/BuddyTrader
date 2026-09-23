@@ -160,6 +160,7 @@ class TestReadOnlyContract:
             path = getattr(route, "path", "")
             if path.startswith(("/api/journal", "/api/expenses",
                                 "/api/sizing", "/api/networth",
+                                "/api/universe",
                                 "/api/admin/trigger", "/api/auth")):
                 continue
             methods = getattr(route, "methods", set()) or set()

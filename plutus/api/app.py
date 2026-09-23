@@ -299,6 +299,10 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
     from plutus.api.networth import register_networth_routes
     register_networth_routes(app, cli)
 
+    # -- Universe (writable; pool membership = single source of truth) --------
+    from plutus.api.universe import register_universe_routes
+    register_universe_routes(app, cli)
+
     # -- On-demand GitHub Actions trigger (no DB writes; PAT stays server-
     # side; gated by PLUTUS_ADMIN_TOKEN) -------------------------------------
     from plutus.api.admin_trigger import register_admin_trigger_routes

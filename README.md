@@ -20,17 +20,17 @@ was removed from the tree on 2026-09-16 and lives only in git history.
 │   ├── fundamentals/       Screener.in client + page parsers, quarterly data
 │   ├── sync/               Daily / quarterly / weekly-ratio sync workers
 │   ├── scan/               Strategy engine + strategies (envelope, week52, rally, fundamental)
-│   ├── api/                FastAPI app: read endpoints + journal / expenses / sizing / net worth
+│   ├── api/                FastAPI app: read endpoints + journal / expenses / sizing / net worth / universe
 │   ├── alerts/             Webhook alerting hooked into the sync workers
 │   ├── canary/             Drift checks against known-good fixtures
-│   ├── migrations/         Ordered SQL (001..018), idempotent, applied with psql
+│   ├── migrations/         Ordered SQL (001..019), idempotent, applied with psql
 │   ├── scripts/            CLI entry points (run_daily_sync, run_scan, run_api, seed_universe, ...)
 │   ├── registry/           Field catalog + Decimal primitives (single source of column names)
 │   └── tests/              Deterministic pytest suite — no network, no DB
 ├── frontend_v2/            Vite + React 18 + TypeScript dashboard (see frontend_v2/README.md)
 ├── supabase/               Local Supabase stack config + read-only Edge Function fallback
 ├── .github/workflows/      Scheduled syncs, weekly ratios, weekly backup, CI tests
-├── UserData/               Master universe CSV (seed input) + personal notes
+├── UserData/               Master universe CSV (one-time seed input) + personal notes
 └── Docs/                   Plutus plan, phased development log, runbook, hosting guide, issue log
 ```
 
@@ -61,7 +61,10 @@ for f in plutus/migrations/0*.sql; do psql "$PLUTUS_SUPABASE_DB_URL" -f "$f"; do
 # 3. Env vars
 cp plutus/.env.example plutus/.env   # then fill in Supabase + Screener values
 
-# 4. Seed the universe, sync, scan
+# 4. Seed the universe ONCE (first install only), sync, scan
+#    Afterwards the `stocks` table is the single source of truth: manage pool
+#    members on Market Analysis -> Universe (add / edit / import / export).
+#    Re-running the seed would overwrite pool membership edited in the app.
 python -m plutus.scripts.seed_universe --csv "UserData/Vicky - Master Template - Master.csv"
 python -m plutus.scripts.run_daily_sync
 python -m plutus.scripts.run_scan

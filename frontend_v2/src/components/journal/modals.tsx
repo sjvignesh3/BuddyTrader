@@ -11,6 +11,7 @@ import type {
 import { CAP_LIMITS, effectiveCap, num, type JournalCtx } from "../../lib/journal";
 import { fmtMoney } from "../../lib/money";
 import AllocationGauge from "./AllocationGauge";
+import SymbolPicker, { useUniverseMembership } from "./SymbolPicker";
 import {
   CAP_STYLES, Field, GhostBtn, Modal, NumInput, PrimaryBtn, Segmented,
   SuggestionChips, TextArea, TextInput,
@@ -128,9 +129,13 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
       setF((p) => ({ ...p, [k]: e.target.value }));
   const setV = (k: keyof typeof f) => (v: string) => setF((p) => ({ ...p, [k]: v }));
 
+  // The universe is the single source of truth for what the journal tracks.
+  const membership = useUniverseMembership(f.symbol);
+
   // Validation — what actually blocks Save, with the reason shown.
   const problem = useMemo(() => {
     if (!f.symbol.trim()) return "Symbol is required";
+    if (membership.loaded && !membership.inUniverse) return "Symbol is not in the universe";
     if (!f.opp_date) return "Date is required";
     if (badNum(f.buy_price)) return "Buy price must be a positive number";
     if (badNum(f.limit_price)) return "Limit price must be a positive number";
@@ -141,7 +146,7 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
       return "Stop must be below the buy price";
     }
     return null;
-  }, [f]);
+  }, [f, membership.loaded, membership.inUniverse]);
 
   // Soft completeness — what each still-empty field would unlock. Allocation
   // itself is live in the gauge below, so this only names what's still blank.
@@ -176,8 +181,10 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
     <Modal title={initial ? `Edit ${initial.symbol}` : "New opportunity"} onClose={onClose}>
       <div className="grid sm:grid-cols-2 gap-3">
         <Field label="Symbol *">
-          <TextInput value={f.symbol} onChange={set("symbol")} placeholder="RELIANCE"
-                     autoFocus={!initial} style={{ textTransform: "uppercase" }} />
+          <SymbolPicker value={f.symbol} onChange={setV("symbol")} autoFocus={!initial}
+                        disabled={Boolean(initial)}
+                        onPick={(s) => setF((p) => ({
+                          ...p, cap_bucket: p.cap_bucket || (s.cap_type_manual ?? "") }))} />
         </Field>
         <Field label="Date *"><TextInput type="date" value={f.opp_date} onChange={set("opp_date")} /></Field>
         <Field label="Cap bucket" span2>
@@ -302,8 +309,11 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
       setF((p) => ({ ...p, [k]: e.target.value }));
   const setV = (k: keyof typeof f) => (v: string) => setF((p) => ({ ...p, [k]: v }));
 
+  const membership = useUniverseMembership(f.symbol);
+
   const problem = useMemo(() => {
     if (!f.symbol.trim()) return "Symbol is required";
+    if (membership.loaded && !membership.inUniverse) return "Symbol is not in the universe";
     if (!f.buy_date) return "Buy date is required";
     if (!numOrNull(f.buy_price)) return "Buy price is required";
     if (!intOrNull(f.qty)) return "Qty is required (positive whole number)";
@@ -315,7 +325,7 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
       if (!numOrNull(f.sell_price)) return "Sell price is required";
     }
     return null;
-  }, [f, isClosed]);
+  }, [f, isClosed, membership.loaded, membership.inUniverse]);
 
   const symbolKey = f.symbol.trim().toUpperCase();
   // Editing an open lot: its own value is already in openInvested, so drop it
@@ -353,8 +363,10 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
              : p?.symbol ? `New trade — ${p.symbol}` : "New trade"}>
       <div className="grid sm:grid-cols-2 gap-3">
         <Field label="Symbol *">
-          <TextInput value={f.symbol} onChange={set("symbol")} autoFocus={!initial}
-                     placeholder="RELIANCE" style={{ textTransform: "uppercase" }} />
+          <SymbolPicker value={f.symbol} onChange={setV("symbol")} autoFocus={!initial}
+                        disabled={Boolean(initial)}
+                        onPick={(s) => setF((p) => ({
+                          ...p, cap_bucket: p.cap_bucket || (s.cap_type_manual ?? "") }))} />
         </Field>
         <Field label="Order type">
           <Segmented ariaLabel="Order type"

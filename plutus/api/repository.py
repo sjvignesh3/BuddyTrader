@@ -57,7 +57,8 @@ def list_stocks(
 ) -> List[Dict[str, Any]]:
     cli = _client(client)
     q = cli.table("stocks").select(
-        "id,symbol,name,sector,industry,exchange,active,pools,cap_type_manual,metadata"
+        "id,symbol,name,sector,industry,exchange,active,pools,cap_type_manual,"
+        "sector_group,metadata"
     )
     if active_only:
         q = q.eq("active", True)

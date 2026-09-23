@@ -50,6 +50,7 @@
 | **7** | Frontend Rewrite — Pool view over Supabase | 5–7 d | Pool tabs, expandable rows, sync status, filters | ✅ |
 | **8** | Hardening — Backfill, monitoring, backups | 2–3 d | Retry queues, alerting, weekly DB backup, canary tests | — |
 | **V2** | Trading Journal | 3–4 d | `trades` CRUD, "Held" badge, P&L | ⏸ deferred |
+| **V2-U** | Universe — single source of truth | 1 d | Universe page (Market Analysis), pool add/edit/import/export, `sector_group`, `universe_syncs`, S200 criteria; Screener screen job pending | ✅ first cut (2026-09-23) |
 
 > **Scope change (post-Stage 7):** The Trading Journal has been moved out of
 > the v1 roadmap into **V2**. Rationale: v1 is a decision-support scanner;
@@ -527,3 +528,55 @@ Every stage merges only when:
 ---
 
 *Doc owner: Plutus core team. Update this file every time a stage's scope shifts.*
+
+---
+
+## V2-U — Universe as the single source of truth (2026-09-23, first cut)
+
+**Decision.** The `stocks` table IS the universe. The master CSV is a one-time
+bootstrap (`seed_universe`); after that, pool membership changes only through
+the Universe page (Market Analysis → Universe) and its API. Every pool view,
+scan and the Trading Journal's symbol picker read from it.
+
+**Shipped**
+- Migration `019_universe.sql` (+ idempotent column add in `001_stocks.sql`):
+  - `stocks.sector_group` ∈ {Banks, NBFC, Normal} — which S200 criteria set
+    applies. Backfilled from the CSV labels (384 Normal / 28 NBFC / 23 Banks on
+    the seeded DB; 7 `FINANCIAL SERVICES` names left NULL for the owner).
+    `sector = 'Normal'` cleared (it was a label, not a sector); `cap_type_manual`
+    normalised to Large | Mid | Small | Micro.
+  - `universe_syncs` — one row per change-set (kind `import` today, `screen`
+    later) with status `running → preview → applied | discarded | failed`, the
+    criteria used and the full diff. This is the consent queue the S200 screen
+    will use, so wiring it later is a worker, not a schema change.
+  - `pools.metadata.screen_criteria` for S200 (Non-banking: Net D/E < 0.25 AND
+    ROCE > 12 AND Net profit > 200 Cr · Banks & NBFC: ROE > 10 AND Net profit
+    > 1000 Cr), strings only, editable from the page.
+- API `plutus/api/universe.py` under the auth gate (`/api/universe` in
+  `PROTECTED_PREFIXES`; viewers read, owner writes):
+  `GET /api/universe`, `PUT /stocks/{symbol}`, `POST|DELETE /pools/{code}/members`,
+  `POST /pools/{code}/import` (`dry_run` = preview, `mode` merge | replace),
+  `GET|PUT /pools/{code}/criteria`, `GET /syncs`, `POST /syncs/{id}/discard`,
+  `POST /pools/{code}/screen` → **501 until the Screener job lands**.
+- Frontend: `/universe` page + card on Market Analysis + tab on every pool page;
+  per-pool table (symbol, name, sector, cap, group, other pools, journal refs),
+  add / edit / remove, CSV import with a mandatory diff preview before apply,
+  CSV export, S200 criteria card with the consent dialog for the future sync.
+  Journal opportunity / trade forms use a universe-backed `SymbolPicker`; a
+  symbol outside the universe cannot be saved.
+
+**Journal safety (invariant).** No route deletes a `stocks` row. Removing a
+stock's last pool sets `active = false`; a stock the journal still references
+(OPEN trade or ACTIVE opportunity) stays active so its LTP keeps syncing.
+Journal tables are read, never written, by this module.
+
+**Deferred (next cut).** The S200 Screener screen worker: run the two screens
+with the stored criteria, classify new candidates (Banks / NBFC / Normal —
+decision pending between yfinance `.info` industry, already stored in
+`raw_yf_meta` for members, and Screener's public `/market/…` taxonomy), write a
+`universe_syncs` row in `preview`, and let the owner apply or discard it.
+
+**Tests.** `plutus/tests/test_api_universe.py` (helpers, diff, retire-vs-journal,
+import audit, criteria), `test_personal_migrations.py` gates 019,
+`frontend_v2/src/lib/universeCsv.test.ts` (master template, plain, symbols-only,
+round-trip).

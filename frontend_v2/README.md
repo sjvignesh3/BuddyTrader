@@ -53,7 +53,7 @@ src/
                 math (the *.test.ts files next to them are the Vitest suites)
                 journalApi.ts / expensesApi.ts / sizingApi.ts / networthApi.ts —
                 the writable personal-tool clients (money as strings)
-  pages/        PoolsPage, PoolDetailPage, StockDetailPage, JournalPage,
+  pages/        PoolsPage, PoolDetailPage, StockDetailPage, UniversePage, JournalPage,
                 ExpensesPage, PositionSizerPage, NetWorthPage, SyncStatusPage
   App.tsx       router
   main.tsx      Query client + StrictMode
@@ -63,7 +63,8 @@ src/
 
 | Route | Tool | Data it derives from |
 |-------|------|----------------------|
-| `/journal` | Trading Journal | `journal_*` tables + `daily_snapshots` |
+| `/universe` | Universe (Market Analysis) | `stocks` pool membership — the single source of truth every pool view, scan and the journal's symbol picker read; imports audited in `universe_syncs` |
+| `/journal` | Trading Journal | `journal_*` tables + `daily_snapshots`; symbols must be universe members |
 | `/expenses` | Expense Tracker | `expense*` tables |
 | `/position-sizer` | Position Sizer | journal capital + open lots (with `stop_price`), `daily_snapshots`, `sizing_plans` |
 | `/net-worth` | Net Worth | manual `networth_*` assets & liabilities (shares as Direct Stocks), expenses (burn / savings rate); the journal only for the XIRR card |

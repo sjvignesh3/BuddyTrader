@@ -538,6 +538,12 @@ If any test fails, **stop here** and fix it before proceeding to live data. The 
 
 ### 5.2 Seed the stock universe
 
+> **One-time bootstrap.** Since 2026-09-23 the `stocks` table is the single
+> source of truth. Seed once on a fresh database; afterwards manage pool
+> members on **Market Analysis → Universe** (add / edit / import / export).
+> Re-running the seed overwrites `pools` with the CSV and would undo edits
+> made in the app.
+
 This populates the `stocks` table from the master CSV. It is idempotent — re-running it is safe.
 
 ```bash

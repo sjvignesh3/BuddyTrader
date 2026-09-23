@@ -27,6 +27,11 @@ export default function PoolTabs({ active }: { active: string }) {
           </span>
         </NavLink>
       ))}
+      <NavLink to="/universe" title="Manage the stocks in each pool"
+               className="px-3.5 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap text-brand-mute
+                          hover:text-brand-text hover:bg-brand-soft border-l border-brand-border ml-0.5">
+        🗂️ Universe
+      </NavLink>
     </div>
   );
 }

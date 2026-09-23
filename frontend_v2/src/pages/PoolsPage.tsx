@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { usePools } from "../hooks/usePlutus";
+import { usePools, useStocks } from "../hooks/usePlutus";
 import LoadError from "../components/LoadError";
 
 const ICONS: Record<string, string> = {
@@ -8,9 +8,14 @@ const ICONS: Record<string, string> = {
 
 export default function PoolsPage() {
   const { data, isLoading, error } = usePools();
+  const stocksQ = useStocks();
 
   if (isLoading || error || !data) {
     return <LoadError loading={isLoading} error={error} />;
+  }
+  const counts = new Map<string, number>();
+  for (const s of stocksQ.data?.stocks ?? []) {
+    for (const p of s.pools ?? []) counts.set(p, (counts.get(p) ?? 0) + 1);
   }
 
   return (
@@ -19,6 +24,29 @@ export default function PoolsPage() {
       <p className="text-sm text-brand-mute mb-5">
         Pick a universe — signals, fundamental scores and comparisons live inside.
       </p>
+      {/* The universe card — the list every pool below is drawn from. */}
+      <Link to="/universe"
+            className="group block mb-4 p-5 rounded-2xl bg-gradient-to-br from-teal-800 to-teal-600
+                       text-white shadow-card hover:shadow-pop transition-shadow">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-2xl">🗂️</span>
+          <div className="max-w-xl">
+            <div className="font-display font-semibold text-lg">Universe</div>
+            <p className="text-sm text-teal-100">
+              The single source of truth — the stocks in each pool. Add, edit, import or export
+              F40 / E40 / S200 members here; every pool view, scan and journal lookup reads this list.
+            </p>
+          </div>
+          <div className="ml-auto flex items-center gap-2 text-[11px] font-semibold">
+            {["F40", "E40", "S200"].map((code) => (
+              <span key={code} className="px-2 py-1 rounded-lg bg-white/15 ring-1 ring-white/25">
+                {code} <span className="font-mono">{counts.get(code) ?? "…"}</span>
+              </span>
+            ))}
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity">Manage →</span>
+          </div>
+        </div>
+      </Link>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {data.pools.map((p) => (
           <Link
@@ -30,6 +58,9 @@ export default function PoolsPage() {
               <span className="text-2xl">{ICONS[p.code] ?? "◆"}</span>
               <span className="text-[10px] uppercase tracking-widest text-brand-mute font-semibold">
                 {p.code}
+                {counts.has(p.code) && (
+                  <span className="ml-1.5 font-mono normal-case tracking-normal">· {counts.get(p.code)}</span>
+                )}
               </span>
             </div>
             <div className="mt-2.5 font-display font-semibold text-lg">{p.name}</div>
