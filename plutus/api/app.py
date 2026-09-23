@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 # starlette / pydantic on the CI runner.
 # ---------------------------------------------------------------------------
 
-def create_app(*, supabase_client: Optional[Any] = None) -> Any:
+def create_app(*, supabase_client: Optional[Any] = None,
+               fetch_info: Optional[Any] = None) -> Any:
     """
     Build a FastAPI app instance.
 
@@ -48,6 +49,9 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
         openapi_url="/api/openapi.json",
     )
     app.state.supabase_client = supabase_client
+    # Universe paste flow: symbol -> Result[dict] (yfinance .info). Tests
+    # inject a fake so the suite stays offline.
+    app.state.fetch_info = fetch_info
 
     def cli() -> Any:
         return app.state.supabase_client
@@ -301,7 +305,7 @@ def create_app(*, supabase_client: Optional[Any] = None) -> Any:
 
     # -- Universe (writable; pool membership = single source of truth) --------
     from plutus.api.universe import register_universe_routes
-    register_universe_routes(app, cli)
+    register_universe_routes(app, cli, fetch_info=getattr(app.state, "fetch_info", None))
 
     # -- On-demand GitHub Actions trigger (no DB writes; PAT stays server-
     # side; gated by PLUTUS_ADMIN_TOKEN) -------------------------------------

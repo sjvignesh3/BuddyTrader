@@ -66,6 +66,12 @@ export function useUniverseMutations() {
       universeApi.importMembers(v.pool, v.rows, v.mode, v.dryRun),
     onSuccess: (r) => { if (!r.dry_run) refresh(); },
   });
+  const pasteMembers = useMutation({
+    mutationFn: (v: { pool: string; text: string; dryRun: boolean; refresh?: boolean;
+                      mode?: "merge" | "replace" }) =>
+      universeApi.pasteMembers(v.pool, v.text, v.dryRun, v.refresh ?? false, v.mode ?? "merge"),
+    onSuccess: (r) => { if (!r.dry_run) refresh(); },
+  });
   const saveCriteria = useMutation({
     mutationFn: (v: { pool: string; criteria: ScreenCriteria }) =>
       universeApi.saveCriteria(v.pool, v.criteria),
@@ -75,5 +81,5 @@ export function useUniverseMutations() {
     mutationFn: (pool: string) => universeApi.startScreen(pool),
     onSuccess: () => qc.invalidateQueries({ queryKey: universeKeys.all }),
   });
-  return { addMember, removeMember, updateStock, importMembers, saveCriteria, startScreen };
+  return { addMember, removeMember, updateStock, importMembers, pasteMembers, saveCriteria, startScreen };
 }

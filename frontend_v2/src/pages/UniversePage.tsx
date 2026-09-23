@@ -9,13 +9,14 @@ import { Link } from "react-router-dom";
 import LoadError from "../components/LoadError";
 import { OwnerOnly } from "../components/AuthGate";
 import ImportModal from "../components/universe/ImportModal";
+import PasteModal from "../components/universe/PasteModal";
 import ScreenCriteriaCard from "../components/universe/ScreenCriteriaCard";
 import StockFormModal from "../components/universe/StockFormModal";
 import UniverseTable from "../components/universe/UniverseTable";
 import { ConfirmDialog, GhostBtn, PrimaryBtn } from "../components/journal/ui";
 import { useUniverse, useUniverseMutations } from "../hooks/useUniverse";
 import { fmtDateTime } from "../lib/money";
-import { plainSymbol, type ImportResult, type UniverseStock } from "../lib/universeApi";
+import { plainSymbol, type ImportResult, type PasteResult, type UniverseStock } from "../lib/universeApi";
 import { downloadCsv, universeToCsv } from "../lib/universeCsv";
 
 const POOL_META: Record<string, { icon: string; kind: string; blurb: string }> = {
@@ -35,6 +36,7 @@ export default function UniversePage() {
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<{ initial: UniverseStock | null } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [pasting, setPasting] = useState(false);
   const [removing, setRemoving] = useState<UniverseStock | null>(null);
   const [flash, setFlash] = useState<{ text: string; err?: boolean } | null>(null);
 
@@ -55,11 +57,16 @@ export default function UniversePage() {
   const editable = pool !== null && data.editable_pools.includes(pool);
   const lastSync = pool ? data.last_syncs[pool] : undefined;
   const busy = m.addMember.isPending || m.updateStock.isPending || m.removeMember.isPending
-    || m.importMembers.isPending;
+    || m.importMembers.isPending || m.pasteMembers.isPending;
 
   const exportCsv = () =>
     downloadCsv(`plutus-universe-${pool ?? "all"}-${new Date().toISOString().slice(0, 10)}.csv`,
                 universeToCsv(data.stocks, pool));
+
+  const onPasteClosed = (r?: PasteResult) => {
+    setPasting(false);
+    if (r) say(`${r.pool}: +${r.diff.added.length} added, −${r.diff.removed.length} removed (${r.fetched} looked up${r.failed ? `, ${r.failed} without details` : ""}).`);
+  };
 
   const onImportClosed = (r?: ImportResult) => {
     setImporting(false);
@@ -113,6 +120,7 @@ export default function UniversePage() {
           <GhostBtn onClick={exportCsv}>⤓ Export CSV</GhostBtn>
           {editable && (
             <OwnerOnly>
+              <GhostBtn onClick={() => setPasting(true)}>📋 Paste symbols</GhostBtn>
               <GhostBtn onClick={() => setImporting(true)}>⤒ Import CSV</GhostBtn>
               <PrimaryBtn onClick={() => setForm({ initial: null })}>+ Add stock</PrimaryBtn>
             </OwnerOnly>
@@ -175,6 +183,12 @@ export default function UniversePage() {
               });
             }
           }} />
+      )}
+      {pasting && pool && (
+        <PasteModal pool={pool} busy={m.pasteMembers.isPending}
+          onPreview={(text, refresh, mode) => m.pasteMembers.mutateAsync({ pool, text, dryRun: true, refresh, mode })}
+          onApply={(text, refresh, mode) => m.pasteMembers.mutateAsync({ pool, text, dryRun: false, refresh, mode })}
+          onClose={onPasteClosed} />
       )}
       {importing && pool && (
         <ImportModal pool={pool} busy={m.importMembers.isPending}

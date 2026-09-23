@@ -118,6 +118,25 @@ export interface ImportResult {
   sync?: UniverseSync;
 }
 
+export interface PasteSymbol {
+  symbol: string;
+  known: boolean;
+  in_pool: boolean;
+  source: "existing" | "yfinance" | "failed";
+  error: string | null;
+  name: string | null;
+  sector: string | null;
+  industry: string | null;
+  cap_type_manual: string | null;
+  sector_group: string | null;
+}
+
+export interface PasteResult extends ImportResult {
+  symbols: PasteSymbol[];
+  fetched: number;
+  failed: number;
+}
+
 export interface ScreenCriteria {
   normal: { net_debt_to_equity_max: string; roce_min: string; net_profit_min_cr: string };
   banks_nbfc: { roe_min: string; net_profit_min_cr: string };
@@ -145,6 +164,12 @@ export const universeApi = {
   importMembers: (pool: string, rows: ImportRow[], mode: "merge" | "replace", dryRun: boolean) =>
     send<ImportResult>("POST", `/api/universe/pools/${encodeURIComponent(pool)}/import`,
       { rows, mode, dry_run: dryRun }),
+
+  /** Paste a symbol list; dry_run previews with fetched fields, no writes. */
+  pasteMembers: (pool: string, text: string, dryRun: boolean, refresh = false,
+                 mode: "merge" | "replace" = "merge") =>
+    send<PasteResult>("POST", `/api/universe/pools/${encodeURIComponent(pool)}/paste`,
+      { text, dry_run: dryRun, refresh, mode }),
 
   criteria: (pool: string) =>
     send<{ pool: string; criteria: ScreenCriteria; updated_at: string | null; defaults: ScreenCriteria }>(

@@ -194,6 +194,100 @@ def parse_import_rows(rows: Iterable[Dict[str, Any]]) -> Tuple[List[Dict[str, An
     return list(clean.values()), rejects
 
 
+_PREFIX_RE = re.compile(r"^(NSE|BSE)\s*:\s*", re.IGNORECASE)
+PASTE_MAX_SYMBOLS = 300
+
+
+def parse_symbol_list(text: Any) -> Tuple[List[str], List[str]]:
+    """Free-text symbol list -> (canonical symbols, rejected tokens).
+
+    Accepts TradingView exports ('NSE:APTUS,' one per line), comma / space /
+    newline / semicolon separated tokens, plain 'TCS' or 'TCS.NS'.
+    'BSE:500325' becomes '500325.BO'. Order preserved, duplicates dropped."""
+    if not isinstance(text, str):
+        return [], []
+    out: List[str] = []
+    rejects: List[str] = []
+    seen: Set[str] = set()
+    for tok in re.split(r"[,\s;]+", text):
+        tok = tok.strip().strip('"').strip("'")
+        if not tok:
+            continue
+        m = _PREFIX_RE.match(tok)
+        body = _PREFIX_RE.sub("", tok)
+        if m and m.group(1).upper() == "BSE" and not _SUFFIX_RE.search(body):
+            body = f"{body}.BO"
+        sym = canonical_symbol(body)
+        if sym is None:
+            rejects.append(tok)
+        elif sym not in seen:
+            seen.add(sym)
+            out.append(sym)
+    return out, rejects
+
+
+# yfinance `industry` strings -> criteria group. Banks & NBFC are screened on
+# ROE + Net profit; insurers, AMCs, brokers and exchanges are NOT NBFCs in
+# the owner's scheme (they carry the Normal rules), matching the S200 labels.
+_NBFC_INDUSTRIES = {"credit services", "mortgage finance", "financial conglomerates",
+                    "specialty finance", "consumer finance"}
+
+
+def classify_sector_group(sector: Any, industry: Any) -> Optional[str]:
+    """('Financial Services', 'Banks - Regional') -> 'Banks';
+    ('Financial Services', 'Credit Services') -> 'NBFC'; anything else with a
+    known sector/industry -> 'Normal'; nothing known -> None."""
+    ind = (industry or "").strip().lower() if isinstance(industry, str) else ""
+    sec = (sector or "").strip().lower() if isinstance(sector, str) else ""
+    if not ind and not sec:
+        return None
+    if "bank" in ind:
+        return "Banks"
+    if ind in _NBFC_INDUSTRIES or ("nbfc" in ind):
+        return "NBFC"
+    return "Normal"
+
+
+def fields_from_info(info: Dict[str, Any]) -> Dict[str, Any]:
+    """yfinance `.info` -> the universe columns we can fill. Never raises;
+    missing keys simply stay absent so existing values are not overwritten."""
+    from plutus.metrics.cap_bucket import classify_market_cap
+    from plutus.registry.types import to_decimal
+
+    out: Dict[str, Any] = {}
+    if not isinstance(info, dict):
+        return out
+    name = info.get("longName") or info.get("shortName")
+    if isinstance(name, str) and name.strip():
+        out["name"] = name.strip()
+    sector = info.get("sector")
+    if isinstance(sector, str) and sector.strip():
+        out["sector"] = sector.strip()
+    industry = info.get("industry")
+    if isinstance(industry, str) and industry.strip():
+        out["industry"] = industry.strip()
+    mcap = info.get("marketCap")
+    if mcap is not None:
+        try:
+            bucket = classify_market_cap(to_decimal(mcap))
+        except Exception:  # noqa: BLE001 — junk marketCap must not sink the row
+            bucket = None
+        if bucket:
+            out["cap_type_manual"] = bucket
+    grp = classify_sector_group(sector, industry)
+    if grp:
+        out["sector_group"] = grp
+    return out
+
+
+# Columns the paste flow fills when a stock lacks them.
+_ENRICH_FIELDS = ("name", "sector", "industry", "cap_type_manual", "sector_group")
+
+
+def needs_enrichment(existing: Optional[Dict[str, Any]]) -> bool:
+    return existing is None or any(not existing.get(k) for k in _ENRICH_FIELDS)
+
+
 def compute_pool_diff(
     pool: str,
     current: Dict[str, Dict[str, Any]],
@@ -275,9 +369,21 @@ def clean_criteria(payload: Dict[str, Any]) -> Dict[str, Any]:
 # Routes
 # ---------------------------------------------------------------------------
 
-def register_universe_routes(app: Any, cli: Any) -> None:
-    """Mount /api/universe/* on the given FastAPI app."""
+def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> None:
+    """Mount /api/universe/* on the given FastAPI app.
+
+    Args:
+        app: FastAPI instance.
+        cli: zero-arg callable returning the (injectable) supabase client.
+        fetch_info: ``symbol -> Result[dict]`` used by the paste flow to fill
+            name / sector / cap / group. Defaults to the yfinance adapter;
+            tests inject a fake so the suite never touches the network.
+    """
     from fastapi import Body, HTTPException, Query
+
+    if fetch_info is None:
+        from plutus.adapters.yf_client import fetch_info as _yf_fetch_info
+        fetch_info = _yf_fetch_info
 
     from plutus.adapters import supabase_client as sb
     from plutus.api.serializers import serialize_rows, to_wire
@@ -514,6 +620,97 @@ def register_universe_routes(app: Any, cli: Any) -> None:
         })
         return {"pool": code, "mode": mode, "dry_run": False, "diff": diff,
                 "row_count": len(incoming), "sync": to_wire(sync)}
+
+    # -- paste a symbol list (TradingView export etc.) ------------------------
+    # Parses the text, fills name / sector / industry / cap / group for every
+    # symbol that lacks them (yfinance .info), previews the diff (dry_run),
+    # then adds the symbols to the pool. Enrichment failures never block a
+    # symbol: it is added with whatever is known and flagged in the response.
+    @app.post("/api/universe/pools/{code}/paste")
+    @guard
+    def paste_members(code: str, payload: dict = Body(...)) -> dict:
+        _pool_or_404(code)
+        if code not in EDITABLE_POOLS:
+            raise HTTPException(status_code=403, detail=f"{code} is not editable")
+        symbols, rejected = parse_symbol_list(payload.get("text"))
+        if not symbols:
+            raise HTTPException(status_code=400, detail="no symbols found in the pasted text")
+        if len(symbols) > PASTE_MAX_SYMBOLS:
+            raise HTTPException(status_code=400,
+                                detail=f"too many symbols ({len(symbols)}); paste at most {PASTE_MAX_SYMBOLS}")
+        dry_run = bool(payload.get("dry_run", False))
+        refresh = bool(payload.get("refresh", False))   # re-fetch even when known
+        mode = str(payload.get("mode") or "merge").lower()
+        if mode not in ("merge", "replace"):
+            raise HTTPException(status_code=400, detail="mode must be merge or replace")
+
+        current = _all_stocks()
+        refs = _journal_refs()
+        rows: List[Dict[str, Any]] = []
+        details: List[Dict[str, Any]] = []
+        for sym in symbols:
+            existing = current.get(sym)
+            fields: Dict[str, Any] = {}
+            source = "existing"
+            error: Optional[str] = None
+            if refresh or needs_enrichment(existing):
+                res = fetch_info(sym)
+                if getattr(res, "ok", False):
+                    fetched = fields_from_info(res.value or {})
+                    # Fill gaps only (refresh overwrites) — never blank a value
+                    # the owner typed by hand.
+                    for k, v in fetched.items():
+                        if refresh or existing is None or not existing.get(k):
+                            fields[k] = v
+                    source = "yfinance"
+                else:
+                    source = "failed"
+                    error = getattr(res, "error", None) or "lookup failed"
+            merged = {**(existing or {}), **fields}
+            rows.append({"symbol": sym, **fields})
+            details.append({
+                "symbol": sym,
+                "known": existing is not None,
+                "in_pool": bool(existing and code in (existing.get("pools") or [])),
+                "source": source,
+                "error": error,
+                "name": merged.get("name"),
+                "sector": merged.get("sector"),
+                "industry": merged.get("industry"),
+                "cap_type_manual": merged.get("cap_type_manual"),
+                "sector_group": merged.get("sector_group"),
+            })
+
+        diff = compute_pool_diff(code, current, rows, mode=mode)
+        diff["rejected"] = [{"symbol": t, "reason": "not a valid NSE/BSE symbol"} for t in rejected]
+        # Replace mode: members not pasted leave the pool. A stock with no pool
+        # left is retired unless the journal still holds it (then it stays
+        # active so its LTP keeps syncing) — surfaced here for the preview.
+        diff["kept_for_journal"] = [
+            s for s in diff["removed"]
+            if not [p for p in (current[s].get("pools") or []) if p != code]
+            and _journal_holds(s, refs)]
+        result = {"pool": code, "mode": mode, "dry_run": dry_run, "diff": diff,
+                  "row_count": len(rows), "symbols": details,
+                  "fetched": sum(1 for d in details if d["source"] == "yfinance"),
+                  "failed": sum(1 for d in details if d["source"] == "failed")}
+        if dry_run:
+            return result
+
+        by_symbol = {r["symbol"]: r for r in rows}
+        for sym in diff["added"] + diff["updated"]:
+            fields = {k: v for k, v in by_symbol[sym].items() if k != "symbol"}
+            _add_member(sym, code, fields, existing=current.get(sym), source="paste")
+        for sym in diff["removed"]:
+            _remove_member(current[sym], code, refs)
+        sync = _record_sync({
+            "pool_code": code, "kind": "import", "status": "applied", "mode": mode,
+            "criteria": {"source": "paste", "row_count": len(rows),
+                         "fetched": result["fetched"], "failed": result["failed"]},
+            "diff": diff, "applied_at": _now(), "triggered_by": "owner",
+        })
+        result["sync"] = to_wire(sync)
+        return result
 
     # -- S200 screen criteria -----------------------------------------------
     @app.get("/api/universe/pools/{code}/criteria")

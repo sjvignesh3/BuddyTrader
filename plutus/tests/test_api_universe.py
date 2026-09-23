@@ -390,3 +390,158 @@ class TestAuthGate:
         from plutus.api.auth import is_protected
         assert is_protected("/api/universe")
         assert is_protected("/api/universe/pools/F40/members")
+
+
+# ---------------------------------------------------------------------------
+# Paste flow — symbol parsing, yfinance field mapping, enrich-and-add route
+# ---------------------------------------------------------------------------
+from plutus.api.universe import (  # noqa: E402
+    classify_sector_group,
+    fields_from_info,
+    parse_symbol_list,
+)
+from plutus.adapters.result import Result  # noqa: E402
+
+
+class TestPasteParsing:
+    def test_tradingview_export(self):
+        syms, rejects = parse_symbol_list("NSE:APTUS,\nNSE:CANFINHOME,\nNSE:CGCL,\n")
+        assert syms == ["APTUS.NS", "CANFINHOME.NS", "CGCL.NS"]
+        assert rejects == []
+
+    def test_mixed_separators_prefixes_and_dupes(self):
+        syms, rejects = parse_symbol_list("tcs, INFY;NSE:TCS BSE:500325 'M&M' bad$sym")
+        assert syms == ["TCS.NS", "INFY.NS", "500325.BO", "M&M.NS"]
+        assert rejects == ["bad$sym"]
+
+    def test_empty(self):
+        assert parse_symbol_list("") == ([], [])
+        assert parse_symbol_list(None) == ([], [])
+
+
+class TestInfoMapping:
+    @pytest.mark.parametrize("sector,industry,expected", [
+        ("Financial Services", "Banks - Regional", "Banks"),
+        ("Financial Services", "Credit Services", "NBFC"),
+        ("Financial Services", "Mortgage Finance", "NBFC"),
+        ("Financial Services", "Financial Conglomerates", "NBFC"),
+        ("Financial Services", "Insurance - Life", "Normal"),
+        ("Financial Services", "Asset Management", "Normal"),
+        ("Financial Services", "Capital Markets", "Normal"),
+        ("Technology", "Information Technology Services", "Normal"),
+        (None, None, None),
+    ])
+    def test_sector_group(self, sector, industry, expected):
+        assert classify_sector_group(sector, industry) == expected
+
+    def test_fields_from_info(self):
+        f = fields_from_info({
+            "longName": "Aptus Value Housing Finance India Limited",
+            "sector": "Financial Services", "industry": "Mortgage Finance",
+            "marketCap": 125873668096,          # ₹12,587 Cr -> Small
+        })
+        assert f == {
+            "name": "Aptus Value Housing Finance India Limited",
+            "sector": "Financial Services", "industry": "Mortgage Finance",
+            "cap_type_manual": "Small", "sector_group": "NBFC",
+        }
+
+    def test_fields_from_info_partial_and_junk(self):
+        assert fields_from_info({"shortName": "X LTD", "marketCap": "abc"}) == {"name": "X LTD"}
+        assert fields_from_info(None) == {}
+        big = fields_from_info({"marketCap": 11_365_873_876_992})
+        assert big == {"cap_type_manual": "Large"}
+
+
+INFO = {
+    "APTUS.NS": {"longName": "Aptus Value Housing Finance India Limited",
+                 "sector": "Financial Services", "industry": "Mortgage Finance",
+                 "marketCap": 125873668096},
+    "HDFCBANK.NS": {"longName": "HDFC Bank Limited", "sector": "Financial Services",
+                    "industry": "Banks - Regional", "marketCap": 11365873876992},
+}
+
+
+def fake_fetch_info(symbol: str):
+    if symbol in INFO:
+        return Result.success(INFO[symbol], symbol=symbol)
+    return Result.failure("no data", symbol=symbol)
+
+
+@pytest.fixture
+def paste_client(db):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from plutus.api import create_app
+    return TestClient(create_app(supabase_client=db, fetch_info=fake_fetch_info))
+
+
+class TestPasteRoute:
+    def test_dry_run_enriches_without_writing(self, paste_client, db):
+        r = paste_client.post("/api/universe/pools/E40/paste",
+                              json={"text": "NSE:APTUS,\nNSE:HDFCBANK,\nNSE:NOPE,\nLONE\n", "dry_run": True})
+        assert r.status_code == 200, r.text
+        b = r.json()
+        by = {s["symbol"]: s for s in b["symbols"]}
+        assert by["APTUS.NS"]["source"] == "yfinance" and by["APTUS.NS"]["cap_type_manual"] == "Small"
+        assert by["APTUS.NS"]["sector_group"] == "NBFC" and by["APTUS.NS"]["known"] is False
+        assert by["HDFCBANK.NS"]["sector_group"] == "Banks"
+        assert by["NOPE.NS"]["source"] == "failed" and by["NOPE.NS"]["error"] == "no data"
+        # LONE is already in E40 and lacks fields -> looked up, fails, stays a member.
+        assert by["LONE.NS"]["in_pool"] is True and by["LONE.NS"]["source"] == "failed"
+        assert b["fetched"] == 2 and b["failed"] == 2
+        assert sorted(b["diff"]["added"]) == ["APTUS.NS", "HDFCBANK.NS", "NOPE.NS"]
+        assert b["diff"]["removed"] == []
+        assert len(db.tables["stocks"]) == 3 and db.tables["universe_syncs"] == []
+
+    def test_apply_adds_with_fetched_fields(self, paste_client, db):
+        r = paste_client.post("/api/universe/pools/E40/paste", json={"text": "NSE:APTUS, NSE:NOPE"})
+        assert r.status_code == 200, r.text
+        aptus = _stock_row(db, "APTUS.NS")
+        assert aptus["pools"] == ["E40"] and aptus["name"].startswith("Aptus")
+        assert aptus["cap_type_manual"] == "Small" and aptus["sector_group"] == "NBFC"
+        assert aptus["metadata"]["membership"]["E40"]["source"] == "paste"
+        nope = _stock_row(db, "NOPE.NS")            # failed lookup still joins the pool
+        assert nope["pools"] == ["E40"] and nope.get("name") is None
+        syncs = db.tables["universe_syncs"]
+        assert len(syncs) == 1 and syncs[0]["criteria"]["source"] == "paste"
+        assert syncs[0]["criteria"]["failed"] == 1
+
+    def test_existing_fields_are_not_overwritten_unless_refresh(self, paste_client, db):
+        # TCS already has sector 'IT' + group 'Normal'; name is missing so a
+        # lookup happens (fails) — the existing values must survive.
+        r = paste_client.post("/api/universe/pools/E40/paste", json={"text": "TCS"})
+        assert r.status_code == 200, r.text
+        tcs = _stock_row(db, "TCS.NS")
+        assert tcs["sector"] == "IT" and tcs["sector_group"] == "Normal"
+        assert "E40" in tcs["pools"]
+
+    def test_bad_input(self, paste_client):
+        assert paste_client.post("/api/universe/pools/E40/paste", json={"text": "!!! ???"}).status_code == 400
+        assert paste_client.post("/api/universe/pools/E40/paste",
+                                 json={"text": " ".join(f"S{i}" for i in range(301))}).status_code == 400
+
+
+    def test_replace_mode_removes_and_retires(self, paste_client, db):
+        # E40 currently: HELD (journal holds it) + LONE. Paste only APTUS in replace mode.
+        r = paste_client.post("/api/universe/pools/E40/paste",
+                              json={"text": "NSE:APTUS", "mode": "replace", "dry_run": True})
+        assert r.status_code == 200, r.text
+        d = r.json()["diff"]
+        assert d["added"] == ["APTUS.NS"] and d["removed"] == ["HELD.NS", "LONE.NS"]
+        assert d["kept_for_journal"] == ["HELD.NS"]
+        assert _stock_row(db, "LONE.NS")["pools"] == ["E40"]     # dry run wrote nothing
+
+        r = paste_client.post("/api/universe/pools/E40/paste", json={"text": "NSE:APTUS", "mode": "replace"})
+        assert r.status_code == 200, r.text
+        assert _stock_row(db, "APTUS.NS")["pools"] == ["E40"]
+        lone = _stock_row(db, "LONE.NS")
+        assert lone["pools"] == [] and lone["active"] is False        # retired, not deleted
+        held = _stock_row(db, "HELD.NS")
+        assert held["pools"] == [] and held["active"] is True         # journal keeps it alive
+        assert len(db.tables["stocks"]) == 4
+        assert db.tables["universe_syncs"][0]["mode"] == "replace"
+
+    def test_bad_mode(self, paste_client):
+        r = paste_client.post("/api/universe/pools/E40/paste", json={"text": "TCS", "mode": "nuke"})
+        assert r.status_code == 400

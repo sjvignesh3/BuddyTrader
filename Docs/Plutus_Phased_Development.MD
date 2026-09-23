@@ -564,6 +564,20 @@ scan and the Trading Journal's symbol picker read from it.
   CSV export, S200 criteria card with the consent dialog for the future sync.
   Journal opportunity / trade forms use a universe-backed `SymbolPicker`; a
   symbol outside the universe cannot be saved.
+- **Paste symbols** (`POST /api/universe/pools/{code}/paste`): accepts a
+  TradingView export (`NSE:APTUS,` per line) or any comma / newline list. For
+  every symbol missing name / sector / industry / cap / group the API calls
+  yfinance `.info` (`plutus/adapters/yf_client.fetch_info`, retried) and maps
+  it with `fields_from_info`: `longName` → name, `sector`, `industry`,
+  `marketCap` → cap bucket via `metrics/cap_bucket.classify_market_cap`, and
+  `classify_sector_group`: industry containing "Bank" → Banks; Credit
+  Services / Mortgage Finance / Financial Conglomerates → NBFC; anything else
+  known → Normal (insurers, AMCs, brokers, exchanges are Normal, as in the
+  owner's S200 labels). Existing hand-typed values are never overwritten
+  unless `refresh` is set; a failed lookup still adds the symbol and is
+  flagged. `dry_run` previews the fetched fields + diff before Apply. `mode`
+  is `merge` (add to the list) or `replace` (the pool becomes exactly the
+  pasted list; leavers are retired unless the journal holds them).
 
 **Journal safety (invariant).** No route deletes a `stocks` row. Removing a
 stock's last pool sets `active = false`; a stock the journal still references
@@ -571,9 +585,9 @@ stock's last pool sets `active = false`; a stock the journal still references
 Journal tables are read, never written, by this module.
 
 **Deferred (next cut).** The S200 Screener screen worker: run the two screens
-with the stored criteria, classify new candidates (Banks / NBFC / Normal —
-decision pending between yfinance `.info` industry, already stored in
-`raw_yf_meta` for members, and Screener's public `/market/…` taxonomy), write a
+with the stored criteria, classify new candidates with the same
+`classify_sector_group` (yfinance industry — decided 2026-09-23: reuse the
+API already in use rather than parse Screener's `/market/…` taxonomy), write a
 `universe_syncs` row in `preview`, and let the owner apply or discard it.
 
 **Tests.** `plutus/tests/test_api_universe.py` (helpers, diff, retire-vs-journal,
