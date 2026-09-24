@@ -26,6 +26,12 @@
     tvFocusMode: true,               // hide TradingView upsell dialogs
     tvShowChips: true,               // signal / score / held chips on rows
     tvSort: 'default',               // default | conviction | dma | ath | score | name
+    tvHeldStrip: true,               // held-position strip for the active symbol
+
+    // Cross-site
+    linkTabs: true,                  // TradingView and Screener company tabs follow each other
+    scrWalk: true,                   // ← / → walk-through pill on Screener company pages
+    sizerRiskPct: 1,                 // default % of capital risked per trade in the sizer
 
     // Screener.in
     scrEnabled: true,

@@ -37,6 +37,8 @@
 
   const LS_LAYOUT = 'plutus_tv_layout_v1';
   const LS_ACTIVE = 'plutus_tv_active_list_v1';
+  // Shared with the Screener walk-through pill (chrome.storage.local, not page storage).
+  const NAV_KEY = 'plutus_nav';
 
   // ---- state ------------------------------------------------------------------
   const st = {
@@ -55,7 +57,7 @@
     loading: false,
     error: null,
   };
-  let panel, toggleBtn, listEl, selectEl, slicerEl, filterInput, sortSelect, asofEl, bannerEl, addRow, addInput, hintEl, focusBtn;
+  let panel, toggleBtn, listEl, selectEl, slicerEl, filterInput, sortSelect, asofEl, bannerEl, addRow, addInput, hintEl, focusBtn, linkBtn, heldEl, wideBtn;
 
   // =============================================================================
   // Boot
@@ -72,24 +74,40 @@
     [400, 1200, 2500, 5000].forEach((ms) => setTimeout(syncActiveSymbol, ms));
     window.addEventListener('focus', syncActiveSymbol);
     observeTitle();
-    SET.onChange((s) => { st.settings = s; applyFocusMode(); renderList(); renderHint(); });
-    if (U.contextAlive()) chrome.runtime.onMessage.addListener((m) => { if (m && m.type === 'plutus:bootstrap-updated') loadAll(); });
+    SET.onChange((s) => { st.settings = s; applyFocusMode(); renderList(); renderHint(); renderHeld(); });
+    if (U.contextAlive()) {
+      chrome.runtime.onMessage.addListener((m) => {
+        if (!m) return;
+        if (m.type === 'plutus:bootstrap-updated') loadAll();
+        if (m.type === 'plutus:switch-symbol') followLinkedSymbol(m.symbol);
+      });
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes[NAV_KEY]) adoptNavFromScreener(changes[NAV_KEY].newValue);
+      });
+    }
   }
   window.__plutusTvReload = () => loadAll();
 
   async function loadAll() {
     st.loading = true; st.error = null; renderBanner();
     try {
-      const [boot, wl, pos] = await Promise.all([
+      const [boot, wl, pos, lots] = await Promise.all([
         U.send({ type: 'bootstrap' }, 95000),
         U.send({ type: 'watchlists' }).catch((e) => ({ source: 'local', watchlists: [], _error: e.message })),
         U.send({ type: 'positions' }).catch(() => ({ positions: [] })),
+        U.send({ type: 'trades.open' }).catch(() => ({ trades: [] })),
       ]);
       st.boot = boot;
       st.stocks = new Map((boot.stocks || []).map((s) => [s.symbol, s]));
       st.watchlists = wl.watchlists || [];
       st.wlSource = wl.source || 'local';
       st.positions = new Map((pos.positions || []).map((p) => [String(p.symbol).toUpperCase(), p]));
+      st.lots = new Map();
+      (lots.trades || []).forEach((t) => {
+        const k = String(t.symbol || '').toUpperCase();
+        if (!st.lots.has(k)) st.lots.set(k, []);
+        st.lots.get(k).push(t);
+      });
       if (boot._stale) st.error = 'Plutus API unreachable — showing cached data (' + (boot._error || '') + ')';
     } catch (e) {
       st.error = e.message;
@@ -182,20 +200,24 @@
   // UI
   // =============================================================================
   function buildUI() {
-    toggleBtn = el('button', { id: 'px-tv-toggle', title: 'Plutus panel (Alt+W)', text: 'P', onclick: togglePanel });
+    toggleBtn = el('button', { id: 'px-tv-toggle', title: 'Plutus panel (Alt+W)', 'aria-label': 'Plutus panel', onclick: togglePanel }, [U.logo(34)]);
     document.body.appendChild(toggleBtn);
 
     panel = el('div', { id: 'px-tv-panel' });
     // header
     asofEl = el('span', { class: 'px-asof' });
     focusBtn = el('button', { class: 'px-icon-btn', title: 'Focus mode: hide TradingView upsell dialogs', text: '◐', onclick: () => SET.save({ tvFocusMode: !st.settings.tvFocusMode }) });
+    linkBtn = el('button', { class: 'px-icon-btn', title: 'Link tabs: an open Screener company tab follows this chart, and the chart follows Screener', text: '⇄', onclick: () => SET.save({ linkTabs: !st.settings.linkTabs }) });
     const header = el('div', { class: 'px-header' }, [
-      el('span', { class: 'px-title', html: '<span class="px-dot"></span>Plutus' }),
+      el('span', { class: 'px-title' }, [U.logo(18), 'Plutus']),
       asofEl,
       el('span', { class: 'px-header-spacer' }),
+      el('button', { class: 'px-icon-btn', title: 'Size a position for the active stock (Z)', text: '⚖', onclick: () => sizerDialog(currentSymbol()) }),
+      linkBtn,
       el('button', { class: 'px-icon-btn', title: 'Refresh Plutus data', text: '↻', onclick: () => refresh(true) }),
       focusBtn,
       el('button', { class: 'px-icon-btn', title: 'Open Plutus', text: '⌂', onclick: () => window.open(st.settings.webAppUrl, '_blank') }),
+      wideBtn = el('button', { class: 'px-icon-btn', title: 'Expand the panel (Alt+E)', text: '⤢', onclick: toggleWide }),
       el('button', { class: 'px-icon-btn', title: 'Hide (Alt+W)', text: '✕', onclick: togglePanel }),
     ]);
     makeDraggable(header);
@@ -233,7 +255,8 @@
     addInput.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') addSymbolsToActive(); if (e.key === 'Escape') addInput.blur(); });
     addRow = el('div', { style: 'display:flex;gap:6px' }, [addInput, el('button', { class: 'px-small-btn px-primary', text: 'Add', onclick: addSymbolsToActive })]);
     hintEl = el('div', { class: 'px-hint' });
-    panel.appendChild(el('div', { class: 'px-footer' }, [addRow, hintEl]));
+    heldEl = el('div', { class: 'px-held', style: 'display:none' });
+    panel.appendChild(el('div', { class: 'px-footer' }, [heldEl, addRow, hintEl]));
 
     document.body.appendChild(panel);
     restoreLayout();
@@ -241,7 +264,7 @@
     window.addEventListener('keydown', onKeyDown, true);
   }
 
-  function renderAll() { renderBanner(); renderSelect(); renderSlicer(); renderList(); renderHint(); renderAsOf(); }
+  function renderAll() { renderBanner(); renderSelect(); renderSlicer(); renderList(); renderHint(); renderAsOf(); renderHeld(); }
 
   function renderBanner() {
     if (!bannerEl) return;
@@ -295,6 +318,7 @@
     if (!listEl) return;
     listEl.innerHTML = '';
     const rows = visibleRows();
+    publishNav(rows);
     if (!rows.length) {
       listEl.appendChild(el('div', { class: 'px-empty', text: st.boot ? (activeWatchlist() ? 'Empty list — add symbols below or bookmark from any row.' : 'No stocks match.') : (st.error ? 'Plutus data unavailable.' : 'Loading…') }));
       return;
@@ -319,6 +343,7 @@
           showChips && chips.length ? el('div', { class: 'px-chips' }, chips) : (r.name ? el('div', { class: 'px-name', text: r.name }) : null),
         ]),
         el('div', { class: 'px-actions' }, [
+          el('button', { class: 'px-act', title: 'Size a position (Z)', text: '⚖', onclick: (e) => { e.stopPropagation(); sizerDialog(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Note (N)', text: '✎', onclick: (e) => { e.stopPropagation(); noteDialog(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Bookmark to a watchlist (B)', text: '🔖', onclick: (e) => { e.stopPropagation(); bookmarkDialog(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Screener.in (S)', text: '⧉', onclick: (e) => { e.stopPropagation(); openScreener(r.symbol); } }),
@@ -335,8 +360,10 @@
   function renderHint() {
     const space = st.settings.tvSpaceKeyNavigates;
     hintEl.innerHTML = '<span><kbd>↑</kbd><kbd>↓</kbd>' + (space ? '<kbd>Space</kbd>' : '') + ' stock</span><span><kbd>←</kbd><kbd>→</kbd> list</span>' +
-      '<span><kbd>N</kbd> note</span><span><kbd>B</kbd> bookmark</span><span><kbd>O</kbd> opportunity</span><span><kbd>S</kbd> screener</span><span><kbd>P</kbd> plutus</span><span><kbd>A</kbd> play area</span><span><kbd>Alt</kbd>+<kbd>W</kbd> panel</span>';
+      '<span><kbd>Z</kbd> size</span><span><kbd>N</kbd> note</span><span><kbd>B</kbd> bookmark</span><span><kbd>O</kbd> opportunity</span><span><kbd>S</kbd> screener</span><span><kbd>P</kbd> plutus</span><span><kbd>A</kbd> play area</span><span><kbd>Alt</kbd>+<kbd>W</kbd> panel</span><span><kbd>Alt</kbd>+<kbd>E</kbd> expand</span>';
     focusBtn.classList.toggle('px-on', !!st.settings.tvFocusMode);
+    linkBtn.classList.toggle('px-on', !!st.settings.linkTabs);
+    linkBtn.title = st.settings.linkTabs ? 'Tabs linked: Screener follows this chart and the chart follows Screener (click to unlink)' : 'Tabs not linked (click to link TradingView and Screener)';
     sortSelect.value = st.settings.tvSort || 'default';
   }
 
@@ -377,12 +404,16 @@
       panel.style.left = l + 'px'; panel.style.top = t + 'px';
     });
     window.addEventListener('mouseup', () => { if (dragging) { dragging = false; saveLayout(); } });
-    handle.addEventListener('dblclick', () => { panel.style.cssText = ''; try { localStorage.removeItem(LS_LAYOUT); } catch (e) { /* ignore */ } });
+    handle.addEventListener('dblclick', () => { panel.style.cssText = ''; panel.classList.remove('px-wide'); syncWideBtn(); try { localStorage.removeItem(LS_LAYOUT); } catch (e) { /* ignore */ } renderHeld(); });
   }
   function saveLayout() {
     try {
       const r = panel.getBoundingClientRect();
-      localStorage.setItem(LS_LAYOUT, JSON.stringify({ left: r.left, top: r.top, width: r.width, height: r.height }));
+      const prev = JSON.parse(localStorage.getItem(LS_LAYOUT) || 'null') || {};
+      const wide = panel.classList.contains('px-wide');
+      // In wide mode keep the remembered normal size so collapsing restores it.
+      const normal = wide ? prev.normal : { width: r.width, height: r.height };
+      localStorage.setItem(LS_LAYOUT, JSON.stringify({ left: r.left, top: r.top, width: r.width, height: r.height, wide, normal }));
     } catch (e) { /* ignore */ }
   }
   function restoreLayout() {
@@ -390,10 +421,49 @@
       const l = JSON.parse(localStorage.getItem(LS_LAYOUT) || 'null');
       if (!l) return;
       panel.style.right = 'auto';
-      panel.style.left = Math.max(0, Math.min(window.innerWidth - 100, l.left)) + 'px';
-      panel.style.top = Math.max(0, Math.min(window.innerHeight - 100, l.top)) + 'px';
       panel.style.width = l.width + 'px'; panel.style.height = l.height + 'px';
+      panel.style.left = Math.max(0, Math.min(window.innerWidth - l.width - 8, l.left)) + 'px';
+      panel.style.top = Math.max(0, Math.min(window.innerHeight - 100, l.top)) + 'px';
+      if (l.wide) panel.classList.add('px-wide');
+      syncWideBtn();
     } catch (e) { /* ignore */ }
+  }
+  /**
+   * Expand: a tall, wide panel (room for every chip, the held strip in four
+   * columns and the lot list). The panel grows toward the chart from its right
+   * edge, and the previous size comes back on collapse.
+   */
+  function toggleWide() {
+    const r = panel.getBoundingClientRect();
+    const wide = !panel.classList.contains('px-wide');
+    let w, h;
+    if (wide) {
+      saveLayout();                                   // remember the normal size first
+      w = Math.min(520, window.innerWidth - 60);
+      h = Math.max(320, window.innerHeight - 70);
+    } else {
+      let normal = null;
+      try { normal = (JSON.parse(localStorage.getItem(LS_LAYOUT) || 'null') || {}).normal; } catch (e) { /* ignore */ }
+      w = (normal && normal.width) || 340;
+      h = (normal && normal.height) || Math.min(window.innerHeight * 0.78, 760);
+    }
+    const right = r.right;                            // keep the right edge where it is
+    panel.classList.toggle('px-wide', wide);
+    panel.style.width = w + 'px';
+    panel.style.height = h + 'px';
+    panel.style.right = 'auto';
+    panel.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, right - w)) + 'px';
+    panel.style.top = (wide ? Math.max(8, Math.min(r.top, window.innerHeight - h - 8)) : r.top) + 'px';
+    saveLayout();
+    syncWideBtn();
+    renderHeld();
+  }
+  function syncWideBtn() {
+    if (!wideBtn) return;
+    const wide = panel.classList.contains('px-wide');
+    wideBtn.textContent = wide ? '⤡' : '⤢';
+    wideBtn.title = wide ? 'Restore the panel size (Alt+E)' : 'Expand the panel (Alt+E)';
+    wideBtn.classList.toggle('px-on', wide);
   }
 
   // =============================================================================
@@ -415,6 +485,7 @@
     if (!tvSym) return;
     st.activeSymbol = symbol;
     highlightActive();
+    renderHeld();
     document.body.classList.add('px-switching');
     const btn = q1(TV.searchButton);
     if (!btn) { document.body.classList.remove('px-switching'); U.toast('TradingView symbol search button not found — selectors need updating', 'error'); return; }
@@ -477,6 +548,8 @@
   function syncActiveSymbol() {
     if (Date.now() - st.lastSwitchAt < 500) return;
     const sym = detectChartSymbol();
+    if (sym) announce(sym);             // what the chart really shows -> linked Screener tab
+    renderHeld();                       // title ticks carry the live price
     if (!sym || sym === st.activeSymbol) { highlightActive(); return; }
     st.activeSymbol = sym;
     // Follow the chart into whichever list holds the symbol, if the current one does not.
@@ -493,6 +566,166 @@
   function highlightActive() {
     listEl.querySelectorAll('.px-item').forEach((n) => n.classList.toggle('px-active', n.getAttribute('data-symbol') === st.activeSymbol));
     scrollActiveIntoView();
+  }
+
+  // =============================================================================
+  // Linked tabs (idea 1) — chart <-> Screener company tab
+  // =============================================================================
+  /** Tell the worker which symbol the chart confirms, once per change. */
+  function announce(sym) {
+    if (!st.settings.linkTabs || sym === st.announced) return;
+    st.announced = sym;
+    U.send({ type: 'link.symbol', from: 'tv', symbol: sym }).catch(() => {});
+  }
+  /** A Screener tab opened a company: bring the chart to it (no echo back). */
+  function followLinkedSymbol(symbol) {
+    const sym = S.toPlutus(symbol);
+    if (!sym || !st.settings.linkTabs) return;
+    st.announced = sym;
+    if (detectChartSymbol() === sym) return;
+    switchTo(sym);
+  }
+
+  // =============================================================================
+  // Walk-through list shared with Screener (idea 2)
+  // =============================================================================
+  /** Publish the visible list (after filter + sort) so ← / → on Screener walks the same stocks. */
+  function publishNav(rows) {
+    if (!st.active || !U.contextAlive()) return;
+    const nav = { kind: st.active.kind, id: st.active.id, name: st.active.name || String(st.active.id), symbols: rows.map((r) => r.symbol), source: 'tv' };
+    const json = JSON.stringify(nav);
+    if (json === st.navJson) return;
+    st.navJson = json;
+    clearTimeout(st.navTimer);
+    st.navTimer = setTimeout(() => { try { chrome.storage.local.set({ [NAV_KEY]: Object.assign({ at: Date.now() }, nav) }); } catch (e) { /* ignore */ } }, 250);
+  }
+  /** Screener picked a different list in its pill: show the same list here. */
+  function adoptNavFromScreener(nav) {
+    if (!nav || nav.source !== 'screener' || !st.boot) return;
+    const same = st.active && st.active.kind === nav.kind && String(st.active.id) === String(nav.id);
+    if (same) return;
+    const target = { kind: nav.kind, id: nav.kind === 'pool' ? nav.id : (isNaN(Number(nav.id)) ? nav.id : Number(nav.id)), name: nav.name };
+    if (!listExists(target)) return;
+    st.active = target; st.capFilter = 'All'; st.filter = ''; if (filterInput) filterInput.value = '';
+    saveActiveList();
+    renderSelect(); renderSlicer(); renderList();
+  }
+
+  // =============================================================================
+  // Held-position strip (idea 4)
+  // =============================================================================
+  /** Live price from the tab title ("INFY 1,020.5 ▼ −0.86%") when it names the active symbol. */
+  function livePrice(symbol) {
+    const m = /^(\S+)\s+([\d,]+(?:\.\d+)?)/.exec((document.title || '').trim());
+    if (m && S.toPlutus(m[1]) === symbol) { const n = Number(m[2].replace(/,/g, '')); if (Number.isFinite(n) && n > 0) return { price: n, live: true }; }
+    const e = st.stocks.get(symbol);
+    const c = e ? num(e.close) : null;
+    return c ? { price: c, live: false } : null;
+  }
+  function renderHeld() {
+    if (!heldEl) return;
+    const sym = st.activeSymbol;
+    const lots = sym && st.lots ? (st.lots.get(S.toPlain(sym)) || []) : [];
+    if (!st.settings.tvHeldStrip || !lots.length) { heldEl.style.display = 'none'; return; }
+    const qty = lots.reduce((a, t) => a + (Number(t.qty) || 0), 0);
+    const cost = lots.reduce((a, t) => a + (num(t.buy_price) || 0) * (Number(t.qty) || 0), 0);
+    if (!(qty > 0)) { heldEl.style.display = 'none'; return; }
+    const avg = cost / qty;
+    const lp = livePrice(sym);
+    const first = lots.map((t) => t.buy_date).filter(Boolean).sort()[0];
+    const days = first ? Math.max(0, Math.floor((Date.now() - new Date(first + 'T00:00:00').getTime()) / 86400000)) : null;
+    // Newest lot that carries a target / stop is the plan in force.
+    const newest = lots.slice().sort((a, b) => String(b.buy_date).localeCompare(String(a.buy_date)));
+    const target = (newest.find((t) => num(t.target_price)) || {}).target_price;
+    const stopP = (newest.find((t) => num(t.stop_price)) || {}).stop_price;
+    const pnl = lp ? (lp.price - avg) * qty : null;
+    const pnlPct = lp ? (lp.price / avg - 1) * 100 : null;
+    const dist = (p) => (lp && num(p) ? ((num(p) / lp.price - 1) * 100) : null);
+    const sign = (v, nd) => (v == null ? '—' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(nd == null ? 1 : nd));
+    const rupee = (v) => (v < 0 ? '−' : '') + '₹' + Math.round(Math.abs(v)).toLocaleString('en-IN');
+    const signedRupee = (v) => (v >= 0 ? '+' : '−') + '₹' + Math.round(Math.abs(v)).toLocaleString('en-IN');
+    const openRisk = num(stopP) && lp ? Math.max(0, lp.price - num(stopP)) * qty : null;
+    const expanded = heldExpanded();
+
+    heldEl.innerHTML = '';
+    heldEl.style.display = '';
+    heldEl.classList.toggle('px-held-open', expanded);
+
+    // 1. who / how much — the toggle opens the per-lot breakdown
+    const toggle = el('button', { class: 'px-held-toggle', type: 'button', title: expanded ? 'Hide lots' : 'Show each lot', onclick: () => setHeldExpanded(!expanded) },
+      [(lots.length > 1 ? lots.length + ' lots' : '1 lot') + (expanded ? ' ▴' : ' ▾')]);
+    heldEl.appendChild(el('div', { class: 'px-held-head' }, [
+      el('span', { class: 'px-chip px-chip-held', text: 'HELD' }),
+      el('span', { class: 'px-held-qty', text: qty.toLocaleString('en-IN') + ' @ ₹' + U.fmt(avg, 2) }),
+      el('span', { class: 'px-header-spacer' }),
+      toggle,
+    ]));
+
+    // 2. the number that matters, big
+    heldEl.appendChild(el('div', { class: 'px-held-pnl ' + (pnl == null ? '' : pnl >= 0 ? 'px-up' : 'px-down') }, [
+      el('span', { class: 'px-held-pnl-pct', text: pnl == null ? '—' : sign(pnlPct) + '%' }),
+      el('span', { class: 'px-held-pnl-amt', text: pnl == null ? '' : signedRupee(pnl) }),
+      el('span', { class: 'px-header-spacer' }),
+      el('span', { class: 'px-muted', text: lp ? (lp.live ? 'live ' : 'close ') + '₹' + U.fmt(lp.price, 2) : '' }),
+    ]));
+
+    // 3. plan in force, two columns so nothing truncates at the default width
+    const cell = (label, value, cls, title) => el('div', { class: 'px-held-cell' + (cls ? ' ' + cls : ''), title: title || '' }, [el('span', { class: 'px-held-k', text: label }), el('span', { class: 'px-held-v', text: value })]);
+    heldEl.appendChild(el('div', { class: 'px-held-grid' }, [
+      cell('Target', num(target) ? '₹' + U.fmt(target, 0) + '  ' + sign(dist(target)) + '%' : '—', num(target) && lp && lp.price >= num(target) ? 'px-up' : '', 'Newest lot with a target · distance from the current price'),
+      cell('Stop', num(stopP) ? '₹' + U.fmt(stopP, 0) + '  ' + sign(dist(stopP)) + '%' : '—', num(stopP) && lp && lp.price <= num(stopP) ? 'px-down' : '', 'Newest lot with a stop · distance from the current price'),
+      cell('Invested → value', rupee(cost) + (lp ? ' → ' + rupee(lp.price * qty) : ''), ''),
+      cell('Held · risk to stop', (days == null ? '—' : days + 'd') + ' · ' + (openRisk == null ? 'no stop' : rupee(openRisk)), openRisk == null ? 'px-warn' : '', first ? 'First buy ' + first : ''),
+    ]));
+
+    // 4. per-lot breakdown (expanded)
+    if (expanded) {
+      const table = el('div', { class: 'px-held-lots' });
+      table.appendChild(el('div', { class: 'px-held-lot px-held-lot-head' }, ['Bought', 'Qty @', 'P&L', 'T / SL'].map((h) => el('span', { text: h }))));
+      newest.forEach((t) => {
+        const bp = num(t.buy_price), q = Number(t.qty) || 0;
+        const lotPct = lp && bp ? (lp.price / bp - 1) * 100 : null;
+        table.appendChild(el('div', { class: 'px-held-lot', title: (t.strategy ? t.strategy + ' · ' : '') + (t.order_type || '') }, [
+          el('span', { text: shortDate(t.buy_date) }),
+          el('span', { text: q + ' @ ' + (bp ? U.fmt(bp, 1) : '—') }),
+          el('span', { class: lotPct == null ? '' : lotPct >= 0 ? 'px-up' : 'px-down', text: lotPct == null ? '—' : sign(lotPct) + '%' }),
+          el('span', { text: (num(t.target_price) ? U.fmt(t.target_price, 0) : '—') + ' / ' + (num(t.stop_price) ? U.fmt(t.stop_price, 0) : '—') }),
+        ]));
+      });
+      heldEl.appendChild(table);
+    }
+    heldEl.removeAttribute('title');
+  }
+  /** '2026-09-10' -> '10 Sep 26' (unambiguous, short enough for the lot table). */
+  function shortDate(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    if (!m) return '—';
+    const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return Number(m[3]) + ' ' + MON[Number(m[2]) - 1] + ' ' + m[1].slice(2);
+  }
+  const LS_HELD_OPEN = 'plutus_tv_held_open_v1';
+  function heldExpanded() {
+    try { return localStorage.getItem(LS_HELD_OPEN) === '1'; } catch (e) { return false; }
+  }
+  function setHeldExpanded(on) {
+    try { localStorage.setItem(LS_HELD_OPEN, on ? '1' : '0'); } catch (e) { /* ignore */ }
+    renderHeld();
+  }
+
+  // =============================================================================
+  // Position sizer (idea 3)
+  // =============================================================================
+  function sizerDialog(symbol) {
+    if (!symbol) return;
+    if (!st.settings.token) { U.toast('The sizer needs a Plutus token (capital and journal) — extension popup', 'error'); return; }
+    const e = st.stocks.get(symbol) || {};
+    const lp = livePrice(symbol);
+    const pos = st.positions.get(S.toPlain(symbol));
+    window.PlutusSizer.open({
+      symbol, cap: e.cap || null,
+      entry: lp ? lp.price : null, entryLabel: lp ? (lp.live ? 'live' : 'last close') : '',
+      snapshot: e, heldValue: pos ? Number(pos.invested) || 0 : 0, settings: st.settings,
+    }).then((done) => { if (done) U.send({ type: 'trades.open', force: true }).catch(() => {}); });
   }
   function scrollActiveIntoView() {
     const a = listEl.querySelector('.px-item.px-active');
@@ -515,6 +748,7 @@
   }
   function onKeyDown(e) {
     if (e.altKey && (e.key === 'w' || e.key === 'W')) { e.preventDefault(); e.stopImmediatePropagation(); togglePanel(); return; }
+    if (e.altKey && (e.key === 'e' || e.key === 'E') && !panel.classList.contains('px-collapsed')) { e.preventDefault(); e.stopImmediatePropagation(); toggleWide(); return; }
     if (panel.classList.contains('px-collapsed')) return;
     if (document.querySelector('.px-dialog-overlay')) return;
     if (inTextField(e) || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -531,6 +765,7 @@
     else if (k === 's' || k === 'S') { stop(); openScreener(currentSymbol()); }
     else if (k === 'p' || k === 'P') { stop(); openPlutus(currentSymbol()); }
     else if (k === 'a' || k === 'A') { stop(); togglePlayArea(currentSymbol()); }
+    else if (k === 'z' || k === 'Z') { stop(); sizerDialog(currentSymbol()); }
   }
   function currentSymbol() {
     return st.activeSymbol || (listEl.querySelector('.px-item') || {}).getAttribute?.('data-symbol') || null;

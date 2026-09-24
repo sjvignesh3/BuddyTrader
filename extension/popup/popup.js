@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const BOOLS = ['tvEnabled', 'tvShowChips', 'tvFocusMode', 'tvSpaceKeyNavigates', 'scrEnabled', 'scrAutoConsolidated', 'scrPlutusCard', 'scrHighlightTables', 'scrPageRules'];
+  const BOOLS = ['tvEnabled', 'tvShowChips', 'tvFocusMode', 'tvSpaceKeyNavigates', 'tvHeldStrip', 'scrEnabled', 'scrAutoConsolidated', 'scrPlutusCard', 'scrHighlightTables', 'scrPageRules', 'scrWalk', 'linkTabs'];
   const TEXTS = ['apiUrl', 'webAppUrl', 'token', 'adminToken', 'tvSort'];
   const OVERRIDES = ['pe_max', 'roce_min', 'roe_min', 'net_debt_to_equity_max', 'pledging_max'];
   const TILES = ['publicHoldingMaxPct', 'high52RedPct', 'high52YellowPct', 'smaGreenPct', 'athGreenPct', 'athYellowPct'];
@@ -27,6 +27,7 @@
     OVERRIDES.forEach((k) => { const v = (s.thresholdOverrides || {})[k]; $('ov_' + k).value = v == null || v === '' ? '' : v; });
     TILES.forEach((k) => { $('t_' + k).value = (s.tiles || {})[k]; });
     $('cacheTtlMinutes').value = s.cacheTtlMinutes;
+    $('sizerRiskPct').value = s.sizerRiskPct;
   }
 
   function collect() {
@@ -36,6 +37,7 @@
     OVERRIDES.forEach((k) => { const v = $('ov_' + k).value.trim(); out.thresholdOverrides[k] = v === '' ? '' : Number(v); });
     TILES.forEach((k) => { const v = Number($('t_' + k).value); if (Number.isFinite(v)) out.tiles[k] = v; });
     const ttl = Number($('cacheTtlMinutes').value); if (Number.isFinite(ttl) && ttl > 0) out.cacheTtlMinutes = ttl;
+    const risk = Number($('sizerRiskPct').value); if (Number.isFinite(risk) && risk > 0) out.sizerRiskPct = risk;
     return out;
   }
 

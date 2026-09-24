@@ -8,11 +8,15 @@ on:
     paths:
       - "plutus/**"
       - "supabase/functions/**"
+      - "frontend_v2/**"
+      - "extension/**"
       - ".github/workflows/plutus-*.yml"
   pull_request:
     paths:
       - "plutus/**"
       - "supabase/functions/**"
+      - "frontend_v2/**"
+      - "extension/**"
       - ".github/workflows/plutus-*.yml"
 
 jobs:
@@ -27,6 +31,24 @@ jobs:
           cache-dependency-path: plutus/requirements.txt
       - run: pip install -r plutus/requirements.txt
       - run: python -m pytest plutus/ -q
+
+  # Frontend domain math (vitest) + the browser extension's offline tests.
+  # extensionSizerParity.test.ts requires the extension's position sizer to give
+  # the same answers as lib/sizing.ts, so the two surfaces cannot drift apart.
+  web-and-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend_v2/package-lock.json
+      - run: npm ci
+        working-directory: frontend_v2
+      - run: npm run test
+        working-directory: frontend_v2
+      - run: node --test extension/tests/background.test.js
 
   no-float-in-money-paths:
     runs-on: ubuntu-latest

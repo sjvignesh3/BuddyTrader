@@ -7,7 +7,7 @@
 </head>
 <body>
   <header>
-    <div class="brand"><span class="dot"></span>Plutus Companion <span id="version" class="version"></span></div>
+    <div class="brand"><img class="logo" src="../icons/logo.svg" width="20" height="20" alt="">Plutus Companion <span id="version" class="version"></span></div>
     <span id="conn" class="badge badge-muted">checking…</span>
   </header>
 
@@ -39,6 +39,7 @@
     <label class="check"><input type="checkbox" id="tvShowChips"> Signal / score / held chips on rows</label>
     <label class="check"><input type="checkbox" id="tvFocusMode"> Focus mode: hide upsell dialogs</label>
     <label class="check"><input type="checkbox" id="tvSpaceKeyNavigates"> Space bar advances to the next stock</label>
+    <label class="check"><input type="checkbox" id="tvHeldStrip"> Held-position strip (avg cost, P&amp;L, days, target, stop)</label>
     <label>Default sort
       <select id="tvSort">
         <option value="default">A → Z</option>
@@ -57,6 +58,15 @@
     <label class="check"><input type="checkbox" id="scrPlutusCard"> Plutus card above the ratios</label>
     <label class="check"><input type="checkbox" id="scrHighlightTables"> Colour-code tables, tiles, peers</label>
     <label class="check"><input type="checkbox" id="scrPageRules"> On-page rule checks (TTM vs peak, OPM, tax, interest…)</label>
+    <label class="check"><input type="checkbox" id="scrWalk"> Walk-through pill: ← / → through the TradingView panel's list</label>
+  </section>
+
+  <section class="card">
+    <div class="section-title">Workflow</div>
+    <label class="check"><input type="checkbox" id="linkTabs"> Link tabs: Screener follows the chart, the chart follows Screener</label>
+    <label>Default risk % per trade (sizer)
+      <input type="number" id="sizerRiskPct" step="0.25" min="0.05">
+    </label>
   </section>
 
   <section class="card">

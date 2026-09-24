@@ -85,6 +85,18 @@
       const cancel = el('button', { class: 'px-btn px-btn-secondary', type: 'button', text: opts.cancelLabel || 'Cancel' });
       const action = el('button', { class: 'px-btn ' + (opts.danger ? 'px-btn-danger' : 'px-btn-primary'), type: 'button', text: opts.actionLabel || 'OK' });
       footer.appendChild(cancel);
+      // Secondary actions (e.g. "Save as plan") close the dialog on success, like the primary.
+      (opts.extraActions || []).forEach(function (x) {
+        const b = el('button', { class: 'px-btn px-btn-secondary', type: 'button', text: x.label });
+        b.addEventListener('click', function () {
+          err.textContent = ''; b.disabled = true;
+          Promise.resolve().then(function () { return x.onClick(card); }).then(function (r) {
+            b.disabled = false;
+            if (r !== false) close(true);
+          }).catch(function (e) { b.disabled = false; err.textContent = (e && e.message) || String(e); });
+        });
+        footer.appendChild(b);
+      });
       if (opts.onConfirm) footer.appendChild(action);
       card.appendChild(title); card.appendChild(body); card.appendChild(err); card.appendChild(footer);
       overlay.appendChild(card);
@@ -146,5 +158,41 @@
     });
   }
 
-  root.PlutusUI = { esc: esc, el: el, num: num, fmt: fmt, fmtPct: fmtPct, fmtCr: fmtCr, toast: toast, dialog: dialog, send: send, contextAlive: contextAlive };
+  // ---- brand mark ------------------------------------------------------------
+  // Same mark as the web app (frontend_v2/public/favicon.svg): teal gradient
+  // tile with a white serif "P". Inline SVG so no web_accessible_resources are
+  // needed; each copy gets its own gradient id so several can share a page.
+  let logoSeq = 0;
+  function logo(size, extraClass) {
+    const id = 'px-logo-g' + (++logoSeq);
+    const span = document.createElement('span');
+    span.className = 'px-logo' + (extraClass ? ' ' + extraClass : '');
+    span.setAttribute('aria-hidden', 'true');
+    span.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="' + size + '" height="' + size + '">' +
+      '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#0f766e"/><stop offset="1" stop-color="#14b8a6"/></linearGradient></defs>' +
+      '<rect x="1" y="1" width="62" height="62" rx="14" fill="url(#' + id + ')"/>' +
+      '<text x="32" y="33.5" text-anchor="middle" dominant-baseline="central" ' +
+      'font-family="Fraunces, Georgia, \'Times New Roman\', serif" font-weight="700" font-size="40" fill="#ffffff">P</text></svg>';
+    return span;
+  }
+
+  // ---- small line icons (24-unit viewBox, stroke = currentColor) -------------
+  const ICONS = {
+    note: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+    bookmark: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+    external: '<path d="M7 17 17 7"/><path d="M8 7h9v9"/>',
+    bolt: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+  };
+  function icon(name, size) {
+    const span = document.createElement('span');
+    span.className = 'px-ico';
+    span.setAttribute('aria-hidden', 'true');
+    span.innerHTML = '<svg viewBox="0 0 24 24" width="' + (size || 14) + '" height="' + (size || 14) + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || '') + '</svg>';
+    return span;
+  }
+
+  root.PlutusUI = { esc: esc, el: el, num: num, fmt: fmt, fmtPct: fmtPct, fmtCr: fmtCr, toast: toast, dialog: dialog, send: send, contextAlive: contextAlive, logo: logo, icon: icon };
 })(typeof self !== 'undefined' ? self : this);

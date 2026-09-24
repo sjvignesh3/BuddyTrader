@@ -93,6 +93,13 @@
     if (U.contextAlive()) chrome.runtime.onMessage.addListener((m) => { if (m && m.type === 'plutus:bootstrap-updated') { st.boot = null; loadPlutus().then(schedule); } });
     window.addEventListener('focus', schedule);
     window.addEventListener('popstate', () => setTimeout(schedule, 200));
+    if (U.contextAlive()) {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes[NAV_KEY]) { st.nav = changes[NAV_KEY].newValue || null; renderWalk(); }
+      });
+      try { chrome.storage.local.get([NAV_KEY], (d) => { st.nav = (d && d[NAV_KEY]) || null; renderWalk(); }); } catch (e) { /* ignore */ }
+    }
+    document.addEventListener('keydown', onWalkKey, true);
     await loadPlutus();
     run();
     new MutationObserver(() => { if (!st.updating) schedule(); }).observe(document.body, { childList: true, subtree: true });
@@ -121,8 +128,10 @@
       const s = st.settings;
       if (!st.ticker) return;                                  // screens, explore, etc.: nothing to do
       injectToolbar();
-      if (!s.scrEnabled) { clearHighlights(); removeCard(); removeFabs(); return; }
+      if (!s.scrEnabled) { clearHighlights(); removeCard(); removeFabs(); announceOnce(); renderWalk(); return; }
       if (s.scrAutoConsolidated && handleAutoConsolidated()) return;   // navigating away
+      announceOnce();                                          // this page is the one the user stays on
+      renderWalk();
       if (s.scrPlutusCard) injectCard(); else removeCard();
       colourTiles();
       if (s.scrHighlightTables) { ['quarters', 'profit-loss', 'balance-sheet', 'cash-flow'].forEach(highlightTable); highlightShareholding(); highlightPeers(); }
@@ -132,6 +141,101 @@
     } finally {
       setTimeout(() => { st.updating = false; }, 150);
     }
+  }
+
+  // =============================================================================
+  // Linked tabs — tell the worker which company this tab settled on
+  // =============================================================================
+  function announceOnce() {
+    if (!st.settings.linkTabs || !st.ticker || st.announcedTicker === st.ticker) return;
+    st.announcedTicker = st.ticker;
+    U.send({ type: 'link.symbol', from: 'screener', symbol: st.ticker }).catch(() => {});
+  }
+
+  // =============================================================================
+  // Walk-through — ← / → through the list the TradingView panel shows
+  // =============================================================================
+  const NAV_KEY = 'plutus_nav';
+  function navLists() {
+    const out = [];
+    ((st.boot && st.boot.pools) || []).forEach((p) => out.push({ kind: 'pool', id: p.code, name: p.name }));
+    (st.walkWatchlists || []).forEach((w) => out.push({ kind: 'wl', id: w.id, name: w.name, symbols: w.symbols || [] }));
+    return out;
+  }
+  function symbolsFor(list) {
+    if (list.kind === 'pool') {
+      return Array.from(st.stocks.values()).filter((s) => (s.pools || []).includes(list.id)).map((s) => s.symbol).sort();
+    }
+    return (list.symbols || []).slice();
+  }
+  /** The list to walk: what TradingView published, else the first pool holding this stock. */
+  function currentNav() {
+    if (st.nav && Array.isArray(st.nav.symbols) && st.nav.symbols.length) return st.nav;
+    const me = S.toPlutus(st.ticker);
+    const e = me && st.stocks.get(me);
+    const pool = e && (e.pools || [])[0];
+    const lists = navLists();
+    const pick = (pool && lists.find((l) => l.kind === 'pool' && l.id === pool)) || lists[0];
+    return pick ? { kind: pick.kind, id: pick.id, name: pick.name, symbols: symbolsFor(pick), source: 'screener-default' } : null;
+  }
+  function walkNeighbours() {
+    const nav = currentNav();
+    if (!nav) return null;
+    const me = S.toPlutus(st.ticker);
+    const idx = nav.symbols.indexOf(me);
+    const n = nav.symbols.length;
+    if (!n) return { nav, idx, prev: null, next: null };
+    if (idx < 0) return { nav, idx, prev: nav.symbols[n - 1], next: nav.symbols[0] };
+    return { nav, idx, prev: nav.symbols[(idx - 1 + n) % n], next: nav.symbols[(idx + 1) % n] };
+  }
+  function walkTo(symbol) {
+    if (!symbol) return;
+    const consolidated = st.settings.scrAutoConsolidated || isConsolidated();
+    location.href = S.toScreenerUrl(symbol, consolidated);
+  }
+  function onWalkKey(e) {
+    if (!st.settings.scrWalk || !st.ticker || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const t = e.target, tag = (t && t.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || (t && t.isContentEditable)) return;
+    if (document.querySelector('.px-dialog-overlay, #px-viz')) return;
+    const w = walkNeighbours();
+    if (!w || !w.nav.symbols.length) return;
+    e.preventDefault(); e.stopPropagation();
+    walkTo(e.key === 'ArrowRight' ? w.next : w.prev);
+  }
+  function renderWalk() {
+    const old = document.getElementById('px-walk');
+    if (!st.settings.scrWalk || !st.ticker || !st.boot) { if (old) old.remove(); return; }
+    if (!st.walkWatchlists && !st.walkWlLoading) {
+      st.walkWlLoading = true;
+      U.send({ type: 'watchlists' }).then((r) => { st.walkWatchlists = r.watchlists || []; renderWalk(); }).catch(() => { st.walkWatchlists = []; });
+    }
+    const w = walkNeighbours();
+    if (!w) { if (old) old.remove(); return; }
+    const sig = JSON.stringify([w.nav.kind, w.nav.id, w.idx, w.nav.symbols.length, w.prev, w.next, st.settings.linkTabs, (st.walkWatchlists || []).length]);
+    // The signature covers everything the pill shows, so a same-signature pill is already current.
+    if (old && old.getAttribute('data-sig') === sig) return;
+    if (old) old.remove();
+
+    const sel = el('select', { title: 'List to walk with ← / → (shared with the TradingView panel)' });
+    navLists().forEach((l) => sel.appendChild(el('option', { value: l.kind + ':' + l.id, text: l.name })));
+    sel.value = w.nav.kind + ':' + w.nav.id;
+    sel.addEventListener('change', () => {
+      const l = navLists().find((x) => x.kind + ':' + x.id === sel.value);
+      if (!l) return;
+      const nav = { kind: l.kind, id: l.id, name: l.name, symbols: symbolsFor(l), source: 'screener', at: Date.now() };
+      st.nav = nav;
+      try { chrome.storage.local.set({ [NAV_KEY]: nav }); } catch (e) { /* ignore */ }
+      renderWalk();
+    });
+    const n = w.nav.symbols.length;
+    const btn = (dir, sym) => el('button', { type: 'button', class: 'px-walk-btn', disabled: sym ? null : 'disabled', title: sym ? 'Go to ' + S.toPlain(sym) : '', onclick: () => walkTo(sym) },
+      dir < 0 ? [el('kbd', { text: '←' }), sym ? S.toPlain(sym) : '—'] : [sym ? S.toPlain(sym) : '—', el('kbd', { text: '→' })]);
+    const pos = el('span', { class: 'px-walk-pos', html: w.idx >= 0 ? '<b>' + (w.idx + 1) + '</b> / ' + n : 'not in list · ' + n });
+    const link = el('button', { type: 'button', class: 'px-walk-link' + (st.settings.linkTabs ? ' px-on' : ''), title: st.settings.linkTabs ? 'Tabs linked: the TradingView chart follows this page (click to unlink)' : 'Tabs not linked (click to link with TradingView)', text: '⇄', onclick: () => SET.save({ linkTabs: !st.settings.linkTabs }) });
+    const pill = el('div', { id: 'px-walk', 'data-sig': sig, role: 'navigation', 'aria-label': 'Plutus walk-through' }, [U.logo(18), sel, btn(-1, w.prev), pos, btn(1, w.next), link]);
+    document.body.appendChild(pill);
   }
 
   // =============================================================================
@@ -152,6 +256,21 @@
     tableHeaders(table).forEach((h) => { const m = /\b(19|20)(\d\d)\b/.exec(h); if (m) maxYear = Math.max(maxYear, Number(m[1] + m[2])); });
     return maxYear > 0 && (new Date().getFullYear() - maxYear) >= 3;
   }
+  /**
+   * Screener serves an EMPTY consolidated page for companies that file only
+   * standalone statements (e.g. SANOFICONR after its 2023 demerger): every
+   * top-ratio number is blank and the tables carry row labels but no period
+   * columns. Mirrors plutus/fundamentals/screener_client.py, which also
+   * prefers the view whose numbers are populated.
+   */
+  function consolidatedLacksData() {
+    const nums = Array.from(document.querySelectorAll('#top-ratios .number'));
+    const ratiosEmpty = nums.length > 0 && nums.every((n) => !n.textContent.trim());
+    const dated = (id) => { const t = sectionTable(id); return !!t && tableHeaders(t).some((h) => /\b(19|20)\d\d\b/.test(h)); };
+    const hasTables = !!(sectionTable('quarters') || sectionTable('profit-loss'));
+    const tablesEmpty = hasTables && !dated('quarters') && !dated('profit-loss');
+    return ratiosEmpty || tablesEmpty;
+  }
   /** Returns true when a redirect was issued. */
   function handleAutoConsolidated() {
     const cons = isConsolidated();
@@ -161,9 +280,25 @@
     if (pref === 'standalone') { if (cons) { location.replace(base); return true; } return false; }
     if (pref === 'consolidated') { if (!cons) { location.replace(base + 'consolidated/'); return true; } return false; }
     if (cons) {
-      if (consolidatedIsStale()) { try { localStorage.setItem(prefKey(), 'standalone'); } catch (e) { /* ignore */ } location.replace(base); return true; }
+      const empty = consolidatedLacksData();
+      if (empty || consolidatedIsStale()) {
+        try {
+          localStorage.setItem(prefKey(), 'standalone');
+          sessionStorage.setItem('plutus_view_reason_' + st.ticker, empty ? 'empty' : 'stale');
+        } catch (e) { /* ignore */ }
+        location.replace(base);
+        return true;
+      }
       return false;
     }
+    // Arrived on standalone because consolidated was unusable: say so once.
+    try {
+      const why = sessionStorage.getItem('plutus_view_reason_' + st.ticker);
+      if (why) {
+        sessionStorage.removeItem('plutus_view_reason_' + st.ticker);
+        U.toast('Showing standalone — the consolidated view ' + (why === 'empty' ? 'has no figures' : 'stopped being updated 3+ years ago') + ' for ' + st.ticker, 'info', 4500);
+      }
+    } catch (e) { /* ignore */ }
     if (document.referrer && document.referrer.includes('/consolidated') && document.referrer.toUpperCase().includes(st.ticker.toUpperCase())) {
       try { localStorage.setItem(prefKey(), 'standalone'); } catch (e) { /* ignore */ }
       return false;
@@ -187,55 +322,108 @@
     if (hit) return hit.closest('form') || hit;
     return document.querySelector('form[action*="/excel/"]') || document.querySelector('a[href*="/excel/"]');
   }
+  /**
+   * Where the toolbar goes, best first:
+   *   excel  — just before "Export to Excel" in the company header row;
+   *   header — before the last control in that header row (Follow), for pages
+   *            without Export (empty consolidated view, some logged-out pages);
+   *   block  — a full-width row above the ratios card, never inside its flex row.
+   */
+  function toolbarAnchor() {
+    const excel = excelAnchor();
+    if (excel && excel.parentNode) return { node: excel, kind: 'excel' };
+    const card = document.querySelector('.card.card-large');
+    const row = card && card.querySelector('.flex.flex-space-between');
+    const last = row && row.lastElementChild;
+    if (last && last !== row.firstElementChild) return { node: last, kind: 'header' };
+    const info = document.querySelector('.company-info');
+    if (info && info.parentNode) return { node: info, kind: 'block' };
+    return null;
+  }
   function injectToolbar() {
     const existing = document.getElementById('px-scr-toolbar');
-    const anchor = excelAnchor();
+    const a = toolbarAnchor();
     if (existing) {
-      // Placed by the fallback earlier, and the Export button has since appeared: move beside it.
-      if (existing.getAttribute('data-px-anchor') === 'fallback' && anchor && anchor.parentNode) {
-        existing.style.display = ''; existing.style.margin = '';
-        existing.setAttribute('data-px-anchor', 'excel');
-        anchor.parentNode.insertBefore(existing, anchor);
-      }
+      // Page finished rendering and a better anchor exists now: move there.
+      const rank = { block: 0, header: 1, excel: 2 };
+      const was = existing.getAttribute('data-px-anchor');
+      if (a && rank[a.kind] > (rank[was] == null ? -1 : rank[was])) placeToolbar(existing, a);
       refreshToolbarState();
       return;
     }
-    const bar = el('div', { id: 'px-scr-toolbar', 'data-px-anchor': anchor ? 'excel' : 'fallback' });
-    const sym = S.toPlutus(st.ticker);
-    if (anchor) {
-      const cs = getComputedStyle(anchor.tagName === 'FORM' ? (anchor.querySelector('button, a') || anchor) : anchor);
-      if (cs.height && cs.height !== 'auto') bar.style.setProperty('--px-btn-h', cs.height);
-      if (cs.borderRadius) bar.style.setProperty('--px-btn-r', cs.borderRadius);
-      if (cs.fontSize) bar.style.setProperty('--px-btn-fs', cs.fontSize);
-    }
-    bar.appendChild(el('a', { class: 'px-tb px-tb-tv', href: S.toTradingViewUrl(sym), target: '_blank', rel: 'noopener', html: '<svg width="13" height="13" viewBox="0 0 36 28" fill="currentColor"><path d="M14 22H7V7H0V0h14v22zm14-22a4 4 0 110 8 4 4 0 010-8zM22.5 22h-8l7.5-22h8l-7.5 22z"/></svg> TradingView ↗' }));
-    bar.appendChild(el('a', { class: 'px-tb px-tb-plutus', id: 'px-tb-plutus', href: S.toPlutusUrl(st.settings.webAppUrl, sym), target: '_blank', rel: 'noopener', text: '⌂ Plutus ↗' }));
-    bar.appendChild(el('button', { class: 'px-tb', id: 'px-tb-toggle', type: 'button', onclick: () => SET.save({ scrEnabled: !st.settings.scrEnabled }) }));
-    bar.appendChild(el('button', { class: 'px-tb', id: 'px-tb-view', type: 'button', onclick: switchView }));
-    bar.appendChild(el('button', { class: 'px-tb', type: 'button', title: 'Save a dated note to Plutus', text: '✎ Note', onclick: () => noteDialog(sym) }));
-    bar.appendChild(el('button', { class: 'px-tb', type: 'button', title: 'Bookmark to a Plutus watchlist', text: '🔖', onclick: () => bookmarkDialog(sym) }));
-    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(bar, anchor);
-    else {
-      // Logged-out pages have no "Export to Excel": sit above the ratio tiles as a row.
-      const fallback = document.querySelector('.company-links') || document.querySelector('.company-ratios') || document.getElementById('top-ratios');
-      if (!fallback) return;
-      bar.style.display = 'flex'; bar.style.margin = '6px 0 10px';
-      fallback.parentNode.insertBefore(bar, fallback);
-    }
+    if (!a) return;
+    placeToolbar(buildToolbar(a.kind === 'block' ? null : a.node), a);
     refreshToolbarState();
   }
+  function placeToolbar(bar, a) {
+    bar.setAttribute('data-px-anchor', a.kind);
+    bar.classList.toggle('px-tbar-block', a.kind === 'block');
+    a.node.parentNode.insertBefore(bar, a.node);
+  }
+  /**
+   * One tidy control strip, sized to Screener's own Export button:
+   *   TradingView ↗  [P] Plutus ↗ | Consolidated · Standalone | ✎ 🔖 | ● On
+   * Links, the view switch, quick actions and the on/off switch are separate
+   * groups so the eye reads them as four things, not seven buttons.
+   */
+  function buildToolbar(anchor) {
+    const sym = S.toPlutus(st.ticker);
+    const bar = el('div', { id: 'px-scr-toolbar', role: 'toolbar', 'aria-label': 'Plutus' });
+    if (anchor) {
+      const ref = anchor.tagName === 'FORM' ? (anchor.querySelector('button, a') || anchor) : anchor;
+      const h = ref.getBoundingClientRect().height;
+      if (h >= 24 && h <= 48) bar.style.setProperty('--px-btn-h', Math.round(h) + 'px');
+    }
+
+    const tvMark = el('span', { class: 'px-ico', html: '<svg width="14" height="12" viewBox="0 0 36 28" fill="currentColor"><path d="M14 22H7V7H0V0h14v22zm14-22a4 4 0 110 8 4 4 0 010-8zM22.5 22h-8l7.5-22h8l-7.5 22z"/></svg>' });
+    const links = el('div', { class: 'px-tbar-group' }, [
+      el('a', { class: 'px-tbar-btn px-tbar-tv', href: S.toTradingViewUrl(sym), target: '_blank', rel: 'noopener', title: 'Open ' + st.ticker + ' on TradingView' }, [tvMark, 'TradingView', U.icon('external', 11)]),
+      el('a', { class: 'px-tbar-btn px-tbar-plutus', id: 'px-tb-plutus', href: S.toPlutusUrl(st.settings.webAppUrl, sym), target: '_blank', rel: 'noopener', title: 'Open ' + st.ticker + ' in Plutus' }, [U.logo(13), 'Plutus', U.icon('external', 11)]),
+    ]);
+
+    const seg = el('div', { class: 'px-tbar-seg', role: 'group', 'aria-label': 'Statement view' }, [
+      el('button', { type: 'button', class: 'px-tbar-segbtn', 'data-view': 'consolidated', title: 'Consolidated figures', text: 'Consolidated', onclick: () => setView('consolidated') }),
+      el('button', { type: 'button', class: 'px-tbar-segbtn', 'data-view': 'standalone', title: 'Standalone figures', text: 'Standalone', onclick: () => setView('standalone') }),
+    ]);
+
+    const actions = el('div', { class: 'px-tbar-group' }, [
+      el('button', { type: 'button', class: 'px-tbar-btn px-tbar-icon', title: 'Save a dated note to Plutus', 'aria-label': 'Note', onclick: () => noteDialog(sym) }, [U.icon('note', 15)]),
+      el('button', { type: 'button', class: 'px-tbar-btn px-tbar-icon', title: 'Bookmark to a Plutus watchlist', 'aria-label': 'Bookmark', onclick: () => bookmarkDialog(sym) }, [U.icon('bookmark', 15)]),
+    ]);
+
+    const sw = el('button', { type: 'button', class: 'px-tbar-switch', id: 'px-tb-toggle', role: 'switch', title: 'Turn all Plutus overlays on Screener on or off', onclick: () => SET.save({ scrEnabled: !st.settings.scrEnabled }) }, [
+      el('span', { class: 'px-tbar-track' }, [el('span', { class: 'px-tbar-knob' })]),
+      el('span', { class: 'px-tbar-switch-label' }),
+    ]);
+
+    [links, seg, actions, sw].forEach((n) => bar.appendChild(n));
+    return bar;
+  }
   function refreshToolbarState() {
+    const bar = document.getElementById('px-scr-toolbar');
+    if (!bar) return;
+    const on = !!st.settings.scrEnabled;
+    bar.classList.toggle('px-tbar-off', !on);
     const t = document.getElementById('px-tb-toggle');
-    if (t) { t.textContent = st.settings.scrEnabled ? 'Plutus ON' : 'Plutus OFF'; t.className = 'px-tb ' + (st.settings.scrEnabled ? 'px-tb-on' : 'px-tb-off'); t.title = 'Toggle all Plutus overlays on this site'; }
-    const v = document.getElementById('px-tb-view');
-    if (v) v.textContent = isConsolidated() ? '📄 Standalone' : '📑 Consolidated';
+    if (t) {
+      t.setAttribute('aria-checked', String(on));
+      const lab = t.querySelector('.px-tbar-switch-label');
+      if (lab) lab.textContent = on ? 'On' : 'Off';
+    }
+    const cons = isConsolidated();
+    bar.querySelectorAll('.px-tbar-segbtn').forEach((b) => {
+      const active = (b.getAttribute('data-view') === 'consolidated') === cons;
+      b.classList.toggle('px-active', active);
+      b.setAttribute('aria-pressed', String(active));
+    });
     const p = document.getElementById('px-tb-plutus');
     if (p) p.href = S.toPlutusUrl(st.settings.webAppUrl, S.toPlutus(st.ticker));
   }
-  function switchView() {
+  function setView(view) {
     const cons = isConsolidated();
-    try { localStorage.setItem(prefKey(), cons ? 'standalone' : 'consolidated'); } catch (e) { /* ignore */ }
-    location.href = 'https://www.screener.in/company/' + encodeURIComponent(st.ticker) + '/' + (cons ? '' : 'consolidated/');
+    if ((view === 'consolidated') === cons) return;           // already there
+    try { localStorage.setItem(prefKey(), view); } catch (e) { /* ignore */ }
+    location.href = 'https://www.screener.in/company/' + encodeURIComponent(st.ticker) + '/' + (view === 'consolidated' ? 'consolidated/' : '');
   }
 
   // =============================================================================
@@ -265,7 +453,7 @@
     const T = thresholds();
     const data = st.stock;
     const head = el('div', { class: 'px-card-head' }, [
-      el('span', { class: 'px-card-title', html: '<span class="px-dot"></span>Plutus · ' + esc(st.ticker) }),
+      el('span', { class: 'px-card-title' }, [U.logo(18), 'Plutus · ' + st.ticker]),
     ]);
     const body = el('div', { class: 'px-card-body' });
     const card = el('div', { id: 'px-card' }, [head, body]);
@@ -301,6 +489,7 @@
     const inPlay = (sm.pools || []).includes('PlayArea');
     head.appendChild(el('div', { class: 'px-card-actions' }, [
       el('button', { class: 'px-btn', text: '✎ Note', onclick: () => noteDialog(data.symbol) }),
+      el('button', { class: 'px-btn', text: '⚖ Size', title: 'Position sizer: risk-based qty, cap-allocation check, then opportunity or plan', onclick: () => sizerDialog(data) }),
       el('button', { class: 'px-btn', text: '＋ Opportunity', onclick: () => opportunityDialog(data) }),
       el('button', { class: 'px-btn', text: inPlay ? '⚡ Remove from PlayArea' : '⚡ PlayArea', onclick: () => (inPlay ? playAreaRemove(data.symbol) : playAreaAdd(data.symbol)) }),
     ]));
@@ -730,6 +919,21 @@
   // =============================================================================
   // Actions (token-gated)
   // =============================================================================
+  function screenerPrice() {
+    const li = Array.from(document.querySelectorAll('#top-ratios li')).find((n) => /current price/i.test(((n.querySelector('.name') || {}).innerText || '')));
+    return li ? parseNum((li.querySelector('.value') || li.querySelector('.number') || {}).innerText) : null;
+  }
+  function sizerDialog(data) {
+    if (needToken('The sizer')) return;
+    const sm = data.summary || {}, snap = data.snapshot || {};
+    const pagePrice = screenerPrice();
+    const entry = pagePrice || num(snap.close);
+    const pos = st.positions && st.positions.get(data.plain);
+    window.PlutusSizer.open({
+      symbol: data.symbol, cap: sm.cap || null, entry, entryLabel: pagePrice ? 'Screener price' : 'last close',
+      snapshot: Object.assign({}, snap), heldValue: pos ? Number(pos.invested) || 0 : 0, settings: st.settings,
+    });
+  }
   function needToken(what) { if (!st.settings.token) { U.toast(what + ' needs a Plutus token — open the extension popup', 'error'); return true; } return false; }
   function noteDialog(symbol) {
     if (needToken('Notes')) return;

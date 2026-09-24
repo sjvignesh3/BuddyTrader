@@ -30,25 +30,78 @@ body.dark { --px-panel: #1c1c1e; --px-line: #34343a; --px-ink: #e5e7eb; --px-mut
 #top-ratios li.px-t-warn .value, #top-ratios li.px-t-warn .number { background: var(--px-warn); border-radius: 4px; padding: 0 4px; font-weight: 700; }
 #top-ratios li.px-synthetic .name::after { content: " · Plutus"; font-size: 10px; color: var(--px-brand); font-weight: 700; }
 
-/* --- toolbar next to "Export to Excel" --- */
-#px-scr-toolbar { display: inline-flex; gap: 6px; align-items: center; margin-right: 8px; vertical-align: middle; flex-wrap: wrap; }
-#px-scr-toolbar .px-tb {
-  display: inline-flex; align-items: center; gap: 5px; height: var(--px-btn-h, 30px); padding: var(--px-btn-p, 4px 10px);
-  font-size: var(--px-btn-fs, 12px); border-radius: var(--px-btn-r, 6px); font-weight: 700; white-space: nowrap; cursor: pointer;
-  border: 1px solid var(--px-line); background: var(--px-panel); color: var(--px-ink); text-decoration: none; line-height: 1; transition: filter .15s;
+/* --- toolbar next to "Export to Excel" -------------------------------------------
+   Four groups inside one quiet strip. Screener styles bare <button>s (uppercase,
+   letter-spacing, padding, shadow), so every property below is reset explicitly. */
+.px-logo { display: inline-flex; line-height: 0; flex: 0 0 auto; }
+.px-logo svg { display: block; border-radius: 22%; }
+.px-ico { display: inline-flex; line-height: 0; flex: 0 0 auto; }
+
+#px-scr-toolbar {
+  --px-btn-h: 34px;
+  display: inline-flex; align-items: center; gap: 8px; margin-right: 10px; vertical-align: middle;
+  flex-wrap: nowrap; font: 600 13px/1 -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--px-ink);
 }
-#px-scr-toolbar .px-tb:hover { filter: brightness(.95); text-decoration: none; }
-#px-scr-toolbar .px-tb-tv { border-color: #2962ff; color: #2962ff; }
-#px-scr-toolbar .px-tb-plutus { border-color: var(--px-brand); color: var(--px-brand); }
-#px-scr-toolbar .px-tb-on { border-color: #059669; color: #059669; background: rgba(5,150,105,.08); }
-#px-scr-toolbar .px-tb-off { border-color: #dc2626; color: #dc2626; background: rgba(220,38,38,.08); }
+#px-scr-toolbar button, #px-scr-toolbar a {
+  text-transform: none !important; letter-spacing: normal !important; box-shadow: none !important;
+  font: inherit !important; margin: 0 !important; min-width: 0 !important; text-decoration: none !important;
+}
+
+/* bordered group with hairline dividers between members */
+.px-tbar-group, .px-tbar-seg {
+  display: inline-flex; align-items: stretch; height: var(--px-btn-h); border: 1px solid var(--px-line);
+  border-radius: 8px; overflow: hidden; background: var(--px-panel);
+}
+.px-tbar-btn {
+  display: inline-flex !important; align-items: center; gap: 6px; padding: 0 11px !important; height: 100% !important;
+  background: transparent !important; border: 0 !important; border-radius: 0 !important; color: var(--px-ink) !important;
+  cursor: pointer; white-space: nowrap; transition: background-color .12s;
+}
+.px-tbar-btn + .px-tbar-btn { border-left: 1px solid var(--px-line) !important; }
+.px-tbar-btn:hover { background: rgba(127, 127, 127, .09) !important; }
+.px-tbar-btn .px-ico:last-child { opacity: .55; }
+.px-tbar-tv .px-ico:first-child { color: #2962ff; }
+.px-tbar-icon { padding: 0 10px !important; color: var(--px-mute) !important; }
+.px-tbar-icon:hover { color: var(--px-brand) !important; }
+
+/* segmented view switch */
+.px-tbar-seg { padding: 3px; gap: 2px; background: rgba(127, 127, 127, .08); }
+.px-tbar-segbtn {
+  padding: 0 10px !important; border: 0 !important; border-radius: 6px !important; background: transparent !important;
+  color: var(--px-mute) !important; cursor: pointer; white-space: nowrap; font-size: 12px !important;
+}
+.px-tbar-segbtn:hover { color: var(--px-ink) !important; }
+.px-tbar-segbtn.px-active { background: var(--px-panel) !important; color: var(--px-ink) !important; box-shadow: 0 1px 2px rgba(0,0,0,.12) !important; cursor: default; }
+
+/* on/off switch */
+.px-tbar-switch {
+  display: inline-flex !important; align-items: center; gap: 6px; height: var(--px-btn-h) !important; padding: 0 2px !important;
+  background: transparent !important; border: 0 !important; cursor: pointer; color: var(--px-mute) !important; font-size: 12px !important;
+}
+.px-tbar-track { position: relative; width: 30px; height: 18px; border-radius: 999px; background: #d1d5db; transition: background-color .15s; }
+.px-tbar-knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+.px-tbar-switch[aria-checked="true"] .px-tbar-track { background: var(--px-brand); }
+.px-tbar-switch[aria-checked="true"] .px-tbar-knob { transform: translateX(12px); }
+.px-tbar-switch[aria-checked="true"] { color: var(--px-brand) !important; }
+.px-tbar-switch-label { min-width: 20px; text-align: left; }
+
+/* overlays off: everything but the switch recedes */
+#px-scr-toolbar.px-tbar-off .px-tbar-group, #px-scr-toolbar.px-tbar-off .px-tbar-seg { opacity: .45; }
+
+/* narrow windows: keep one row by dropping the link words, icons stay */
+@media (max-width: 1280px) {
+  #px-scr-toolbar .px-tbar-group .px-tbar-btn { padding: 0 9px !important; }
+  #px-scr-toolbar a.px-tbar-tv, #px-scr-toolbar a.px-tbar-plutus { font-size: 0 !important; gap: 0; }
+  #px-scr-toolbar .px-tbar-tv .px-ico:last-child, #px-scr-toolbar .px-tbar-plutus .px-ico:last-child { display: none; }
+}
+
+body.dark .px-tbar-track { background: #4b5563; }
 
 /* --- Plutus card above the ratios --- */
 #px-card { margin: 10px 0 14px; border: 1px solid var(--px-line); border-radius: 12px; background: var(--px-panel); color: var(--px-ink); font-size: 13px; overflow: hidden; }
 #px-card * { box-sizing: border-box; }
 .px-card-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--px-line); flex-wrap: wrap; }
-.px-card-title { font-weight: 800; letter-spacing: .2px; display: flex; align-items: center; gap: 6px; }
-.px-card-title .px-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--px-gold); display: inline-block; }
+.px-card-title { font-weight: 800; letter-spacing: .2px; display: flex; align-items: center; gap: 7px; }
 .px-card-meta { color: var(--px-mute); font-size: 11px; }
 .px-card-spacer { flex: 1; }
 .px-card-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; padding: 10px 12px; }
@@ -124,3 +177,44 @@ body.dark .px-chip-none, body.dark .px-chip-na { color: #d1d5db !important; }
 #px-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 2147483300; display: flex; flex-direction: column; gap: 6px; }
 .px-toast { background: #1f2937; color: #fff; border-left: 3px solid #2962ff; border-radius: 8px; padding: 8px 12px; font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.3); max-width: 360px; transition: opacity .3s; }
 .px-toast-success { border-left-color: #22c55e; } .px-toast-error { border-left-color: #ef4444; } .px-toast-out { opacity: 0; }
+
+/* --- position sizer (dialog body; shared markup with TradingView) --- */
+.px-dialog:has(.px-sz) { width: 480px; }
+.px-sz { display: flex; flex-direction: column; gap: 8px; }
+.px-sz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.px-sz-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.px-sz-chip { background: var(--px-panel); color: var(--px-ink); border: 1px solid var(--px-line); border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 600; line-height: 18px; cursor: pointer; text-transform: none; letter-spacing: normal; }
+.px-sz-chip:hover { border-color: var(--px-brand); color: var(--px-brand); }
+.px-sz-out { border: 1px solid var(--px-line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; background: rgba(127,127,127,.05); }
+.px-sz-kv { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+.px-sz-kv span { color: var(--px-mute); }
+.px-sz-kv b { font-variant-numeric: tabular-nums; }
+.px-sz-alloc { margin-top: 4px; font-size: 11.5px; line-height: 1.35; color: var(--px-mute); }
+.px-sz-alloc.px-sz-ok { color: #15803d; }
+.px-sz-alloc.px-sz-warn { color: #b45309; }
+.px-sz-alloc.px-sz-over { color: #b91c1c; font-weight: 700; }
+body.dark .px-sz-alloc.px-sz-ok { color: #86efac; } body.dark .px-sz-alloc.px-sz-warn { color: #fcd34d; } body.dark .px-sz-alloc.px-sz-over { color: #fca5a5; }
+.px-sz-problem { color: #b91c1c; font-size: 12px; }
+body.dark .px-sz-problem { color: #fca5a5; }
+.px-dialog button { text-transform: none; letter-spacing: normal; }
+
+/* --- walk-through pill (← / → through the active Plutus list) --- */
+#px-walk {
+  position: fixed; left: 16px; bottom: 16px; z-index: 2147483000; display: flex; align-items: center; gap: 2px;
+  background: var(--px-panel); color: var(--px-ink); border: 1px solid var(--px-line); border-radius: 12px; padding: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18); font: 600 12px/1 -apple-system, "Segoe UI", Roboto, sans-serif; max-width: calc(100vw - 120px);
+}
+#px-walk * { box-sizing: border-box; }
+#px-walk select { border: 0; background: transparent; color: var(--px-ink); font: inherit; padding: 6px 4px 6px 6px; max-width: 150px; cursor: pointer; outline: none; }
+#px-walk .px-walk-btn { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--px-ink); padding: 7px 9px; border-radius: 8px; cursor: pointer; font: inherit; text-transform: none; letter-spacing: normal; white-space: nowrap; }
+#px-walk .px-walk-btn:hover:not(:disabled) { background: rgba(127,127,127,.12); }
+#px-walk .px-walk-btn:disabled { opacity: .35; cursor: default; }
+#px-walk .px-walk-btn kbd { font: 10px/14px ui-monospace, Menlo, monospace; border: 1px solid var(--px-line); border-radius: 3px; padding: 0 4px; color: var(--px-mute); }
+#px-walk .px-walk-pos { padding: 0 8px; color: var(--px-mute); font-variant-numeric: tabular-nums; white-space: nowrap; border-left: 1px solid var(--px-line); border-right: 1px solid var(--px-line); }
+#px-walk .px-walk-pos b { color: var(--px-ink); }
+#px-walk .px-walk-link { border-left: 1px solid var(--px-line); padding-left: 8px; margin-left: 2px; color: var(--px-mute); cursor: pointer; background: transparent; border-top: 0; border-right: 0; border-bottom: 0; font: inherit; }
+#px-walk .px-walk-link.px-on { color: var(--px-brand); }
+/* Screener shows a fixed bottom nav bar on narrow screens: sit above it. */
+@media (max-width: 1023px) { #px-walk { bottom: 78px; } }
+/* No header row to sit in: own full-width row above the ratios card, right-aligned like the header. */
+#px-scr-toolbar.px-tbar-block { display: flex; justify-content: flex-end; margin: 0 0 12px; }

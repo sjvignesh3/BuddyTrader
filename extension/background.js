@@ -283,6 +283,86 @@ async function playAreaRemove(symbol) {
   return res;
 }
 
+let settingsCache = { at: 0, data: null };
+async function journalSettings() {
+  await requireToken();
+  if (settingsCache.data && (Date.now() - settingsCache.at) < POSITIONS_TTL_MS) return settingsCache.data;
+  const data = await apiFetch('/api/journal/settings');
+  settingsCache = { at: Date.now(), data };
+  return data;
+}
+
+let openTradesCache = { at: 0, data: null };
+/** OPEN journal lots (per-lot detail: buy date, price, qty, target, stop). */
+async function openTrades({ force = false } = {}) {
+  if (!(await hasToken())) return { trades: [], count: 0, _noToken: true };
+  if (!force && openTradesCache.data && (Date.now() - openTradesCache.at) < POSITIONS_TTL_MS) return openTradesCache.data;
+  const data = await apiFetch('/api/journal/trades?status=OPEN');
+  openTradesCache = { at: Date.now(), data };
+  return data;
+}
+
+async function sizingSave(body) {
+  await requireToken();
+  return apiFetch('/api/sizing/plans', { method: 'POST', body });
+}
+
+// ---------------------------------------------------------------------------
+// Linked tabs: a chart tab and a Screener company tab follow each other.
+// ---------------------------------------------------------------------------
+const SCR_COMPANY_MATCH = ['https://*.screener.in/company/*', 'https://screener.in/company/*'];
+// Echo guard: the tab we just moved will report the same symbol back once it
+// loads; swallow that report instead of bouncing it to the other side.
+let lastLink = { tabId: null, plain: null, at: 0 };
+
+function screenerTicker(url) {
+  const m = /\/company\/([^\/?#]+)/i.exec(url || '');
+  return m ? PlutusSymbols.toPlain(decodeURIComponent(m[1])) : null;
+}
+
+/** The tab the user most likely means: active in the last-focused window, else most recently used. */
+async function pickTab(urls, excludeTabId) {
+  const tabs = (await chrome.tabs.query({ url: urls })).filter((t) => t.id && t.id !== excludeTabId);
+  if (!tabs.length) return null;
+  let focusedWindowId = null;
+  try { focusedWindowId = (await chrome.windows.getLastFocused()).id; } catch (e) { /* ignore */ }
+  const score = (t) => (t.active ? 2 : 0) + (t.active && t.windowId !== focusedWindowId ? 1 : 0) + (t.lastAccessed || 0) / 1e15;
+  // Prefer a tab that is visible in ANOTHER window (second monitor), then any active tab, then most recent.
+  return tabs.sort((a, b) => score(b) - score(a))[0];
+}
+
+async function linkSymbol(msg, sender) {
+  const s = await PlutusSettings.get();
+  if (!s.linkTabs) return { linked: false, reason: 'off' };
+  const plain = PlutusSymbols.toPlain(msg.symbol);
+  if (!plain) return { linked: false, reason: 'not a ticker' };
+  const fromTab = sender && sender.tab ? sender.tab.id : null;
+  if (fromTab === lastLink.tabId && plain === lastLink.plain && Date.now() - lastLink.at < 20000) {
+    return { linked: false, reason: 'echo' };
+  }
+  if (msg.from === 'tv') {
+    const tab = await pickTab(SCR_COMPANY_MATCH, fromTab);
+    if (!tab) return { linked: false, reason: 'no Screener company tab' };
+    if (screenerTicker(tab.url) === plain) return { linked: false, reason: 'already there' };
+    const consolidated = s.scrAutoConsolidated || /\/consolidated/i.test(tab.url || '');
+    lastLink = { tabId: tab.id, plain, at: Date.now() };
+    await chrome.tabs.update(tab.id, { url: PlutusSymbols.toScreenerUrl(plain, consolidated) });
+    return { linked: true, tabId: tab.id };
+  }
+  if (msg.from === 'screener') {
+    const tab = await pickTab(TV_MATCH, fromTab);
+    if (!tab) return { linked: false, reason: 'no TradingView chart tab' };
+    lastLink = { tabId: tab.id, plain, at: Date.now() };
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: 'plutus:switch-symbol', symbol: PlutusSymbols.toPlutus(plain) });
+    } catch (e) {
+      return { linked: false, reason: 'chart tab not ready — reload it once' };
+    }
+    return { linked: true, tabId: tab.id };
+  }
+  return { linked: false, reason: 'unknown source' };
+}
+
 async function triggerSync(symbols) {
   await requireToken();
   return apiFetch('/api/admin/trigger', { method: 'POST', admin: true, body: { workflow: 'daily', symbols } });
@@ -298,7 +378,7 @@ async function ping() {
 
 async function clearCache() {
   await storageSet({ [CACHE_BOOTSTRAP]: null, [CACHE_STOCK]: {} });
-  positionsCache = { at: 0, data: null };
+  positionsCache = { at: 0, data: null }; openTradesCache = { at: 0, data: null }; settingsCache = { at: 0, data: null };
   return { cleared: true };
 }
 
@@ -316,6 +396,10 @@ const HANDLERS = {
   'watchlist.add': (m) => watchlistAddSymbols(m.id, m.symbols),
   'watchlist.remove': (m) => watchlistRemoveSymbol(m.id, m.symbol),
   'positions': (m) => getPositions({ force: !!m.force }),
+  'trades.open': (m) => openTrades({ force: !!m.force }),
+  'journal.settings': () => journalSettings(),
+  'sizing.save': (m) => sizingSave(m.body || {}),
+  'link.symbol': (m, sender) => linkSymbol(m, sender),
   'notes.list': (m) => notesList(m.symbol, m.limit),
   'notes.create': (m) => noteCreate(m),
   'opportunity.create': (m) => opportunityCreate(m.body || {}),
@@ -349,7 +433,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   const before = (changes[PlutusSettings.KEY].oldValue || {});
   const after = (changes[PlutusSettings.KEY].newValue || {});
   if (before.apiUrl !== after.apiUrl || before.token !== after.token) {
-    positionsCache = { at: 0, data: null };
+    positionsCache = { at: 0, data: null }; openTradesCache = { at: 0, data: null }; settingsCache = { at: 0, data: null };
     storageSet({ [CACHE_STOCK]: {} });
   }
 });
@@ -368,8 +452,8 @@ async function injectIntoOpenTabs() {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: isTv
-          ? ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'tv/tv_content.js']
-          : ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'vendor/chart.min.js', 'screener/screener_content.js'],
+          ? ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/sizer.js', 'tv/tv_content.js']
+          : ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/sizer.js', 'vendor/chart.min.js', 'screener/screener_content.js'],
       });
     } catch (e) { /* restricted tab or already injected */ }
   }

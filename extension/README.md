@@ -10,11 +10,13 @@ extension/
 ├── shared/
 │   ├── symbols.js           TCS.NS ↔ TCS ↔ NSE:TCS ↔ /company/TCS/ (one converter, unit-tested on the server side too)
 │   ├── settings.js          one settings blob in chrome.storage.local with defaults
-│   └── ui.js                toast / dialog / DOM helpers + the message bridge
+│   ├── ui.js                toast / dialog / DOM helpers, brand mark + the message bridge
+│   └── sizer.js             position sizer: port of lib/sizing.ts + the journal cap rule, and its dialog
 ├── tv/                      TradingView panel (tv_content.js + tv.css)
 ├── screener/                Screener.in overlays (screener_content.js + screener.css)
 ├── popup/                   settings popup
 ├── webapp/token_bridge.js   copies the web app's session token into the extension (localhost:5173)
+├── tests/background.test.js offline tests for the worker (tab linking) + symbol converters
 ├── vendor/chart.min.js      Chart.js 4.5.1 (MIT)
 └── icons/
 ```
@@ -60,12 +62,16 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
 * Hot-keys on the active stock: `N` dated note, `O` opportunity, `B` bookmark to a watchlist, `A` PlayArea
   add/remove, `S` Screener, `P` Plutus stock page.
 * Focus mode hides TradingView upsell dialogs. Data-as-of stamp turns amber when the snapshot is stale.
+* `⤢` (or `Alt+E`) expands the panel to a tall 520 px view and restores the previous size; drag the header to
+  move, drag the bottom-right corner to resize, double-click the header to reset.
 
 **Screener.in (`/company/...`)**
 
-* Auto-opens the consolidated view; falls back to standalone when consolidated statements are ≥ 3 years
-  stale, and remembers your choice per company.
-* Toolbar next to *Export to Excel*: TradingView, Plutus, ON/OFF, Standalone ↔ Consolidated, Note, Bookmark.
+* Auto-opens the consolidated view; falls back to standalone when the consolidated view is empty (companies
+  that file only standalone, e.g. SANOFICONR) or its statements are ≥ 3 years stale, and remembers the choice
+  per company. Picking Consolidated yourself always wins.
+* Toolbar in the company header row (before *Export to Excel*, or before *Follow* when a page has no Export):
+  TradingView, Plutus, Consolidated · Standalone, Note, Bookmark, on/off switch.
 * **Plutus card** above the ratios: cap, technical signal, PRIME, held position, pools; the 11 fundamental
   checks with pass/fail detail; 200 DMA gauge with the 9 % / 14 % entry levels in ₹; ATH fall vs the
   cap-aware rule; 52-week range; 20 % rally; PE/PB; on-page rule checks (TTM sales & profit ≥ 90 % of
@@ -80,6 +86,31 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
   worst per row. Shareholding QoQ. Peers: best per column, threshold colouring, "in Plutus" chips.
 * Chart buttons: fundamentals (quarterly & annual sales / profit / OPM, EPS, interest, borrowings) and
   shareholding series.
+
+**Workflow across both sites**
+
+* **Linked tabs** (`⇄` in the panel header and on the Screener pill). Switching the chart moves an open Screener
+  company tab to the same stock; opening a company on Screener moves the chart. The worker prefers a tab visible
+  in another window (second monitor), never touches Screener pages that are not company pages, and swallows the
+  moved tab's report so the two never ping-pong.
+* **Walk-through on Screener.** A pill bottom-left walks the list the TradingView panel shows (same filter and
+  sort) with `←` / `→`. Picking a list in the pill switches the panel too. Without a panel list it walks the
+  stock's own pool A → Z.
+* **Position sizer** (`Z` on the chart, `⚖` on rows, `⚖ Size` on the Screener card). Capital comes from the
+  journal, entry from the live chart price (or Screener's price), stop and target from one-click chips (rally
+  low, 52-week low, −5 / −8 / −10 %, 200 DMA, 52-week high, ATH). Shows qty, deployed, ₹ risk, stop distance,
+  R-multiple, and the per-stock cap-bucket limit including what you already hold, with a "max qty within
+  limit" fix. Saves as a journal opportunity (qty, stop, target, GTT limit, risk note) or a Position Sizer plan.
+  `frontend_v2/src/lib/extensionSizerParity.test.ts` proves it matches the web app on thousands of inputs.
+* **Held-position strip** (TradingView footer). For a stock with OPEN lots: qty @ weighted average, live P&L ₹
+  and %, days since the first buy, distance to the newest lot's target and stop, invested → value, open risk
+  to stop. The lots button opens a per-lot table (date, qty @ price, P&L, target / stop).
+
+## Tests
+
+```bash
+node --test extension/tests/background.test.js
+```
 
 ## Conventions
 
