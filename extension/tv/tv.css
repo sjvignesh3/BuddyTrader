@@ -1,0 +1,167 @@
+/* Plutus Companion — TradingView panel. Dark theme tuned to TradingView's chart UI. */
+:root {
+  --px-bg: #131722;
+  --px-bg2: #1e222d;
+  --px-bg3: #2a2e39;
+  --px-border: #363a45;
+  --px-text: #d1d4dc;
+  --px-mute: #868993;
+  --px-accent: #2962ff;
+  --px-accent2: #0f766e;
+  --px-green: #26a69a;
+  --px-red: #f23645;
+  --px-amber: #f59e0b;
+  --px-gold: #facc15;
+  --px-violet: #a78bfa;
+}
+
+#px-tv-toggle {
+  position: fixed; top: 52px; right: 6px; width: 34px; height: 34px; border-radius: 8px;
+  background: var(--px-accent2); color: #fff; border: 1px solid #0d9488; cursor: pointer;
+  z-index: 2147483000; font: 700 14px/34px -apple-system, "Segoe UI", Roboto, sans-serif;
+  text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,.35); user-select: none;
+}
+#px-tv-toggle:hover { filter: brightness(1.12); }
+
+#px-tv-panel {
+  position: fixed; top: 50px; right: 48px; width: 300px; height: min(78vh, 760px);
+  min-width: 250px; min-height: 260px; max-width: 720px; max-height: calc(100vh - 60px);
+  background: var(--px-bg); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.5); z-index: 2147482999; display: flex; flex-direction: column;
+  font: 12px/1.35 -apple-system, "Segoe UI", Roboto, sans-serif; resize: both; overflow: hidden;
+}
+#px-tv-panel.px-collapsed { display: none; }
+#px-tv-panel * { box-sizing: border-box; }
+#px-tv-panel button { font: inherit; }
+
+.px-header {
+  display: flex; align-items: center; gap: 6px; padding: 7px 8px; background: var(--px-bg2);
+  border-bottom: 1px solid var(--px-border); cursor: move; user-select: none; flex: 0 0 auto;
+}
+.px-title { font-weight: 800; font-size: 13px; letter-spacing: .2px; color: #fff; }
+.px-title .px-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--px-gold); margin-right: 6px; vertical-align: 1px; }
+.px-asof { color: var(--px-mute); font-size: 10px; margin-left: 2px; white-space: nowrap; }
+.px-asof.px-stale { color: var(--px-amber); }
+.px-header-spacer { flex: 1; }
+.px-icon-btn {
+  background: transparent; border: 1px solid transparent; color: var(--px-mute); border-radius: 6px;
+  width: 24px; height: 24px; cursor: pointer; font-size: 13px; line-height: 22px; text-align: center; padding: 0;
+}
+.px-icon-btn:hover { background: var(--px-bg3); color: var(--px-text); }
+.px-icon-btn.px-on { color: var(--px-gold); }
+
+.px-row { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--px-border); flex: 0 0 auto; }
+.px-select, .px-input {
+  background: var(--px-bg2); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 6px;
+  padding: 5px 7px; font: inherit; outline: none; min-width: 0;
+}
+.px-select { flex: 1; cursor: pointer; }
+.px-input { flex: 1; }
+.px-input:focus, .px-select:focus { border-color: var(--px-accent); }
+.px-input::placeholder { color: var(--px-mute); }
+
+.px-small-btn {
+  background: var(--px-bg2); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 6px;
+  padding: 4px 7px; cursor: pointer; white-space: nowrap;
+}
+.px-small-btn:hover { background: var(--px-bg3); }
+.px-small-btn:disabled { opacity: .35; cursor: not-allowed; }
+.px-small-btn.px-primary { background: var(--px-accent2); border-color: #0d9488; color: #fff; }
+.px-small-btn.px-danger:hover { background: #4a1d22; border-color: var(--px-red); }
+
+.px-slicer { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--px-border); flex: 0 0 auto; }
+.px-slicer button {
+  flex: 1; background: var(--px-bg2); color: var(--px-mute); border: 1px solid var(--px-border); border-radius: 6px;
+  padding: 3px 4px; cursor: pointer; font-size: 11px; display: flex; justify-content: center; gap: 4px; align-items: center;
+}
+.px-slicer button.px-active { background: var(--px-accent); color: #fff; border-color: var(--px-accent); }
+.px-slicer .px-count { background: rgba(255,255,255,.12); border-radius: 8px; padding: 0 5px; font-size: 10px; }
+
+.px-list { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 4px 0; }
+.px-list::-webkit-scrollbar { width: 6px; }
+.px-list::-webkit-scrollbar-thumb { background: var(--px-bg3); border-radius: 3px; }
+.px-empty { color: var(--px-mute); text-align: center; padding: 24px 12px; }
+
+.px-item {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px; cursor: pointer; border-left: 3px solid transparent;
+  position: relative;
+}
+.px-item:hover { background: var(--px-bg2); }
+.px-item.px-active { background: rgba(41,98,255,.16); border-left-color: var(--px-accent); }
+.px-item.px-missing .px-sym { color: var(--px-mute); }
+.px-sym { font-weight: 700; font-size: 12.5px; color: #fff; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.px-name { color: var(--px-mute); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.px-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.px-chips { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap; }
+.px-chip { font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; white-space: nowrap; line-height: 14px; }
+.px-chip-cap-L { background: rgba(56,189,248,.18); color: #7dd3fc; }
+.px-chip-cap-M { background: rgba(167,139,250,.18); color: #c4b5fd; }
+.px-chip-cap-S { background: rgba(245,158,11,.18); color: #fcd34d; }
+.px-chip-cap-U { background: rgba(134,137,147,.18); color: var(--px-mute); }
+.px-chip-buy { background: rgba(38,166,154,.22); color: #5eead4; }
+.px-chip-opp { background: rgba(245,158,11,.22); color: #fcd34d; }
+.px-chip-rally { background: rgba(167,139,250,.2); color: #c4b5fd; }
+.px-chip-score { background: var(--px-bg3); color: var(--px-text); }
+.px-chip-score.px-strong { background: rgba(38,166,154,.22); color: #5eead4; }
+.px-chip-score.px-weak { background: rgba(242,54,69,.18); color: #fca5a5; }
+.px-chip-held { background: rgba(250,204,21,.18); color: var(--px-gold); }
+.px-chip-prime { background: var(--px-gold); color: #1c1917; }
+.px-chip-dma { color: var(--px-mute); background: transparent; padding-left: 0; }
+.px-chip-dma.px-pos { color: #5eead4; }
+
+.px-actions { display: none; gap: 2px; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: var(--px-bg2); padding: 2px; border-radius: 6px; }
+.px-item:hover .px-actions { display: flex; }
+.px-act { background: transparent; border: none; color: var(--px-mute); cursor: pointer; width: 22px; height: 22px; border-radius: 4px; font-size: 12px; padding: 0; }
+.px-act:hover { background: var(--px-bg3); color: #fff; }
+.px-act.px-act-del:hover { color: var(--px-red); }
+
+.px-footer { border-top: 1px solid var(--px-border); padding: 6px 8px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 5px; background: var(--px-bg2); }
+.px-hint { color: var(--px-mute); font-size: 10px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.px-hint kbd { background: var(--px-bg3); border: 1px solid var(--px-border); border-radius: 3px; padding: 0 4px; font: 10px/14px ui-monospace, Menlo, monospace; color: var(--px-text); }
+.px-banner { padding: 6px 8px; font-size: 11px; background: #3b1d21; color: #fca5a5; border-bottom: 1px solid var(--px-border); flex: 0 0 auto; }
+.px-banner.px-info { background: #1f2a44; color: #93c5fd; }
+.px-banner a { color: inherit; text-decoration: underline; cursor: pointer; }
+
+/* dialogs / toasts (shared class names with the Screener side) */
+.px-dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 2147483200; display: flex; align-items: center; justify-content: center; }
+.px-dialog { background: var(--px-bg); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 10px; width: 360px; max-width: calc(100vw - 32px); box-shadow: 0 12px 40px rgba(0,0,0,.6); font: 12px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; }
+.px-dialog * { box-sizing: border-box; }
+.px-dialog-title { font-weight: 800; font-size: 13px; padding: 10px 12px; border-bottom: 1px solid var(--px-border); color: #fff; }
+.px-dialog-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.px-dialog-body label { display: flex; flex-direction: column; gap: 3px; color: var(--px-mute); font-size: 11px; }
+.px-dialog-body input[type=text], .px-dialog-body input[type=number], .px-dialog-body input[type=date], .px-dialog-body textarea, .px-dialog-body select {
+  background: var(--px-bg2); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 6px; padding: 6px 8px; font: inherit; outline: none; width: 100%;
+}
+.px-dialog-body textarea { min-height: 120px; resize: vertical; }
+.px-dialog-body input:focus, .px-dialog-body textarea:focus, .px-dialog-body select:focus { border-color: var(--px-accent); }
+.px-radio-list { display: flex; flex-direction: column; gap: 4px; }
+.px-radio-list label { flex-direction: row; align-items: center; gap: 8px; color: var(--px-text); padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+.px-radio-list label:hover { background: var(--px-bg2); }
+.px-dialog-error { color: var(--px-red); font-size: 11px; padding: 0 12px; min-height: 0; }
+.px-dialog-error:not(:empty) { padding-bottom: 8px; }
+.px-dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--px-border); }
+.px-btn { border-radius: 6px; padding: 6px 12px; cursor: pointer; font-weight: 700; border: 1px solid var(--px-border); background: var(--px-bg2); color: var(--px-text); }
+.px-btn-primary { background: var(--px-accent2); border-color: #0d9488; color: #fff; }
+.px-btn-danger { background: #7f1d1d; border-color: #991b1b; color: #fff; }
+.px-btn:disabled { opacity: .5; cursor: wait; }
+.px-muted { color: var(--px-mute); font-size: 11px; }
+
+#px-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 2147483300; display: flex; flex-direction: column; gap: 6px; }
+.px-toast { background: #1e222d; color: #fff; border: 1px solid var(--px-border); border-left: 3px solid var(--px-accent); border-radius: 8px; padding: 8px 12px; font: 12px/1.3 -apple-system, "Segoe UI", Roboto, sans-serif; box-shadow: 0 6px 20px rgba(0,0,0,.4); max-width: 360px; transition: opacity .3s; }
+.px-toast-success { border-left-color: var(--px-green); }
+.px-toast-error { border-left-color: var(--px-red); }
+.px-toast-out { opacity: 0; }
+
+/* Focus mode — hide TradingView upsell dialogs / toasts while switching. */
+body.px-focus div[data-dialog-name="gopro"],
+body.px-focus div[data-name="gopro-dialog"],
+body.px-focus div[data-name="go-pro-dialog"],
+body.px-focus div[data-dialog-name="upgrade"],
+body.px-focus div[data-name="upgrade-dialog"],
+body.px-focus [class*="toast-"][class*="gopro"],
+body.px-focus div[class*="bottom-toast-wrapper"] [class*="gopro"] { display: none !important; }
+
+/* While the extension is typing into the symbol search, keep the dialog invisible. */
+body.px-switching div[data-name="symbol-search-items-dialog"],
+body.px-switching div[data-name="symbol-search-dialog"],
+body.px-switching div[data-dialog-name="symbol-search"] { opacity: 0 !important; visibility: hidden !important; }

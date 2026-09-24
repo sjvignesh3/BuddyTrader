@@ -1,0 +1,126 @@
+/* Plutus Companion — Screener.in overlays. Colours are translucent so they read on
+   Screener's light and dark themes; text colour is inherited from the page. */
+:root {
+  --px-up: rgba(34, 197, 94, .22);
+  --px-down: rgba(239, 68, 68, .22);
+  --px-warn: rgba(245, 158, 11, .25);
+  --px-alert: rgba(250, 204, 21, .55);
+  --px-best: rgba(22, 163, 74, .85);
+  --px-worst: rgba(220, 38, 38, .85);
+  --px-brand: #0f766e;
+  --px-gold: #facc15;
+  --px-ink: var(--ink-900, #18181b);
+  --px-mute: var(--ink-600, #6b7280);
+  --px-panel: var(--base-background, #fff);
+  --px-line: var(--stroke, #e5e7eb);
+}
+/* Screener toggles dark mode with a class on <body>. */
+body.dark { --px-panel: #1c1c1e; --px-line: #34343a; --px-ink: #e5e7eb; --px-mute: #9ca3af; --px-up: rgba(34, 197, 94, .28); --px-down: rgba(239, 68, 68, .3); --px-warn: rgba(245, 158, 11, .32); --px-alert: rgba(250, 204, 21, .45); }
+
+/* --- cell / tile colouring (classes, never inline styles) --- */
+.px-c-up { background-color: var(--px-up) !important; }
+.px-c-down { background-color: var(--px-down) !important; }
+.px-c-warn { background-color: var(--px-warn) !important; }
+.px-c-alert { background-color: var(--px-alert) !important; font-weight: 700; }
+.px-c-best { background-color: var(--px-best) !important; color: #fff !important; font-weight: 700; }
+.px-c-worst { background-color: var(--px-worst) !important; color: #fff !important; font-weight: 700; }
+.px-c-note { outline: 1px dashed rgba(245, 158, 11, .8); outline-offset: -1px; }
+#top-ratios li.px-t-good .value, #top-ratios li.px-t-good .number { background: var(--px-up); border-radius: 4px; padding: 0 4px; font-weight: 700; }
+#top-ratios li.px-t-bad .value, #top-ratios li.px-t-bad .number { background: var(--px-down); border-radius: 4px; padding: 0 4px; font-weight: 700; }
+#top-ratios li.px-t-warn .value, #top-ratios li.px-t-warn .number { background: var(--px-warn); border-radius: 4px; padding: 0 4px; font-weight: 700; }
+#top-ratios li.px-synthetic .name::after { content: " · Plutus"; font-size: 10px; color: var(--px-brand); font-weight: 700; }
+
+/* --- toolbar next to "Export to Excel" --- */
+#px-scr-toolbar { display: inline-flex; gap: 6px; align-items: center; margin-right: 8px; vertical-align: middle; flex-wrap: wrap; }
+#px-scr-toolbar .px-tb {
+  display: inline-flex; align-items: center; gap: 5px; height: var(--px-btn-h, 30px); padding: var(--px-btn-p, 4px 10px);
+  font-size: var(--px-btn-fs, 12px); border-radius: var(--px-btn-r, 6px); font-weight: 700; white-space: nowrap; cursor: pointer;
+  border: 1px solid var(--px-line); background: var(--px-panel); color: var(--px-ink); text-decoration: none; line-height: 1; transition: filter .15s;
+}
+#px-scr-toolbar .px-tb:hover { filter: brightness(.95); text-decoration: none; }
+#px-scr-toolbar .px-tb-tv { border-color: #2962ff; color: #2962ff; }
+#px-scr-toolbar .px-tb-plutus { border-color: var(--px-brand); color: var(--px-brand); }
+#px-scr-toolbar .px-tb-on { border-color: #059669; color: #059669; background: rgba(5,150,105,.08); }
+#px-scr-toolbar .px-tb-off { border-color: #dc2626; color: #dc2626; background: rgba(220,38,38,.08); }
+
+/* --- Plutus card above the ratios --- */
+#px-card { margin: 10px 0 14px; border: 1px solid var(--px-line); border-radius: 12px; background: var(--px-panel); color: var(--px-ink); font-size: 13px; overflow: hidden; }
+#px-card * { box-sizing: border-box; }
+.px-card-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--px-line); flex-wrap: wrap; }
+.px-card-title { font-weight: 800; letter-spacing: .2px; display: flex; align-items: center; gap: 6px; }
+.px-card-title .px-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--px-gold); display: inline-block; }
+.px-card-meta { color: var(--px-mute); font-size: 11px; }
+.px-card-spacer { flex: 1; }
+.px-card-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; padding: 10px 12px; }
+.px-box { border: 1px solid var(--px-line); border-radius: 10px; padding: 8px 10px; }
+.px-box-title { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--px-mute); font-weight: 700; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+.px-kv { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 2px 0; }
+.px-kv span:last-child { font-variant-numeric: tabular-nums; font-weight: 700; }
+.px-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; white-space: nowrap; line-height: 14px; }
+/* Chip text colours follow Screener's own theme class (body.dark), never the OS scheme —
+   Screener can be light while Windows is dark. */
+.px-chip-buy { background: rgba(34,197,94,.2); color: #14532d !important; }
+.px-chip-opp { background: rgba(245,158,11,.25); color: #92400e !important; }
+.px-chip-rally { background: rgba(139,92,246,.2); color: #5b21b6 !important; }
+.px-chip-none { background: rgba(107,114,128,.15); color: #4b5563 !important; }
+.px-chip-prime { background: var(--px-gold); color: #1c1917 !important; }
+.px-chip-held { background: rgba(250,204,21,.3); color: #713f12 !important; }
+.px-chip-cap { background: rgba(56,189,248,.22); color: #075985 !important; }
+.px-chip-pass { background: rgba(34,197,94,.2); color: #14532d !important; }
+.px-chip-fail { background: rgba(239,68,68,.18); color: #991b1b !important; }
+.px-chip-na { background: rgba(107,114,128,.15); color: #4b5563 !important; }
+body.dark .px-chip-buy, body.dark .px-chip-pass { color: #86efac !important; }
+body.dark .px-chip-opp { color: #fcd34d !important; }
+body.dark .px-chip-rally { color: #c4b5fd !important; }
+body.dark .px-chip-held { color: #fde68a !important; }
+body.dark .px-chip-cap { color: #7dd3fc !important; }
+body.dark .px-chip-fail { color: #fca5a5 !important; }
+body.dark .px-chip-none, body.dark .px-chip-na { color: #d1d5db !important; }
+.px-score { font-size: 22px; font-weight: 800; line-height: 1; }
+.px-score small { font-size: 11px; color: var(--px-mute); font-weight: 600; }
+.px-checks { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; margin-top: 6px; }
+.px-check { display: flex; align-items: flex-start; gap: 5px; font-size: 11px; line-height: 1.3; cursor: default; }
+.px-check b { font-weight: 800; width: 12px; flex: 0 0 12px; }
+.px-check.px-pass b { color: #16a34a; } .px-check.px-fail b { color: #dc2626; } .px-check.px-na b { color: var(--px-mute); }
+.px-gauge { position: relative; height: 8px; border-radius: 999px; background: linear-gradient(90deg, rgba(239,68,68,.5), rgba(245,158,11,.5) 45%, rgba(34,197,94,.55)); margin: 8px 0 4px; }
+.px-gauge i { position: absolute; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--px-brand); transform: translateX(-7px); }
+.px-gauge-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--px-mute); }
+.px-rules { display: flex; flex-wrap: wrap; gap: 5px; }
+.px-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.px-btn { border-radius: 6px; padding: 5px 10px; cursor: pointer; font-weight: 700; font-size: 12px; border: 1px solid var(--px-line); background: var(--px-panel); color: var(--px-ink); }
+.px-btn:hover { filter: brightness(.95); }
+.px-btn-primary { background: var(--px-brand); border-color: var(--px-brand); color: #fff; }
+.px-btn-danger { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+.px-btn:disabled { opacity: .5; cursor: wait; }
+.px-muted { color: var(--px-mute); font-size: 11px; }
+.px-peer-chip { font-size: 9.5px; font-weight: 800; padding: 1px 5px; border-radius: 4px; background: rgba(15,118,110,.15); color: var(--px-brand); margin-left: 4px; vertical-align: middle; }
+
+/* --- floating chart buttons + modal --- */
+.px-fab { position: fixed; right: 18px; width: 50px; height: 50px; border-radius: 50%; border: 2px solid #fff; background: var(--px-brand); color: #fff; font-size: 20px; cursor: pointer; z-index: 2147483000; box-shadow: 0 6px 18px rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; }
+.px-fab:hover { filter: brightness(1.1); }
+#px-fab-fund { top: 44%; } #px-fab-shd { top: 54%; }
+#px-viz { position: fixed; inset: 5% 4%; background: var(--px-panel); color: var(--px-ink); border: 1px solid var(--px-line); border-radius: 14px; z-index: 2147483100; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+#px-viz .px-viz-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--px-line); }
+#px-viz .px-viz-head h2 { margin: 0; font-size: 16px; font-weight: 800; flex: 1; }
+#px-viz .px-viz-grid { flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; padding: 12px 16px; }
+#px-viz .px-viz-box { height: 260px; border: 1px solid var(--px-line); border-radius: 10px; padding: 8px; position: relative; }
+#px-viz canvas { width: 100% !important; height: 100% !important; }
+
+/* --- dialogs / toasts (shared class names with the TradingView side) --- */
+.px-dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 2147483200; display: flex; align-items: center; justify-content: center; }
+.px-dialog { background: var(--px-panel); color: var(--px-ink); border: 1px solid var(--px-line); border-radius: 12px; width: 380px; max-width: calc(100vw - 32px); box-shadow: 0 12px 40px rgba(0,0,0,.35); font-size: 13px; }
+.px-dialog * { box-sizing: border-box; }
+.px-dialog-title { font-weight: 800; padding: 12px 14px; border-bottom: 1px solid var(--px-line); }
+.px-dialog-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.px-dialog-body label { display: flex; flex-direction: column; gap: 3px; color: var(--px-mute); font-size: 11px; }
+.px-dialog-body input[type=text], .px-dialog-body input[type=number], .px-dialog-body input[type=date], .px-dialog-body textarea, .px-dialog-body select { background: var(--px-panel); color: var(--px-ink); border: 1px solid var(--px-line); border-radius: 6px; padding: 7px 9px; font: inherit; outline: none; width: 100%; }
+.px-dialog-body textarea { min-height: 120px; resize: vertical; }
+.px-radio-list { display: flex; flex-direction: column; gap: 4px; }
+.px-radio-list label { flex-direction: row; align-items: center; gap: 8px; color: var(--px-ink); padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.px-radio-list label:hover { background: rgba(127,127,127,.1); }
+.px-dialog-error { color: #dc2626; font-size: 11px; padding: 0 14px; }
+.px-dialog-error:not(:empty) { padding-bottom: 8px; }
+.px-dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--px-line); }
+#px-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 2147483300; display: flex; flex-direction: column; gap: 6px; }
+.px-toast { background: #1f2937; color: #fff; border-left: 3px solid #2962ff; border-radius: 8px; padding: 8px 12px; font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.3); max-width: 360px; transition: opacity .3s; }
+.px-toast-success { border-left-color: #22c55e; } .px-toast-error { border-left-color: #ef4444; } .px-toast-out { opacity: 0; }

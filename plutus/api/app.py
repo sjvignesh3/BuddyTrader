@@ -307,6 +307,14 @@ def create_app(*, supabase_client: Optional[Any] = None,
     from plutus.api.universe import register_universe_routes
     register_universe_routes(app, cli, fetch_info=getattr(app.state, "fetch_info", None))
 
+    # -- Custom watchlists (writable; personal tool; browser extension) --------
+    from plutus.api.watchlists import register_watchlist_routes
+    register_watchlist_routes(app, cli)
+
+    # -- Browser-extension read bundles + strategy thresholds (read-only) -----
+    from plutus.api.extension import register_extension_routes
+    register_extension_routes(app, cli)
+
     # -- On-demand GitHub Actions trigger (no DB writes; PAT stays server-
     # side; gated by PLUTUS_ADMIN_TOKEN) -------------------------------------
     from plutus.api.admin_trigger import register_admin_trigger_routes

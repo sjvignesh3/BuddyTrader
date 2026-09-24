@@ -594,3 +594,46 @@ API already in use rather than parse Screener's `/market/…` taxonomy), write a
 import audit, criteria), `test_personal_migrations.py` gates 019,
 `frontend_v2/src/lib/universeCsv.test.ts` (master template, plain, symbols-only,
 round-trip).
+
+---
+
+## V2-X — Plutus Companion browser extension (2026-09-23 → 24, first cut)
+
+**Goal.** Bring Plutus' numbers to where analysis actually happens — the TradingView chart
+and the Screener.in company page — and let the loop (chart → fundamentals → note → journal)
+run from the keyboard without opening the web app. Study of the reference extension and the
+feature map: `Docs/Plutus_Extension_Study.MD`. Code: `extension/` (Manifest V3, load unpacked;
+`extension/README.md` has install steps and the feature list).
+
+**Backend added (FastAPI only; the Edge Function stays read-only and does not carry these).**
+- `020_watchlists.sql` — `watchlists` (name, `symbols TEXT[]` in `TCS.NS` form, order); RLS
+  service-role only; seeds S1–S4. Personal-table conventions gated by `test_personal_migrations.py`.
+- `plutus/api/extension.py` — `GET /api/extension/bootstrap` (pools + every active stock with cap,
+  latest snapshot metrics, strongest technical signal and fundamental points, in one ~90 KB call the
+  extension caches per `snapshot_date`), `GET /api/extension/stock/{symbol}` (stock + snapshot +
+  latest fundamentals + latest scan results per strategy), `GET /api/strategy_configs` (code
+  defaults from `plutus/scan/strategies/*` + the cap-aware ATH rule + DB overrides). Open reads,
+  money fields stringified.
+- `plutus/api/watchlists.py` — `/api/watchlists` CRUD + `/{id}/symbols` add/remove, behind
+  `X-Plutus-Auth` (added to `PROTECTED_PREFIXES`; viewers read, owner writes).
+- Tests: `plutus/tests/test_api_extension.py` (converters, thresholds, bootstrap shape, stock
+  bundle, watchlists CRUD, gate).
+
+**Extension architecture.** The service worker is the only code that calls the API (adds the
+token, caches bootstrap 12 h, falls back to browser-local watchlists when no token, re-injects
+into already-open tabs, pings the API every 25 min while a chart/Screener tab is open so a
+free-tier host stays warm). Content scripts only talk to the worker. Internal symbol form is
+always `TCS.NS`; `shared/symbols.js` converts to `TCS`, `NSE:TCS` (hyphen/ampersand → `_`) and
+Screener URLs. A bridge script on `localhost:5173` mirrors the web app's session token into the
+extension; for a deployed web app the token is pasted once in the popup.
+
+**Verified (2026-09-24).** Bootstrap against the local DB (442 stocks, 160 ms). Screener overlays
+against a saved copy of the live RELIANCE page (tables, tiles, synthetic tiles, card with the 11
+checks, ten page rules, toolbar beside Export to Excel, peers header-in-tbody quirk). TradingView
+symbol switching on the live chart (`symbol-search-items-dialog`, Enter applies). Not yet
+exercised end-to-end with the unpacked extension by the owner.
+
+**Known gaps / next cut.** Web-app PlayArea page still stores its list in `localStorage`
+(`playarea.ts`) while the extension treats PlayArea as the universe pool — unify on the API.
+"Copy token" button in the Console. Edge Function parity if the extension is ever pointed at it.
+Migration 020 must be applied to the cloud project before the Render API serves watchlists.

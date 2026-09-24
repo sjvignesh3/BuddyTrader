@@ -49,6 +49,7 @@ Or one-by-one:
                          --   income, milestones, freedom settings)
 018_app_access.sql       -- view-only access credential (hash of the shared
 019_universe.sql         -- stocks.sector_group, universe_syncs, S200 criteria (Universe page)
+020_watchlists.sql       -- named custom watchlists (browser extension / web app), seeds S1..S4
                          --   read-only password, rotated from the Console)
 ```
 

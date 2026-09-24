@@ -29,6 +29,7 @@ was removed from the tree on 2026-09-16 and lives only in git history.
 │   └── tests/              Deterministic pytest suite — no network, no DB
 ├── frontend_v2/            Vite + React 18 + TypeScript dashboard (see frontend_v2/README.md)
 ├── supabase/               Local Supabase stack config + read-only Edge Function fallback
+├── extension/              Plutus Companion — Chrome extension for TradingView + Screener.in (see extension/README.md)
 ├── .github/workflows/      Scheduled syncs, weekly ratios, weekly backup, CI tests
 ├── UserData/               Master universe CSV (one-time seed input) + personal notes
 └── Docs/                   Plutus plan, phased development log, runbook, hosting guide, issue log

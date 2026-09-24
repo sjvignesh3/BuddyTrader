@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "Plutus Companion",
+  "short_name": "Plutus",
+  "version": "0.1.0",
+  "description": "Plutus overlays for TradingView and Screener.in: pool watchlists with instant symbol switching, Plutus signals and fundamental score, ratio colour-coding, notes and PlayArea from any chart.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Plutus Companion",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage", "scripting", "alarms"],
+  "host_permissions": [
+    "https://*.tradingview.com/*",
+    "https://tradingview.com/*",
+    "https://*.screener.in/*",
+    "https://screener.in/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://*.tradingview.com/chart*", "https://tradingview.com/chart*"],
+      "js": ["shared/symbols.js", "shared/settings.js", "shared/ui.js", "tv/tv_content.js"],
+      "css": ["tv/tv.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.screener.in/*", "https://screener.in/*"],
+      "js": ["shared/symbols.js", "shared/settings.js", "shared/ui.js", "vendor/chart.min.js", "screener/screener_content.js"],
+      "css": ["screener/screener.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://localhost:5173/*", "http://127.0.0.1:5173/*"],
+      "js": ["shared/settings.js", "webapp/token_bridge.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

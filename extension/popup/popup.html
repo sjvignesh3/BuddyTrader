@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Plutus Companion</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="dot"></span>Plutus Companion <span id="version" class="version"></span></div>
+    <span id="conn" class="badge badge-muted">checking…</span>
+  </header>
+
+  <section class="card">
+    <div class="section-title">Connection</div>
+    <label>Plutus API URL
+      <input type="text" id="apiUrl" placeholder="http://127.0.0.1:8787 or https://plutus-api.onrender.com" spellcheck="false">
+    </label>
+    <label>Plutus web app URL
+      <input type="text" id="webAppUrl" placeholder="http://localhost:5173" spellcheck="false">
+    </label>
+    <label>Session token <span class="hint">(owner or viewer; needed for notes, positions, watchlists, PlayArea)</span>
+      <input type="password" id="token" placeholder="paste from the Plutus web app · localStorage plutus.auth.v1" spellcheck="false" autocomplete="off">
+    </label>
+    <label>Admin token <span class="hint">(optional · sync triggers)</span>
+      <input type="password" id="adminToken" placeholder="X-Plutus-Admin-Token" spellcheck="false" autocomplete="off">
+    </label>
+    <div class="row">
+      <button id="test" class="btn">Test connection</button>
+      <button id="refresh" class="btn">Refresh data</button>
+      <span id="cacheInfo" class="hint"></span>
+    </div>
+    <div id="testOut" class="out"></div>
+  </section>
+
+  <section class="card">
+    <div class="section-title">TradingView</div>
+    <label class="check"><input type="checkbox" id="tvEnabled"> Show the Plutus panel</label>
+    <label class="check"><input type="checkbox" id="tvShowChips"> Signal / score / held chips on rows</label>
+    <label class="check"><input type="checkbox" id="tvFocusMode"> Focus mode: hide upsell dialogs</label>
+    <label class="check"><input type="checkbox" id="tvSpaceKeyNavigates"> Space bar advances to the next stock</label>
+    <label>Default sort
+      <select id="tvSort">
+        <option value="default">A → Z</option>
+        <option value="conviction">Conviction</option>
+        <option value="dma">% below 200 DMA</option>
+        <option value="ath">% off ATH</option>
+        <option value="score">Fundamental score</option>
+      </select>
+    </label>
+  </section>
+
+  <section class="card">
+    <div class="section-title">Screener.in</div>
+    <label class="check"><input type="checkbox" id="scrEnabled"> Enable Plutus on Screener</label>
+    <label class="check"><input type="checkbox" id="scrAutoConsolidated"> Auto-open consolidated view (falls back when stale)</label>
+    <label class="check"><input type="checkbox" id="scrPlutusCard"> Plutus card above the ratios</label>
+    <label class="check"><input type="checkbox" id="scrHighlightTables"> Colour-code tables, tiles, peers</label>
+    <label class="check"><input type="checkbox" id="scrPageRules"> On-page rule checks (TTM vs peak, OPM, tax, interest…)</label>
+  </section>
+
+  <section class="card">
+    <div class="section-title">Thresholds <span class="hint">server defaults shown; blank = use server</span></div>
+    <div class="grid">
+      <label>Stock P/E max <input type="number" id="ov_pe_max" step="1"></label>
+      <label>ROCE min % <input type="number" id="ov_roce_min" step="1"></label>
+      <label>ROE min % <input type="number" id="ov_roe_min" step="1"></label>
+      <label>Net D/E max <input type="number" id="ov_net_debt_to_equity_max" step="0.01"></label>
+      <label>Pledge max % <input type="number" id="ov_pledging_max" step="0.5"></label>
+      <label>Public holding max % <input type="number" id="t_publicHoldingMaxPct" step="1"></label>
+      <label>52w high red % <input type="number" id="t_high52RedPct" step="1"></label>
+      <label>52w high yellow % <input type="number" id="t_high52YellowPct" step="1"></label>
+      <label>200 SMA green % <input type="number" id="t_smaGreenPct" step="1"></label>
+      <label>ATH yellow % <input type="number" id="t_athYellowPct" step="1"></label>
+      <label>ATH green % <input type="number" id="t_athGreenPct" step="1"></label>
+      <label>Cache TTL (min) <input type="number" id="cacheTtlMinutes" step="30"></label>
+    </div>
+    <div id="serverDefaults" class="hint"></div>
+  </section>
+
+  <footer>
+    <button id="reset" class="btn btn-ghost">Reset</button>
+    <span class="spacer"></span>
+    <span id="saved" class="hint"></span>
+    <button id="save" class="btn btn-primary">Save</button>
+  </footer>
+
+  <script src="../shared/symbols.js"></script>
+  <script src="../shared/settings.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
