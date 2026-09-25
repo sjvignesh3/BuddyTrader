@@ -160,7 +160,7 @@ const BASE_COLS: Col[] = [
         </span>
       ) },
   { key: "score", label: "Score /11", align: "center",
-    tip: "Fundamental score — the 11 BuddyTrader checks. Click to sort.",
+    tip: "Fundamental score — the 11 Plutus checks. Click to sort.",
     value: (r) => r.score,
     render: (r) => <ScoreRing points={r.score} size={32} /> },
 ];

@@ -212,8 +212,8 @@ export default function StockDetailPage() {
   const plain = symbol.replace(/\.(NS|BO)$/i, "");
 
   useEffect(() => {
-    document.title = `${plain} · BuddyTrader`;
-    return () => { document.title = "BuddyTrader"; };
+    document.title = `${plain} · Plutus`;
+    return () => { document.title = "Plutus — Pool Intelligence"; };
   }, [plain]);
 
   const snapsQ = useSnapshotsBySymbols(symbol ? [symbol] : []);

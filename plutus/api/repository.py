@@ -202,13 +202,21 @@ def scan_results(
     client: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     cli = _client(client)
-    q = cli.table("scan_results").select("*").eq("scan_id", scan_id)
-    if strategy_id:
-        q = q.eq("strategy_id", strategy_id)
-    if status_in:
-        q = q.in_("status", list(status_in))
-    res = q.execute()
-    return _rows(res)
+
+    # Paginated: an S200 scan writes ~426 symbols x 4 strategies = ~1,700
+    # rows, and a single .execute() stops at PostgREST's 1,000-row cap —
+    # the pool table then showed "not scored yet" dashes for whichever
+    # symbols fell past the cap (2026-09-25). Ordered by id so the page
+    # boundaries are deterministic.
+    def build():
+        q = cli.table("scan_results").select("*").eq("scan_id", scan_id)
+        if strategy_id:
+            q = q.eq("strategy_id", strategy_id)
+        if status_in:
+            q = q.in_("status", list(status_in))
+        return q.order("id")
+
+    return sb.fetch_all(build)
 
 
 def latest_scan_results_for_symbols(

@@ -701,3 +701,17 @@ the scan engine now selects the new columns and PostgREST rejects the query
 until they exist. Then run one quarterly sync (or `--symbols` for the lenders)
 so the NPA / ROA cells fill; until then the lender checks 5, 10 and 11 show
 N/A rather than FAIL.
+
+**Follow-up (2026-09-25 evening).** Two things surfaced on the beta after the
+cloud migration + first scan on the new code:
+- `GET /api/scan_results?scan_id=` returned only the first 1,000 rows of an
+  S200 scan (426 symbols × 4 strategies = 1,704) — PostgREST's default cap —
+  so the Market Analysis table showed "not scored yet" dashes for ~176
+  symbols even though their Stock pages (which use a per-symbol query) were
+  fine. `repository.scan_results` now pages with `sb.fetch_all` ordered by id.
+  Pre-existing bug, unrelated to the lender work; only visible on S200.
+- IRFC and RECLTD show Gross / Net NPA as N/A because Screener prints the
+  rows with blank cells on BOTH statement views for them (verified logged
+  in). Nothing to fix: N/A is the intended answer when the source has no
+  number. SHRIRAMFIN / ABCAPITAL / M&MFIN / CHOLAFIN print NPAs on the
+  standalone view only and are covered by the fallback.

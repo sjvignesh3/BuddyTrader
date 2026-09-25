@@ -1,7 +1,7 @@
 {
   "name": "Plutus — Pool Intelligence",
   "short_name": "Plutus",
-  "description": "BuddyTrader market analysis, strategy scans and trading journal.",
+  "description": "Plutus market analysis, strategy scans and trading journal.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

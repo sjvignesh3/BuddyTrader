@@ -58,6 +58,12 @@ class _Query:
         self._rows = self._rows[:n]
         return self
 
+    def range(self, start: int, end: int):
+        """PostgREST-style inclusive range — what sb.fetch_all pages with."""
+        self.chain.append(("range", start, end))
+        self._rows = self._rows[start:end + 1]
+        return self
+
     def execute(self):
         return _Result(self._rows)
 
@@ -232,6 +238,19 @@ class TestScans:
 
     def test_latest_scan_missing_pool(self, fake_client):
         assert repo.latest_scan("NONE", client=fake_client) is None
+
+    def test_scan_results_pages_past_the_postgrest_cap(self):
+        # 426 symbols x 4 strategies (an S200 scan) > 1,000 rows: every row
+        # must come back, not just the first page.
+        rows = [{"id": i, "scan_id": "big", "symbol": f"S{i // 4}.NS",
+                 "strategy_id": ["envelope_200dma", "week52_high_low",
+                                 "rally_20_percent", "fundamental_screener"][i % 4],
+                 "status": "PASS"} for i in range(426 * 4)]
+        cli = FakeSupabase({"scan_results": rows})
+        out = repo.scan_results("big", client=cli)
+        assert len(out) == 1704
+        assert len([r for r in out if r["strategy_id"] == "fundamental_screener"]) == 426
+        assert ("range", 1000, 1999) in cli.last_query.chain
 
     def test_scan_results_by_scan_id(self, fake_client):
         rows = repo.scan_results("scan-2", client=fake_client)
