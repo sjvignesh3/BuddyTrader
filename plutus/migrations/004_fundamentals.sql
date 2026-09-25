@@ -57,3 +57,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_fund_symbol_quarter
 -- Views block ALTER TYPE on their columns; 009 recreates them.
 DROP VIEW IF EXISTS v_fundamentals_latest;
 ALTER TABLE fundamentals ALTER COLUMN operating_margin_pct TYPE NUMERIC(10,2);
+
+-- Banks & NBFC quality metrics (added by 021_bank_fundamentals.sql; repeated
+-- here so a fresh install gets them from this file and the registry test
+-- sees every fundamentals column in one place).
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS gross_npa_pct NUMERIC(6,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS net_npa_pct   NUMERIC(6,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS total_assets  NUMERIC(20,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS roa           NUMERIC(6,2);

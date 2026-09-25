@@ -47,7 +47,10 @@
       $('cacheInfo').textContent = c && c.data ? 'cached ' + new Date(c.fetchedAt).toLocaleTimeString() + ' · snapshot ' + (c.data.snapshot_date || '—') + ' · ' + (c.data.stocks || []).length + ' stocks' : 'no cached data';
       if (c && c.data && c.data.thresholds) {
         const f = c.data.thresholds.fundamental || {};
-        $('serverDefaults').textContent = 'Server: PE < ' + f.pe_max + ' · ROCE > ' + f.roce_min + ' · ROE > ' + f.roe_min + ' · D/E < ' + f.net_debt_to_equity_max + ' · pledge < ' + f.pledging_max + '% · ATH fall ' + JSON.stringify(c.data.thresholds.ath_fall_pct_by_cap || {}).replace(/"/g, '');
+        const g = f.groups || {};
+        const grp = (name) => { const x = g[name]; return x ? name + ': PE < ' + x.pe_max + ' · ROE > ' + x.roe_min + ' · ROA > ' + x.roa_min + ' · GNPA < ' + x.gross_npa_max + ' · NNPA < ' + x.net_npa_max + ' · TTM NP > ' + x.net_profit_ttm_min_cr + ' Cr' : ''; };
+        $('serverDefaults').textContent = 'Server: PE < ' + f.pe_max + ' · ROCE > ' + f.roce_min + ' · ROE > ' + f.roe_min + ' · D/E < ' + f.net_debt_to_equity_max + ' · pledge < ' + f.pledging_max + '% · ATH fall ' + JSON.stringify(c.data.thresholds.ath_fall_pct_by_cap || {}).replace(/"/g, '')
+          + [grp('Banks'), grp('NBFC')].filter(Boolean).map((s) => ' | ' + s).join('');
         OVERRIDES.forEach((k) => { if (f[k] != null) $('ov_' + k).placeholder = f[k]; });
       }
     });

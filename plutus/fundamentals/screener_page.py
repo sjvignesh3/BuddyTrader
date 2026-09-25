@@ -111,8 +111,11 @@ def parse_section_table(html: str, section_id: str) -> List[List[str]]:
 
 def extract_quarterly_results(html: str) -> List[Dict[str, Any]]:
     """One dict per quarter column, NEWEST LAST as printed on the page:
-    {quarter_label, quarter_end_date, sales, pbt, net_profit}.
-    Money values are in ₹ CRORES exactly as printed.
+    {quarter_label, quarter_end_date, sales, pbt, net_profit,
+     gross_npa_pct, net_npa_pct}.
+    Money values are in ₹ CRORES exactly as printed. Banks / NBFCs print
+    "Revenue" instead of "Sales" (mapped to `sales`) and carry the two NPA
+    rows; for everyone else the NPA keys are None.
     (OPM intentionally not extracted — dropped from the criteria 2026-09-02.)"""
     out: List[Dict[str, Any]] = []
     rows = parse_section_table(html, "quarters")
@@ -122,7 +125,7 @@ def extract_quarterly_results(html: str) -> List[Dict[str, Any]]:
     if len(headers) < 2:
         return out
 
-    sales_row = pbt_row = np_row = None
+    sales_row = pbt_row = np_row = gnpa_row = nnpa_row = None
     for row in rows[1:]:
         if not row:
             continue
@@ -133,6 +136,10 @@ def extract_quarterly_results(html: str) -> List[Dict[str, Any]]:
             pbt_row = row
         elif "net profit" in label and "before" not in label and np_row is None:
             np_row = row
+        elif label.startswith("gross npa") and gnpa_row is None:
+            gnpa_row = row
+        elif label.startswith("net npa") and nnpa_row is None:
+            nnpa_row = row
 
     def _cell(row: Optional[List[str]], i: int) -> Optional[Decimal]:
         if row is None or i >= len(row):
@@ -149,8 +156,67 @@ def extract_quarterly_results(html: str) -> List[Dict[str, Any]]:
             "sales": _cell(sales_row, i),
             "pbt": _cell(pbt_row, i),
             "net_profit": _cell(np_row, i),
+            "gross_npa_pct": _cell(gnpa_row, i),
+            "net_npa_pct": _cell(nnpa_row, i),
         })
     return out
+
+
+def quarterly_npa_is_blank(quarterly: List[Dict[str, Any]], html: str) -> bool:
+    """True when the #quarters table CARRIES the NPA rows but every cell is
+    empty. Banks disclose asset quality on the STANDALONE statements only;
+    their consolidated page prints the row labels with blank cells
+    (verified HDFCBANK / ICICIBANK / SBIN / AXISBANK / KOTAKBANK, 2026-09-25).
+    NBFCs print NPAs on both views. Non-lenders have no rows -> False."""
+    if not quarterly:
+        return False
+    if any(q.get("gross_npa_pct") is not None or q.get("net_npa_pct") is not None
+           for q in quarterly):
+        return False
+    for row in parse_section_table(html, "quarters")[1:]:
+        if row and row[0].strip().lower().startswith(("gross npa", "net npa")):
+            return True
+    return False
+
+
+def fill_npa_from(quarterly: List[Dict[str, Any]],
+                  other: List[Dict[str, Any]]) -> int:
+    """Copy gross_npa_pct / net_npa_pct from `other` into `quarterly` by
+    quarter label, only where the target cell is None. Returns the number
+    of quarters that received at least one value."""
+    by_label = {q.get("quarter_label"): q for q in other if q.get("quarter_label")}
+    filled = 0
+    for q in quarterly:
+        src = by_label.get(q.get("quarter_label"))
+        if not src:
+            continue
+        touched = False
+        for key in ("gross_npa_pct", "net_npa_pct"):
+            if q.get(key) is None and src.get(key) is not None:
+                q[key] = src[key]
+                touched = True
+        filled += 1 if touched else 0
+    return filled
+
+
+# ---------------------------------------------------------------------------
+# Balance sheet — #balance-sheet "Total Assets" (ROA denominator for lenders)
+# ---------------------------------------------------------------------------
+
+def extract_total_assets(html: str) -> Optional[Decimal]:
+    """Latest (right-most) 'Total Assets' cell of the #balance-sheet table,
+    in ₹ CRORES as printed. None when the section or row is absent."""
+    rows = parse_section_table(html, "balance-sheet")
+    for row in rows[1:] if rows else []:
+        if not row:
+            continue
+        if row[0].strip().lower().startswith("total assets"):
+            for cell in reversed(row[1:]):
+                v = parse_number(cell)
+                if v is not None:
+                    return v
+            return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +299,8 @@ def extract_ratios(html: str, quick_ratios_html: Optional[str] = None) -> Dict[s
         "book_value": _fuzzy(["Book Value"]),
         "roce": _fuzzy(["ROCE"]),
         "roe": _fuzzy(["ROE", "Return on equity"]),
+        # Only present when the account's quick ratios include it (lenders).
+        "roa": _fuzzy(["Return on assets", "ROA", "Return on Assets"]),
         "net_debt_to_equity": _fuzzy([
             "Net Debt to Equity", "Net Debt / Equity", "Net Debt/Equity",
             "Debt to equity", "Debt to Equity",

@@ -43,6 +43,13 @@ const METRICS: MetricRow[] = [
     value: (r) => (r.funda?.data?.net_debt_to_equity !== null &&
                    r.funda?.data?.net_debt_to_equity !== undefined
       ? Number(r.funda.data.net_debt_to_equity) : null), fmt: r2 },
+  // Lenders (Banks / NBFC list) — blank for everyone else.
+  { label: "ROA %", better: "high",
+    value: (r) => (r.funda?.data?.roa ? Number(r.funda.data.roa) : null), fmt: r2 },
+  { label: "Gross NPA %", better: "low",
+    value: (r) => (r.funda?.data?.gross_npa ? Number(r.funda.data.gross_npa) : null), fmt: r2 },
+  { label: "Net NPA %", better: "low",
+    value: (r) => (r.funda?.data?.net_npa ? Number(r.funda.data.net_npa) : null), fmt: r2 },
   { label: "Pledging %", better: "low",
     value: (r) => (r.funda?.data?.pledging ? Number(r.funda.data.pledging) : (r.funda ? 0 : null)), fmt: p1 },
   { label: "MCap ₹Cr", better: null, value: (r) => r.marketCapCr,

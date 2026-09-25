@@ -79,6 +79,39 @@
       athFall: Object.assign({ Large: 20, Mid: 30, Small: 40, Micro: 40 }, Object.fromEntries(Object.entries(t.ath_fall_pct_by_cap || {}).map(([k, v]) => [k, num(v)]))),
       pointers: Object.assign({ public_holding_max_pct: 30, ttm_net_profit_min_cr: 250, ttm_vs_peak_min_ratio: 0.9 }, Object.fromEntries(Object.entries(t.pointers || {}).map(([k, v]) => [k, num(v)]))),
       tiles: (st.settings && st.settings.tiles) || SET.DEFAULTS.tiles,
+      // Banks / NBFC list (stocks.sector_group): PE / ROE / ROA / TTM profit / NPA bars.
+      groups: lenderGroups(f.groups),
+    };
+  }
+  const LENDER_DEFAULTS = {
+    Banks: { pe_max: 30, roe_min: 12, roa_min: 1.2, net_profit_ttm_min_cr: 1000, gross_npa_max: 3, net_npa_max: 1 },
+    NBFC: { pe_max: 30, roe_min: 15, roa_min: 2, net_profit_ttm_min_cr: 1000, gross_npa_max: 3, net_npa_max: 1 },
+  };
+  function lenderGroups(server) {
+    const out = {};
+    Object.keys(LENDER_DEFAULTS).forEach((g) => {
+      const s = (server || {})[g] || {};
+      out[g] = Object.assign({}, LENDER_DEFAULTS[g], Object.fromEntries(Object.entries(s).map(([k, v]) => [k, num(v)]).filter(([, v]) => v != null)));
+    });
+    return out;
+  }
+  /** 'Banks' | 'NBFC' when the open stock is scored on the lender list, else null. */
+  function lenderGroup() {
+    const g = st.stock && st.stock.summary && st.stock.summary.sector_group;
+    return g === 'Banks' || g === 'NBFC' ? g : null;
+  }
+  /** Effective bars for the open stock: lender group block or the Normal list. */
+  function barsFor(T) {
+    const g = lenderGroup();
+    const G = g ? T.groups[g] : null;
+    return {
+      group: g,
+      peMax: G ? G.pe_max : T.peMax,
+      roeMin: G ? G.roe_min : T.roeMin,
+      roaMin: G ? G.roa_min : null,
+      gnpaMax: G ? G.gross_npa_max : null,
+      nnpaMax: G ? G.net_npa_max : null,
+      npTtmMinCr: G ? G.net_profit_ttm_min_cr : T.pointers.ttm_net_profit_min_cr,
     };
   }
 
@@ -496,7 +529,7 @@
 
     // box 1: fundamental score
     const scoreBox = el('div', { class: 'px-box' }, [
-      el('div', { class: 'px-box-title' }, ['Fundamental score', el('span', { class: 'px-muted', text: fundaRes ? (fundaRes.status || '') : 'no scan yet' })]),
+      el('div', { class: 'px-box-title' }, ['Fundamental score' + (ms.group && ms.group !== 'Normal' ? ' · ' + ms.group + ' list' : ''), el('span', { class: 'px-muted', text: fundaRes ? (fundaRes.status || '') : 'no scan yet' })]),
       el('div', { class: 'px-score', html: (points == null ? '—' : points) + ' <small>/ ' + (ms.points_max || 11) + (ms.unknown ? ' · ' + ms.unknown + ' n/a' : '') + '</small>' }),
     ]);
     if (checks.length) {
@@ -557,6 +590,7 @@
   }
   function computePageRules(T) {
     const out = [];
+    const B = barsFor(T), lender = !!B.group;
     const pl = sectionTable('profit-loss');
     if (pl) {
       const H = tableHeaders(pl), rows = tableRows(pl);
@@ -574,8 +608,8 @@
         out.push({ label: label + ' ≥ ' + Math.round(T.pointers.ttm_vs_peak_min_ratio * 100) + '% of 10Y peak', pass: ratio == null ? null : ratio >= T.pointers.ttm_vs_peak_min_ratio, detail: (ttmIdx >= 0 ? 'TTM ' : 'Latest ') + cur.toLocaleString('en-IN') + ' vs peak ' + peak.toLocaleString('en-IN') + ' Cr (' + (ratio == null ? '—' : Math.round(ratio * 100) + '%') + ')' });
         if (min != null) out.push({ label: label + ' > ₹' + min + ' Cr', pass: cur > min, detail: cur.toLocaleString('en-IN') + ' Cr' });
       };
-      peakRule(sales, 'Sales', null);
-      peakRule(np, 'Net profit', T.pointers.ttm_net_profit_min_cr);
+      peakRule(sales, lender ? 'Revenue' : 'Sales', null);
+      peakRule(np, 'Net profit', B.npTtmMinCr);
       if (opm) {
         const v = opm.values.filter((x) => x != null).slice(-4);
         if (v.length >= 3) {
@@ -591,7 +625,7 @@
           out.push({ label: 'Tax rate normal', pass: latest < 15 || swing > 12 ? false : true, detail: 'Tax%: ' + v.join(' → ') + (latest < 15 ? ' — unusually low' : swing > 12 ? ' — large swing' : '') });
         }
       }
-      if (interest && pbt) {
+      if (interest && pbt && !lender) {   // interest IS a lender's cost of goods — not a burden signal
         const iv = interest.values, pv = pbt.values;
         const last = lastIdx >= 0 ? lastIdx : iv.length - 1, prev = Math.max(0, last - 3);
         const share = (i) => (iv[i] != null && pv[i] != null && (iv[i] + pv[i]) > 0 ? iv[i] / (iv[i] + pv[i]) * 100 : null);
@@ -618,7 +652,7 @@
     if (bs) {
       const rows = tableRows(bs);
       const borrow = findRow(rows, /^borrowings/i);
-      if (borrow) {
+      if (borrow && !lender) {            // a growing lender's borrowings climb by design
         const v = borrow.values.filter((x) => x != null).slice(-4);
         if (v.length >= 3) out.push({ label: 'Borrowings not climbing', pass: !(v[v.length - 1] > v[v.length - 2] && v[v.length - 2] > v[v.length - 3]), detail: 'Borrowings: ' + v.join(' → ') });
       }
@@ -628,6 +662,16 @@
         const cur = vals[vals.length - 1], peak = Math.max(...vals);
         if (cur != null && peak > 0) out.push({ label: 'Fixed assets ≥ 90% of peak', pass: cur / peak >= (T.pointers.tfa_vs_peak_min_ratio || 0.9), detail: cur.toLocaleString('en-IN') + ' vs peak ' + peak.toLocaleString('en-IN') + ' Cr (intangibles not netted — expand the row for TFA)' });
       }
+    }
+    const q = sectionTable('quarters');
+    if (q) {
+      const rows = tableRows(q);
+      const gnpa = findRow(rows, /^gross npa/i), nnpa = findRow(rows, /^net npa/i);
+      // Banks / NBFC asset quality — bars from the lender list (Banks bars when the group is unknown).
+      const G = T.groups[B.group || 'Banks'];
+      const latest = (row) => { const v = row.values.filter((x) => x != null); return v.length ? v[v.length - 1] : null; };
+      if (gnpa) { const v = latest(gnpa); if (v != null) out.push({ label: 'Gross NPA < ' + G.gross_npa_max + '%', pass: v < G.gross_npa_max, detail: 'Latest quarter Gross NPA ' + v + '%' }); }
+      if (nnpa) { const v = latest(nnpa); if (v != null) out.push({ label: 'Net NPA < ' + G.net_npa_max + '%', pass: v < G.net_npa_max, detail: 'Latest quarter Net NPA ' + v + '%' }); }
     }
     const sh = sectionTable('shareholding');
     if (sh) {
@@ -647,6 +691,7 @@
     const T = thresholds();
     const read = (li) => ({ li, name: ((li.querySelector('.name') || {}).innerText || '').trim().toLowerCase(), val: parseNum((li.querySelector('.value') || li.querySelector('.number') || {}).innerText) });
     const tiles = lis.map(read);
+    const B = barsFor(T), lender = !!B.group;
     const stockPE = (tiles.find((t) => t.name === 'stock p/e' || t.name === 'p/e') || {}).val;
     const cmp = (tiles.find((t) => t.name.includes('current price') || t.name === 'cmp') || {}).val;
     tiles.forEach((t) => {
@@ -654,13 +699,16 @@
       const n = t.name, v = t.val;
       if (v == null) return;
       let cls = null, why = '';
-      if (n === 'stock p/e' || n === 'p/e') { cls = v > T.peMax ? 'bad' : 'good'; why = 'PE ' + (cls === 'good' ? '<' : '>') + ' ' + T.peMax; }
+      if (n === 'stock p/e' || n === 'p/e') { cls = v > B.peMax ? 'bad' : 'good'; why = 'PE ' + (cls === 'good' ? '<' : '>') + ' ' + B.peMax + (lender ? ' (' + B.group + ' list)' : ''); }
       else if (/\bpe\b|p\/e/.test(n) && /(3|5|10)\s*y/.test(n)) { if (stockPE != null) { cls = v > stockPE ? 'good' : 'bad'; why = 'historical PE ' + v + ' vs current ' + stockPE; } }
       else if (n === 'book value') { if (cmp != null) { cls = v < cmp ? null : 'good'; why = 'book value vs price'; } }
-      else if (n === 'roce' || n === 'roce %') { cls = v < T.roceMin ? 'bad' : 'good'; why = 'ROCE min ' + T.roceMin; }
-      else if (n === 'roe' || n === 'roe %') { cls = v < T.roeMin ? 'bad' : 'good'; why = 'ROE min ' + T.roeMin; }
+      else if (n === 'roce' || n === 'roce %') { if (lender) { t.li.title = 'Plutus: ROCE is not scored for ' + B.group; return; } cls = v < T.roceMin ? 'bad' : 'good'; why = 'ROCE min ' + T.roceMin; }
+      else if (n === 'roe' || n === 'roe %') { cls = v < B.roeMin ? 'bad' : 'good'; why = 'ROE min ' + B.roeMin + (lender ? ' (' + B.group + ' list)' : ''); }
+      else if (/return on assets|^roa\b/.test(n)) { if (B.roaMin != null) { cls = v > B.roaMin ? 'good' : 'bad'; why = 'ROA min ' + B.roaMin + ' (' + B.group + ' list)'; } }
+      else if (/gross npa/.test(n)) { if (B.gnpaMax != null) { cls = v < B.gnpaMax ? 'good' : 'bad'; why = 'Gross NPA max ' + B.gnpaMax + '%'; } }
+      else if (/net npa/.test(n)) { if (B.nnpaMax != null) { cls = v < B.nnpaMax ? 'good' : 'bad'; why = 'Net NPA max ' + B.nnpaMax + '%'; } }
       else if (/52w high|52 ?week high|from 52w high|down from 52w/.test(n)) { const d = Math.abs(v); cls = d < T.tiles.high52RedPct ? 'bad' : d < T.tiles.high52YellowPct ? 'warn' : 'good'; why = d.toFixed(1) + '% below 52w high'; }
-      else if (/debt to equity|debt\/equity|net debt/.test(n)) { cls = v < T.ndeMax ? 'good' : 'bad'; why = 'D/E max ' + T.ndeMax; }
+      else if (/debt to equity|debt\/equity|net debt/.test(n)) { if (lender) { t.li.title = 'Plutus: Net D/E is not scored for ' + B.group; return; } cls = v < T.ndeMax ? 'good' : 'bad'; why = 'D/E max ' + T.ndeMax; }
       else if (/200 ?(sma|dma|day)|down from 200/.test(n)) { cls = v >= T.tiles.smaGreenPct ? 'good' : v >= 0 ? 'warn' : 'bad'; why = v + '% vs 200 DMA'; }
       else if (/\bath\b|all time high|from ath/.test(n)) { const d = Math.abs(v); cls = d > T.tiles.athGreenPct ? 'good' : d > T.tiles.athYellowPct ? 'warn' : null; why = d.toFixed(1) + '% off ATH'; }
       else if (/pledge/.test(n)) { cls = v < T.pledgeMax ? 'good' : 'bad'; why = 'pledge max ' + T.pledgeMax + '%'; }
@@ -691,8 +739,16 @@
     if (!has(/pledge/) && pledge != null) add('Pledged', pledge.toFixed(1) + '%', pledge < T.pledgeMax ? 'good' : 'bad', 'Plutus quarterly sync');
     const pub = num(fund.public_holding_pct);
     if (!has(/public holding/) && pub != null) add('Public holding', pub.toFixed(1) + '%', pub < T.tiles.publicHoldingMaxPct ? 'good' : 'warn', 'Plutus quarterly sync');
+    const B = barsFor(T);
     const nde = num(fund.net_debt_to_equity);
-    if (!has(/net debt/) && nde != null) add('Net debt / equity', nde.toFixed(2), nde < T.ndeMax ? 'good' : 'bad', 'Plutus quarterly sync');
+    if (!B.group && !has(/net debt/) && nde != null) add('Net debt / equity', nde.toFixed(2), nde < T.ndeMax ? 'good' : 'bad', 'Plutus quarterly sync');
+    if (B.group) {
+      const roa = num(fund.roa);
+      if (!has(/return on assets|^roa\b/) && roa != null) add('Return on assets', roa.toFixed(2) + '%', roa > B.roaMin ? 'good' : 'bad', 'Plutus: ' + B.group + ' list · ROA > ' + B.roaMin + '% (TTM net profit / total assets)');
+      const gnpa = num(fund.gross_npa_pct), nnpa = num(fund.net_npa_pct);
+      if (!has(/gross npa/) && gnpa != null) add('Gross NPA', gnpa.toFixed(2) + '%', gnpa < B.gnpaMax ? 'good' : 'bad', 'Plutus: latest quarter · max ' + B.gnpaMax + '%');
+      if (!has(/net npa/) && nnpa != null) add('Net NPA', nnpa.toFixed(2) + '%', nnpa < B.nnpaMax ? 'good' : 'bad', 'Plutus: latest quarter · max ' + B.nnpaMax + '%');
+    }
     const pe5 = num(fund.pe_5y_avg), pe = num(snap.pe_current);
     if (!has(/5 ?y.*pe|pe.*5 ?y/) && pe5 != null) add('5Y avg PE', pe5.toFixed(1), pe != null ? (pe < pe5 ? 'good' : 'bad') : null, 'Plutus: current PE ' + (pe == null ? '—' : pe.toFixed(1)));
   }
@@ -830,21 +886,21 @@
   function highlightPeers() {
     const table = sectionTable('peers');
     if (!table || table.getAttribute('data-px-done') === String(table.rows.length)) return;
-    const T = thresholds();
+    const T = thresholds(), B = barsFor(T);
     const H = tableHeaders(table).map((h) => h.toLowerCase());
     const rows = tableRows(table);
     H.forEach((h, col) => {
       if (col < 2 || !h) return;
-      const lowBetter = /p\/e|debt|pe\b/.test(h);
+      const lowBetter = /p\/e|debt|pe\b|npa/.test(h);
       const skip = /mar cap|cmp|price|s\.no|name/.test(h);
       if (skip) return;
       let best = null;
       rows.forEach((r) => {
         const td = r.cells[col]; const v = parseNum(td ? td.innerText : null);
         if (v == null) return;
-        if (/p\/e/.test(h)) mark(td, v > T.peMax ? 'px-c-down' : 'px-c-up', 'PE vs ' + T.peMax);
-        else if (/roce/.test(h)) mark(td, v < T.roceMin ? 'px-c-down' : 'px-c-up', 'ROCE vs ' + T.roceMin);
-        else if (/roe/.test(h)) mark(td, v < T.roeMin ? 'px-c-down' : 'px-c-up', 'ROE vs ' + T.roeMin);
+        if (/p\/e/.test(h)) mark(td, v > B.peMax ? 'px-c-down' : 'px-c-up', 'PE vs ' + B.peMax);
+        else if (/roce/.test(h)) { if (!B.group) mark(td, v < T.roceMin ? 'px-c-down' : 'px-c-up', 'ROCE vs ' + T.roceMin); }
+        else if (/roe/.test(h)) mark(td, v < B.roeMin ? 'px-c-down' : 'px-c-up', 'ROE vs ' + B.roeMin);
         if (best == null || (lowBetter ? v < best.v : v > best.v)) best = { v, td };
       });
       if (best) mark(best.td, 'px-c-best', 'Best in column');

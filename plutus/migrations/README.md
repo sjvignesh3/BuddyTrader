@@ -50,6 +50,7 @@ Or one-by-one:
 018_app_access.sql       -- view-only access credential (hash of the shared
 019_universe.sql         -- stocks.sector_group, universe_syncs, S200 criteria (Universe page)
 020_watchlists.sql       -- named custom watchlists (browser extension / web app), seeds S1..S4
+021_bank_fundamentals.sql -- fundamentals.gross_npa_pct / net_npa_pct / total_assets / roa (Banks & NBFC score)
                          --   read-only password, rotated from the Console)
 ```
 

@@ -101,6 +101,11 @@ def default_thresholds() -> Dict[str, Any]:
             "yoy_growth_min": fd["yoy_growth_min"],
             "points_max": fundamental.POINTS_MAX,
             "pass_points": fundamental.PASS_THRESHOLD_POINTS,
+            # Lender lists (stocks.sector_group Banks | NBFC): PE / ROE /
+            # ROA / TTM profit / NPA bars replace Net D/E, ROCE and Sales.
+            "groups": {
+                grp: dict(vals) for grp, vals in fundamental.GROUP_DEFAULTS.items()
+            },
         },
         "envelope": {
             "buy_zone_below_dma_pct": envelope.DEFAULT_BUY_ZONE_PCT,

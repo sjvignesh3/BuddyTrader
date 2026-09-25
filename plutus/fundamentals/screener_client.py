@@ -175,6 +175,19 @@ class ScreenerClient:
                 fallback_html = r.text
         return fallback_html
 
+    def fetch_standalone_html(self, symbol: str) -> Optional[str]:
+        """The STANDALONE company page (no consolidated fallback), or None.
+        Used only to pick up the NPA rows banks print there alone."""
+        code = self._code(symbol)
+        try:
+            r = self._s.get(f"{SCREENER_BASE}/company/{code}/", timeout=_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s: standalone fetch failed: %s", symbol, exc)
+            return None
+        if r.status_code != 200 or "/login/" in str(r.url):
+            return None
+        return r.text
+
     def fetch_quick_ratios_html(self, warehouse_id: str, symbol: str) -> Optional[str]:
         """The Ajax fragment carrying the account's custom ratios."""
         if not warehouse_id:
@@ -263,7 +276,9 @@ class ScreenerClient:
     def fetch_bundle(self, symbol: str) -> Dict[str, Any]:
         """Everything the quarterly worker needs for one symbol.
 
-        Returns {quarterly, ratios, shareholding} — parsed, Decimal-typed.
+        Returns {quarterly, ratios, shareholding, total_assets} — parsed,
+        Decimal-typed (total_assets: latest balance-sheet column, ₹ Cr, for
+        the lenders' ROA when "Return on assets" is not a quick ratio).
         Raises RuntimeError when the page is unavailable (per-symbol failure
         the worker isolates); raises ScreenerAuthError only from login().
         """
@@ -277,6 +292,17 @@ class ScreenerClient:
         ratios = sp.extract_ratios(html, quick_html)
         shareholding = sp.extract_shareholding(html)
         quarterly = sp.extract_quarterly_results(html)
+        total_assets = sp.extract_total_assets(html)
+
+        # Banks: Gross / Net NPA % live on the STANDALONE statements only —
+        # the consolidated #quarters prints the rows with blank cells. One
+        # extra GET, only when the rows exist but are empty (lenders).
+        if sp.quarterly_npa_is_blank(quarterly, html):
+            alt = self.fetch_standalone_html(symbol)
+            if alt:
+                n = sp.fill_npa_from(quarterly, sp.extract_quarterly_results(alt))
+                logger.info("%s: NPA rows filled from the standalone page for %d quarters",
+                            symbol, n)
 
         # Pledging priority: quick-ratio -> analysis/meta sentence.
         if ratios.get("pledged_pct") is None:
@@ -296,6 +322,7 @@ class ScreenerClient:
             "quarterly": quarterly,
             "ratios": ratios,
             "shareholding": shareholding,
+            "total_assets": total_assets,
         }
 
 

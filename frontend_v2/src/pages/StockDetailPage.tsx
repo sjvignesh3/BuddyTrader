@@ -25,6 +25,7 @@ import {
   buildRows,
   num,
   passesAthRule,
+  isLenderGroup,
   type StockRow,
 } from "../lib/rows";
 import LoadError from "../components/LoadError";
@@ -261,6 +262,8 @@ export default function StockDetailPage() {
   const funda = row.funda;
   const d = funda?.data ?? {};
   const notScored = funda !== null && funda.unknown >= funda.pointsMax;
+  // Banks / NBFC are scored on ROA + NPAs, not Net D/E / ROCE / Sales.
+  const lender = isLenderGroup(funda?.group);
 
   // Full-site links use NSE; the EMBED uses BSE because NSE licensing blocks
   // its data inside third-party TradingView widgets ("only available on
@@ -482,7 +485,9 @@ export default function StockDetailPage() {
         <div className="flex items-center gap-3 mb-2.5">
           <ScoreRing points={notScored ? null : funda?.points ?? null} size={40} />
           <div className="flex-1">
-            <SectionTitle>Fundamental details</SectionTitle>
+            <SectionTitle>
+              Fundamental details{lender ? ` · ${funda?.group} list` : ""}
+            </SectionTitle>
             {funda && !notScored ? (
               <div className="text-xs -mt-1">
                 <b>{funda.points}/{funda.pointsMax}</b> checks pass
@@ -506,16 +511,27 @@ export default function StockDetailPage() {
               <Chip label="5yr Avg PE" value={fmt1(d.pe_5yr_avg)} />
               <Chip label="PB" value={fmt1(d.current_pb, 2)} />
               <Chip label="5yr Avg PB" value={fmt1(d.pb_5yr_avg, 2)} />
-              <Chip label="ROCE" value={fmt1(d.roce)} unit="%" />
-              <Chip label="ROE" value={fmt1(d.roe)} unit="%" />
-              <Chip label="ND/Eq" value={fmt1(d.net_debt_to_equity, 2)} />
+              {lender ? (
+                <>
+                  <Chip label="ROE" value={fmt1(d.roe)} unit="%" />
+                  <Chip label="ROA" value={fmt1(d.roa, 2)} unit="%" />
+                  <Chip label="Gross NPA" value={fmt1(d.gross_npa, 2)} unit="%" />
+                  <Chip label="Net NPA" value={fmt1(d.net_npa, 2)} unit="%" />
+                </>
+              ) : (
+                <>
+                  <Chip label="ROCE" value={fmt1(d.roce)} unit="%" />
+                  <Chip label="ROE" value={fmt1(d.roe)} unit="%" />
+                  <Chip label="ND/Eq" value={fmt1(d.net_debt_to_equity, 2)} />
+                </>
+              )}
               <Chip label="Pledging" value={fmt1(d.pledging)} unit="%" />
               <Chip label="Promoter" value={fmt1(d.promoter_holding)} unit="%" />
             </div>
 
             <div className="flex flex-wrap gap-2 mb-2.5 text-[10px] text-brand-mute">
               <span className="bg-brand-soft ring-1 ring-brand-border rounded-md px-2 py-1">
-                Latest Q Sales <b className="text-brand-text font-mono">{fmtCrShort(d.latest_sales)}</b>
+                Latest Q {lender ? "Revenue" : "Sales"} <b className="text-brand-text font-mono">{fmtCrShort(d.latest_sales)}</b>
                 {" "}/ ATH {fmtCrShort(d.ath_sales)}
               </span>
               <span className="bg-brand-soft ring-1 ring-brand-border rounded-md px-2 py-1">
@@ -526,6 +542,11 @@ export default function StockDetailPage() {
                 Latest Q Net Profit <b className="text-brand-text font-mono">{fmtCrShort(d.latest_profit)}</b>
                 {" "}/ ATH {fmtCrShort(d.ath_profit)}
               </span>
+              {lender && d.ttm_profit != null && (
+                <span className="bg-brand-soft ring-1 ring-brand-border rounded-md px-2 py-1">
+                  TTM Net Profit <b className="text-brand-text font-mono">{fmtCrShort(d.ttm_profit)}</b>
+                </span>
+              )}
               {d.yoy_profit != null && (
                 <span className="bg-teal-50 ring-1 ring-teal-200 rounded-md px-2 py-1 text-teal-800">
                   Same Q last year{d.yoy_quarter ? ` (${d.yoy_quarter})` : ""}{" "}

@@ -56,6 +56,14 @@ OPPORTUNITY_STATUSES = frozenset({
 FUNDAMENTAL_MERGE_COLS = (
     "roce", "roe", "net_debt_to_equity", "promoter_pledging_pct",
     "pe_5y_avg", "pb_5y_avg", "promoter_holding_pct",
+    "roa",   # lenders (Banks / NBFC branch of the 11-check score)
+)
+
+# Per-quarter columns read alongside the financials (NPA rows are lenders
+# only; NULL elsewhere). Fed to _quarter_aggregates, not merged as-is.
+FUNDAMENTAL_QUARTER_COLS = (
+    "quarter_end_date", "quarter_label",
+    "sales", "pbt", "net_profit", "gross_npa_pct", "net_npa_pct",
 )
 
 # Quarter-history aggregates computed by _default_fetch_fundamentals and
@@ -65,7 +73,12 @@ FUNDAMENTAL_AGG_COLS = (
     "latest_q_sales", "latest_q_pbt", "latest_q_net_profit",
     "ath_q_sales", "ath_q_pbt", "ath_q_net_profit",
     "yoy_q_net_profit", "prev_q_net_profit", "yoy_quarter_label",
+    # Banks / NBFC branch: TTM profit floor + latest asset-quality prints.
+    "ttm_net_profit", "ttm_quarters",
+    "latest_q_gross_npa_pct", "latest_q_net_npa_pct",
 )
+
+TTM_QUARTERS = 4
 
 
 def _quarter_month_year(q: Any) -> "Optional[tuple]":
@@ -112,7 +125,24 @@ def _quarter_aggregates(rows_newest_first: "List[Dict[str, Any]]") -> "Dict[str,
             rows_newest_first[1].get("net_profit"), Decimal):
         prev_np = rows_newest_first[1]["net_profit"]
 
+    # TTM net profit: the newest four quarters, only when all four are
+    # present (a 3-quarter sum would silently understate the floor check).
+    ttm_np: Optional[Decimal] = None
+    ttm_quarters = 0
+    recent = [r.get("net_profit") for r in rows_newest_first[:TTM_QUARTERS]]
+    if len(recent) == TTM_QUARTERS and all(isinstance(v, Decimal) for v in recent):
+        ttm_np = sum(recent, Decimal(0))
+        ttm_quarters = TTM_QUARTERS
+
+    # Asset quality (lenders): the newest quarter that actually printed it.
+    gnpa = _series("gross_npa_pct")
+    nnpa = _series("net_npa_pct")
+
     return {
+        "ttm_net_profit": ttm_np,
+        "ttm_quarters": ttm_quarters,
+        "latest_q_gross_npa_pct": gnpa[0] if gnpa else None,
+        "latest_q_net_npa_pct": nnpa[0] if nnpa else None,
         "latest_q_sales": sales[0] if sales else None,
         "latest_q_pbt": pbt[0] if pbt else None,
         "latest_q_net_profit": np_[0] if np_ else None,
@@ -243,7 +273,7 @@ class ScanEngine:
         # Fetch the pool universe first.
         stocks_res = (
             cli.table("stocks")
-               .select("id,symbol,pools,active,sector")
+               .select("id,symbol,pools,active,sector,sector_group")
                .eq("active", True)
                .execute()
         )
@@ -254,6 +284,11 @@ class ScanEngine:
         ]
         symbol_to_stock_id = {
             r["symbol"]: r.get("id") for r in stock_rows
+        }
+        # Criteria group (Banks | NBFC | Normal | None) — the fundamental
+        # score branches on it, so it rides along with the snapshot row.
+        symbol_to_group = {
+            r["symbol"]: r.get("sector_group") for r in stock_rows
         }
         if not pool_symbols:
             return []
@@ -269,6 +304,7 @@ class ScanEngine:
         # Attach stock_id (used for scan_results FK).
         for r in snap_rows:
             r.setdefault("stock_id", symbol_to_stock_id.get(r.get("symbol")))
+            r.setdefault("sector_group", symbol_to_group.get(r.get("symbol")))
             # Normalise numeric strings back to Decimal (Supabase returns str for NUMERIC).
             self._normalise_decimals(r)
         return snap_rows
@@ -311,8 +347,7 @@ class ScanEngine:
             return {}
         cli = self.supabase_client or sb.get_client()
         cols = ",".join(("symbol",) + FUNDAMENTAL_MERGE_COLS
-                        + ("quarter_end_date", "quarter_label",
-                           "sales", "pbt", "net_profit"))
+                        + FUNDAMENTAL_QUARTER_COLS)
         # Paginated: ~12 quarter rows x 400 symbols blows through the
         # PostgREST 1000-row cap. A single .execute() used to return only
         # the newest 2-3 quarters per symbol (and dropped ~26 symbols

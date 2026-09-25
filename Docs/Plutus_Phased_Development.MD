@@ -637,3 +637,67 @@ exercised end-to-end with the unpacked extension by the owner.
 (`playarea.ts`) while the extension treats PlayArea as the universe pool — unify on the API.
 "Copy token" button in the Console. Edge Function parity if the extension is ever pointed at it.
 Migration 020 must be applied to the cloud project before the Render API serves watchlists.
+
+## V2-F — Banks & NBFC fundamental score (2026-09-25)
+
+**Why.** Lenders have no meaningful Net Debt/Equity, ROCE or "Sales", so three of
+the 11 legacy checks failed for every bank and NBFC and their score sat at 6–8 no
+matter how good the franchise was.
+
+**What.** The `fundamental_screener` strategy now branches on
+`stocks.sector_group` (migration 019). `Banks` / `NBFC` get their own 11-check
+list — PE < 30 · PE vs 5Y · PB vs 5Y · ROE (12 % / 15 %) · ROA (1.2 % / 2 %) ·
+Net Profit TTM > ₹1,000 Cr · NP YoY · NP near ATH · Pledging < 5 % · Gross
+NPA < 3 % · Net NPA < 1 %. `Normal` (and unset) keep the legacy list untouched.
+`points_max` stays 11 so the 8 / 6 colour bands and PASS rule are unchanged;
+`metrics_snapshot.group` names the list that scored the stock.
+
+- `plutus/migrations/021_bank_fundamentals.sql` (+ mirrored in 004) —
+  `fundamentals.gross_npa_pct`, `net_npa_pct` (per quarter), `total_assets`,
+  `roa` (newest row). Registry entries added.
+- `plutus/fundamentals/screener_page.py` — `#quarters` parser reads the
+  "Gross NPA %" / "Net NPA %" rows; `extract_total_assets` reads the latest
+  `#balance-sheet` column; `extract_ratios` picks up a "Return on assets" quick
+  ratio when the account has one. Banks print NPAs on the STANDALONE page only
+  (consolidated carries blank cells — verified on HDFCBANK / ICICIBANK / SBIN /
+  AXISBANK / KOTAKBANK), so `fetch_bundle` makes one extra standalone GET when
+  the rows exist but are empty and merges by quarter label.
+- `plutus/fundamentals/quarterly.py` — `compute_roa` = TTM net profit (newest
+  four quarters, all required) / total assets × 100; quick ratio wins when
+  present. `data_quality_flags.roa` records which.
+- `plutus/scan/engine.py` — snapshot rows carry `sector_group`; aggregates add
+  `ttm_net_profit`, `ttm_quarters`, `latest_q_gross_npa_pct`,
+  `latest_q_net_npa_pct`; `roa` merged from the latest row.
+- `plutus/scan/strategies/fundamental.py` — shared check builders + two lists;
+  `GROUP_DEFAULTS` and `config.thresholds.groups.<Banks|NBFC>` overrides
+  (shared keys `pledging_max` / `ath_tolerance` / `yoy_growth_min` inherit from
+  the top level).
+- `plutus/api/extension.py` — `thresholds.fundamental.groups` served to the
+  extension.
+- `plutus/scripts/backfill_sector_group.py` — fills `sector_group` from stored
+  (or `--fetch` yfinance) sector/industry with the same classifier the paste
+  flow uses; `--dry-run`, `--overwrite`, `--symbols`.
+- Frontend — `FundaScore.group`; Stock page shows ROE / ROA / GNPA / NNPA chips,
+  "Revenue" and a TTM net profit chip for lenders; Compare drawer gains ROA /
+  GNPA / NNPA rows. The check grid was already data-driven.
+- Extension — `thresholds().groups` + `barsFor()`; tile colouring uses the
+  lender bars for PE / ROE, leaves ROCE and Net D/E unscored on lender pages,
+  adds ROA / Gross NPA / Net NPA synthetic tiles; card names the list; page
+  rules use the ₹1,000 Cr TTM floor, add Gross / Net NPA rules from the
+  quarters table and skip "Borrowings not climbing" / "Interest burden" for
+  lenders; peers table follows the same bars. Popup shows the lender defaults.
+- Tests — `plutus/tests/test_bank_fundamentals.py` (parser, standalone NPA
+  fallback with a fake session, ROA, aggregates, both lists, config overrides,
+  extension thresholds, backfill planner).
+
+**Verified (2026-09-25).** Live logged-in Screener fetch through the client:
+BAJFINANCE 11/11 on the NBFC list (GNPA 0.96 %, NNPA 0.39 %, ROA 3.69 %
+derived); HDFCBANK 9/11 before the standalone fallback (NPAs N/A), NPAs
+1.17 % / 0.41 % on the standalone page. Migration 021 applied to the LOCAL
+stack; cloud stocks already carry a `sector_group` for all 457 rows.
+
+**Deploy order.** Apply 021 to the cloud project BEFORE deploying this code —
+the scan engine now selects the new columns and PostgREST rejects the query
+until they exist. Then run one quarterly sync (or `--symbols` for the lenders)
+so the NPA / ROA cells fill; until then the lender checks 5, 10 and 11 show
+N/A rather than FAIL.

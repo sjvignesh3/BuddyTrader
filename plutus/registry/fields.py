@@ -308,6 +308,27 @@ _FIELDS: list[Field] = [
           precision=(8, 4), unit="ratio", yf_key="debtToEquity",
           notes="Snapshot at fundamentals fetch time (also in daily_snapshots)."),
 
+    # -- Banks & NBFC quality metrics (migration 021) -------------------
+    # Lenders carry no meaningful Net D/E, ROCE or "Sales"; their 11-check
+    # score (strategies/fundamental.py, group branch) reads these instead.
+    Field("gross_npa_pct", "fundamentals", FieldDType.DECIMAL, FieldSource.SCREENER, FieldTier.B_QUARTERLY,
+          precision=(6, 2), unit="percent (0-100)",
+          notes="Screener #quarters 'Gross NPA %' row — one value PER QUARTER "
+                "(banks / NBFCs only; NULL for everyone else)."),
+    Field("net_npa_pct", "fundamentals", FieldDType.DECIMAL, FieldSource.SCREENER, FieldTier.B_QUARTERLY,
+          precision=(6, 2), unit="percent (0-100)",
+          notes="Screener #quarters 'Net NPA %' row — per quarter (lenders only)."),
+    Field("total_assets", "fundamentals", FieldDType.DECIMAL, FieldSource.SCREENER, FieldTier.B_QUARTERLY,
+          precision=(20, 2), unit="₹ absolute",
+          notes="Latest #balance-sheet 'Total Assets' column (₹ Cr on the page, "
+                "absolute here). Newest quarter row only. ROA denominator."),
+    Field("roa", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(6, 2), unit="percent",
+          formula="Screener 'Return on assets' quick ratio when the account has it; "
+                  "else sum(newest 4 quarters net_profit) / total_assets * 100. "
+                  "Newest quarter row only.",
+          notes="Bank ROA > 1.2%, NBFC ROA > 2% in the group score."),
+
     Field("pe_5y_avg", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
           precision=(10, 2), unit="ratio",
           formula="mean(daily_close / TTM_EPS) over last 5Y; TTM_EPS = sum(last 4Q NI)/shares_out."),

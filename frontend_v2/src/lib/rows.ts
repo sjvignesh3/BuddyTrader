@@ -17,8 +17,15 @@ export interface FundaScore {
   points: number;
   pointsMax: number;
   unknown: number;
+  /** Which 11-check list scored the stock: "Banks" | "NBFC" | "Normal" (older scans: null). */
+  group: string | null;
   checks: FundaCheck[];
   data: Record<string, string | null>;
+}
+
+/** true when the lender list (ROA / NPA instead of Net D/E / ROCE / Sales) applied. */
+export function isLenderGroup(group: string | null | undefined): boolean {
+  return group === "Banks" || group === "NBFC";
 }
 
 export interface StockRow {
@@ -95,6 +102,7 @@ export function parseFunda(r: ScanResult | undefined): FundaScore | null {
     points: Number(ms.points),
     pointsMax: Number(ms.points_max ?? 11),
     unknown: Number(ms.unknown ?? 0),
+    group: typeof ms.group === "string" ? ms.group : null,
     checks,
     data,
   };

@@ -432,6 +432,18 @@ Notes:
   Net Debt to Equity, Pledged percentage) are fetched via the same Ajax
   call the browser makes and stored when present; the public chart API
   fills 5Y PE/PBV averages when the quick ratios are absent.
+- Banks & NBFCs (migration 021, 2026-09-25): the sync also stores
+  `gross_npa_pct` / `net_npa_pct` per quarter (Screener's `#quarters`
+  rows), the latest balance-sheet `total_assets`, and `roa`. ROA comes
+  from a "Return on assets" quick ratio if your account has one,
+  otherwise it is derived as TTM net profit / total assets. Banks print
+  their NPAs only on the STANDALONE statements, so lenders whose
+  consolidated page leaves the NPA cells blank cost one extra page GET.
+  The fundamental score branches on `stocks.sector_group` (Banks / NBFC
+  list vs Normal); rows still showing "unset" on the Universe page can be
+  filled with `python -m plutus.scripts.backfill_sector_group --dry-run`
+  (then without `--dry-run`; `--fetch` pulls yfinance sector/industry
+  for rows that have neither).
 
 ---
 
