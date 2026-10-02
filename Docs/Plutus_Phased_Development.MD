@@ -715,3 +715,22 @@ cloud migration + first scan on the new code:
   in). Nothing to fix: N/A is the intended answer when the source has no
   number. SHRIRAMFIN / ABCAPITAL / M&MFIN / CHOLAFIN print NPAs on the
   standalone view only and are covered by the fallback.
+
+## V2-G - Journal "Day %" fix + personal-data backup (2026-10-02)
+
+- **Day %.** The Journal tables showed the 7-day trend under "Day %" because a
+  snapshot carried no previous-session change. Migration 022 adds
+  `daily_snapshots.price_change_1d_pct`, the daily sync computes it from adjusted
+  closes (`metrics/pipeline.py`), and `journal.ts` reads it (intraday close-vs-open
+  as the fallback for pre-022 rows, never the weekly trend). Tests in
+  `test_metrics_pipeline.py::TestDayChange`.
+- **Backups.** `plutus/backup/personal.py` + `scripts/backup_personal.py` /
+  `scripts/restore_personal.py`: dated JSON export of the hand-typed tables
+  (universe, journal, expenses, net worth, watchlists) through the REST API,
+  `--keep` rotation, FK-ordered idempotent restore with `--dry-run` / `--yes`,
+  then `plutus_reset_sequences()` (migration 023, service_role only) so BIGSERIAL
+  ids do not collide. The weekly pg_dump workflow also keeps each dump as a
+  90-day GitHub artifact - an off-provider copy with no new accounts.
+  `UserData/backups/` is git-ignored. Runbook 10.5 has the Task Scheduler line.
+  Tests: `test_backup_personal.py` (export shape, prune, FK order, conflict keys,
+  stocks id dropped, category waves, dry run, error propagation).

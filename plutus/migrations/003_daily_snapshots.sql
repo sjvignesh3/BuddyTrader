@@ -85,3 +85,7 @@ ALTER TABLE daily_snapshots ALTER COLUMN distance_from_52w_low_pct TYPE NUMERIC(
 ALTER TABLE daily_snapshots ALTER COLUMN last_rally_pct            TYPE NUMERIC(10,2);
 ALTER TABLE daily_snapshots ALTER COLUMN price_change_nd_pct       TYPE NUMERIC(10,2);
 ALTER TABLE daily_snapshots ALTER COLUMN profit_margin_pct         TYPE NUMERIC(10,2);
+
+-- Previous-session % change (migration 022; mirrored here for fresh installs
+-- and the registry<->migration test). The Journal "Day %" column.
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS price_change_1d_pct NUMERIC(10,2);

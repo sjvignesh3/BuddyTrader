@@ -149,3 +149,32 @@ class TestPipelineSessionLabelling:
             meta={"marketState": "CLOSED"},
             screener_ratios={"market_cap": Decimal(1), "pe": Decimal(1), "pb": Decimal(1)}))
         assert not any("intraday" in e for e in row["errors"])
+
+
+class TestDayChange:
+    """price_change_1d_pct — the Journal 'Day %' (migration 022). Must be the
+    previous-SESSION move, never the 7-day trend the column used to show."""
+
+    def _row(self, bars):
+        return compute_snapshot(SnapshotInputs(
+            symbol="TEST.NS", snapshot_date=bars[-1].d, bars=bars,
+            info={}, meta={}, screener_ratios=None))
+
+    def test_flat_series_is_zero(self) -> None:
+        row = self._row(flat_series(price="100.00", n=30))
+        assert row["price_change_1d_pct"] == Decimal("0.00")
+
+    def test_day_change_differs_from_week_trend(self) -> None:
+        # linear_up_series: each session closes a fixed step above the last,
+        # so the 1-day move is one step and the 7-day move is seven steps.
+        bars = linear_up_series(start_price="100.00", n=30)
+        row = self._row(bars)
+        prev, curr = bars[-2].close, bars[-1].close   # fixture bars carry no adj_close
+        expected = ((curr - prev) / prev * Decimal(100)).quantize(Decimal("0.01"))
+        assert row["price_change_1d_pct"] == expected
+        assert row["price_change_1d_pct"] != row["price_change_nd_pct"]
+        assert row["price_change_nd_pct"] > row["price_change_1d_pct"] > 0
+
+    def test_single_bar_leaves_it_null(self) -> None:
+        row = self._row(flat_series(price="100.00", n=1))
+        assert row["price_change_1d_pct"] is None

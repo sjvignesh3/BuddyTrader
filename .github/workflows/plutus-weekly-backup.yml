@@ -63,6 +63,18 @@ jobs:
             | gzip -9 > "${{ steps.fn.outputs.name }}"
           ls -la "${{ steps.fn.outputs.name }}"
 
+      # Off-provider copy: the Storage bucket lives INSIDE the Supabase project,
+      # so a paused / deleted project takes the dumps with it. GitHub keeps
+      # this artifact for 90 days on its own infrastructure — download it
+      # from the run page. Runs BEFORE the Storage upload so it exists even
+      # when that step fails.
+      - name: Keep a copy as a GitHub artifact (90 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.fn.outputs.name }}
+          path: ${{ steps.fn.outputs.name }}
+          retention-days: 90
+          if-no-files-found: error
       - name: Upload to Supabase Storage
         run: |
           set -euo pipefail

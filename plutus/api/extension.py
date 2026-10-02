@@ -59,7 +59,7 @@ SNAPSHOT_KEYS = (
     "high_52w", "low_52w", "distance_from_52w_high_pct", "distance_from_52w_low_pct",
     "ath", "fall_from_ath_pct",
     "has_valid_20pct_rally", "last_rally_pct", "last_rally_low", "last_rally_high",
-    "days_since_last_rally", "price_change_nd_pct",
+    "days_since_last_rally", "price_change_nd_pct", "price_change_1d_pct",
 )
 
 # Strongest technical signal wins (mirrors rows.ts TECH_RANK).

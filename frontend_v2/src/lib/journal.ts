@@ -87,10 +87,13 @@ export function effectiveCap(rowCap: CapBucket | null, snap?: Snapshot): CapBuck
   return rowCap ?? normalizeCap((snap?.cap_bucket as string) ?? null);
 }
 
+/** "Day %" = previous-session move. Snapshots synced before migration 022
+ *  lack price_change_1d_pct; those fall back to the intraday close-vs-open
+ *  move. Never the 7-day trend (price_change_nd_pct) — that is "Week trend". */
 function dayPct(snap?: Snapshot): number | null {
   if (!snap) return null;
-  const nd = num(snap.price_change_nd_pct as string);
-  if (nd !== null) return nd;
+  const d1 = num(snap.price_change_1d_pct as string);
+  if (d1 !== null) return d1;
   const o = num(snap.open); const c = num(snap.close);
   return o && c ? ((c - o) / o) * 100 : null;
 }

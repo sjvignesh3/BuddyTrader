@@ -87,7 +87,7 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
         "market_cap": None, "cap_bucket": None,
         "pe_current": None, "pb_current": None,
         "revenue_ttm": None, "profit_margin_pct": None,
-        "price_change_nd_pct": None,
+        "price_change_nd_pct": None, "price_change_1d_pct": None,
         "dma_200": None, "below_200dma_pct": None,
         "high_52w": None, "low_52w": None,
         "distance_from_52w_high_pct": None, "distance_from_52w_low_pct": None,
@@ -218,6 +218,14 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
         if margins is not None:
             # yfinance returns a 0..1 fraction; the registry stores percent.
             row["profit_margin_pct"] = round_half_up(margins * Decimal(100), 2)
+
+    # ----- Day: % change vs the previous session (adjusted closes) -----
+    if len(adj_series) > 1:
+        prev = adj_series[-2]
+        curr = adj_series[-1]
+        if prev is not None and prev > 0 and curr is not None:
+            row["price_change_1d_pct"] = round_half_up(
+                (curr - prev) / prev * Decimal(100), 2)
 
     # ----- Trend: % change vs N trading days ago (adjusted closes) -----
     n = inp.trend_days

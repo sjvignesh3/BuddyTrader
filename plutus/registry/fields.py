@@ -252,6 +252,11 @@ _FIELDS: list[Field] = [
     Field("price_change_nd_pct", "daily_snapshots", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.A_DAILY,
           precision=(6, 2), unit="percent",
           formula="(close[today] - close[today - N trading days]) / close[today - N] * 100."),
+    Field("price_change_1d_pct", "daily_snapshots", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.A_DAILY,
+          precision=(10, 2), unit="percent",
+          formula="(adj_close[today] - adj_close[previous session]) / adj_close[previous session] * 100.",
+          notes="The Journal 'Day %' column (migration 022). Before it existed the UI showed "
+                "the 7-day trend under that heading."),
 
     # -- Raw payload for future-proofing --------------------------------
     Field("raw_yf_meta", "daily_snapshots", FieldDType.JSONB, FieldSource.YF_INFO, FieldTier.A_DAILY,

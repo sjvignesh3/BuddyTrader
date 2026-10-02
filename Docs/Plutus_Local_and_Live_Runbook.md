@@ -1525,6 +1525,46 @@ psql "$TARGET_DB" -f restore.sql
 psql "$TARGET_DB" -c "SELECT COUNT(*) FROM daily_snapshots;"
 ```
 
+### 10.5 Personal-data export you own (no psql needed)
+
+The weekly dump above lives in a Storage bucket **inside** the Supabase
+project, so it does not survive the project being paused or deleted. Two
+extra layers were added on 2026-10-02:
+
+1. **GitHub artifact.** The same workflow now attaches each `.sql.gz` to the
+   run as an artifact (90-day retention, GitHub's infrastructure). Download
+   it from Actions -> plutus-weekly-backup -> the run -> Artifacts.
+2. **Local JSON export of the hand-typed tables** - journal, stock notes,
+   sizing plans, expenses, net worth, watchlists and the curated universe
+   (pools + stocks). Market data is excluded on purpose (it re-syncs).
+
+```bash
+# one dated folder per run: UserData/backups/2026-10-02_210000/<table>.json + manifest.json
+python -m plutus.scripts.backup_personal                      # default folder, keeps 12
+python -m plutus.scripts.backup_personal --out "D:/OneDrive/PlutusBackups" --keep 26
+python -m plutus.scripts.backup_personal --tables journal,expenses
+```
+
+Schedule it weekly on Windows so it runs without you (adjust the paths):
+
+```bat
+schtasks /Create /SC WEEKLY /D SUN /ST 21:00 /TN "Plutus personal backup" /TR "cmd /c cd /d D:\Tools\Plutus\BuddyTrader && .venv\Scripts\python.exe -m plutus.scripts.backup_personal --out D:\OneDrive\PlutusBackups --keep 12"
+```
+
+**Restore** into a fresh project (or the local stack): apply migrations
+001..023 there, point `plutus/.env` at it, then
+
+```bash
+python -m plutus.scripts.restore_personal UserData/backups/2026-10-02_210000 --dry-run
+python -m plutus.scripts.restore_personal UserData/backups/2026-10-02_210000 --yes
+```
+
+Rows are upserted in foreign-key order with their original ids, so trades
+keep their opportunities and expenses their categories; the script then
+calls `plutus_reset_sequences()` (migration 023) so new rows do not collide
+with restored ids. Without `--yes` it only prints the target host and the
+row counts. Re-running is safe (idempotent upserts).
+
 ### 10.4 Backup retention
 
 The free Storage tier gives 1 GB. Each gzipped dump is ~20–40 MB. That is ~25–50 backups before you hit the limit. **Manually delete old backups from the Storage UI monthly**, or add a cleanup step to the workflow.

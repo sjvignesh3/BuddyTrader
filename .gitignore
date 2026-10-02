@@ -104,3 +104,6 @@ credentials.json
 .bin/
 *.bak
 *.tmp
+
+# Personal-data JSON backups (plutus.scripts.backup_personal) - never commit
+UserData/backups/
