@@ -1,9 +1,14 @@
 // -----------------------------------------------------------------------------
-// Passbook report — what each payment actually earned, split into three parts:
+// Passbook report — what each payment actually earned. Credited gold splits
+// into four parts, each worked out per payment and only then summed:
 //
-//   exact      payment ÷ rate: the gold the money buys at that day's rate
-//   honest     benefit% × exact: what the scheme promises (inside the window)
-//   rounding   credited − exact × (1 + benefit%): weight and benefit rounded up
+//   exact           payment ÷ rate: the gold the money buys at that day's rate
+//   weight round    credited weight − exact (0.0075988 → 0.008)
+//   honest          benefit% × exact: what the scheme promises (inside the window)
+//   benefit round   credited benefit − honest (0.000532 → 0.001)
+//
+// "rounding" = weight round + benefit round. The honest part is never rounded,
+// so 7% of a day's total equals the sum of 7% of each payment.
 //
 // Rupee values use each payment's own rate, so "₹ gained" means "₹ of gold you
 // got for free on the day you paid". Today's value adds gold price movement on
@@ -23,8 +28,14 @@ export interface TxnInsight {
   honestG: number;
   /** Credited minus exact-with-benefit. Negative = rounding cost you. */
   roundingG: number;
+  /** Credited weight minus exact grams. */
+  weightRoundG: number;
+  /** Credited benefit minus the honest benefit. */
+  benefitRoundG: number;
   honestRs: number;
   roundingRs: number;
+  weightRoundRs: number;
+  benefitRoundRs: number;
   /** Passbook weight and benefit match the rounding rule. */
   ruleMatch: boolean;
   /** Best amount at this payment's rate. */
@@ -42,8 +53,12 @@ export interface GroupStats {
   exactG: number;
   creditedG: number;
   honestG: number;
+  weightRoundG: number;
+  benefitRoundG: number;
   honestRs: number;
   roundingRs: number;
+  weightRoundRs: number;
+  benefitRoundRs: number;
   missedRs: number;
 }
 
@@ -86,6 +101,8 @@ export function analyseTxns(
     const creditedG = txn.totalMg / 1000;
     const honestG = (exactG * bp) / 10000;
     const roundingG = creditedG - exactG - honestG;
+    const weightRoundG = txn.weightMg / 1000 - exactG;
+    const benefitRoundG = roundingG - weightRoundG;   // = credited benefit − honest
     const rateRs = txn.ratePaise / 100;
     const expect = evaluatePayment(txn.amountPaise, txn.ratePaise, bp);
 
@@ -99,8 +116,9 @@ export function analyseTxns(
       if (missedRs < 0.01) missedRs = 0;
     }
     return {
-      txn, benefitBp: bp, exactG, creditedG, honestG, roundingG,
+      txn, benefitBp: bp, exactG, creditedG, honestG, roundingG, weightRoundG, benefitRoundG,
       honestRs: honestG * rateRs, roundingRs: roundingG * rateRs,
+      weightRoundRs: weightRoundG * rateRs, benefitRoundRs: benefitRoundG * rateRs,
       ruleMatch: expect.weightMg === txn.weightMg && expect.benefitMg === txn.benefitMg,
       bestAmountPaise: best?.amountPaise ?? txn.amountPaise,
       missedRs,
@@ -120,7 +138,11 @@ function groupKey(day: string, g: Grouping): { key: string; label: string } {
 }
 
 function emptyStats(key: string, label: string): GroupStats {
-  return { key, label, payments: 0, days: 0, paidRs: 0, exactG: 0, creditedG: 0, honestG: 0, honestRs: 0, roundingRs: 0, missedRs: 0 };
+  return {
+    key, label, payments: 0, days: 0, paidRs: 0, exactG: 0, creditedG: 0,
+    honestG: 0, weightRoundG: 0, benefitRoundG: 0,
+    honestRs: 0, roundingRs: 0, weightRoundRs: 0, benefitRoundRs: 0, missedRs: 0,
+  };
 }
 
 function add(s: GroupStats, i: TxnInsight) {
@@ -129,8 +151,12 @@ function add(s: GroupStats, i: TxnInsight) {
   s.exactG += i.exactG;
   s.creditedG += i.creditedG;
   s.honestG += i.honestG;
+  s.weightRoundG += i.weightRoundG;
+  s.benefitRoundG += i.benefitRoundG;
   s.honestRs += i.honestRs;
   s.roundingRs += i.roundingRs;
+  s.weightRoundRs += i.weightRoundRs;
+  s.benefitRoundRs += i.benefitRoundRs;
   s.missedRs += i.missedRs;
 }
 
@@ -164,19 +190,21 @@ export interface ValueToday {
   priceRs: number;
   honestRs: number;
   roundingRs: number;
+  weightRoundRs: number;
+  benefitRoundRs: number;
 }
 
 export function valueToday(ins: TxnInsight[], todayRatePaise: number): ValueToday {
   const today = todayRatePaise / 100;
-  let valueRs = 0, priceRs = 0, honestRs = 0, roundingRs = 0, paid = 0;
-  for (const i of ins) {
-    valueRs += i.creditedG * today;
-    priceRs += i.creditedG * (today - i.txn.ratePaise / 100);
-    honestRs += i.honestRs;
-    roundingRs += i.roundingRs;
-    paid += i.txn.amountPaise / 100;
-  }
-  return { valueRs, gainRs: valueRs - paid, priceRs, honestRs, roundingRs };
+  const t = totalInsights(ins);
+  let priceRs = 0;
+  for (const i of ins) priceRs += i.creditedG * (today - i.txn.ratePaise / 100);
+  const valueRs = t.creditedG * today;
+  return {
+    valueRs, gainRs: valueRs - t.paidRs, priceRs,
+    honestRs: t.honestRs, roundingRs: t.roundingRs,
+    weightRoundRs: t.weightRoundRs, benefitRoundRs: t.benefitRoundRs,
+  };
 }
 
 export interface Redemption {

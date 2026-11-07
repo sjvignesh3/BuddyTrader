@@ -117,6 +117,26 @@ describe("report", () => {
     expect(ins.every((x) => x.missedRs === 0)).toBe(true);
   });
 
+  it("splits rounding into weight and benefit parts (₹100 at ₹13,160 → 0.008 + 0.001 g)", () => {
+    const [i] = analyseTxns([{
+      ...book.txns[0]!, day: "2026-11-07", when: "2026-11-07T11:41",
+      amountPaise: 10000, ratePaise: 1316000, weightMg: 8, benefitMg: 1, totalMg: 9,
+    }], OPTS, "2026-10-31");
+    expect(i!.honestRs).toBeCloseTo(7.0, 10);                   // 7% of ₹100, never rounded
+    expect(i!.weightRoundRs).toBeCloseTo(0.008 * 13160 - 100, 8); // ₹5.28
+    expect(i!.benefitRoundRs).toBeCloseTo(0.001 * 13160 - 7, 8);  // ₹6.16
+    expect(i!.roundingRs).toBeCloseTo(11.44, 8);
+    expect(i!.honestRs + i!.benefitRoundRs).toBeCloseTo(13.16, 8); // the 0.001 g benefit is worth ₹13.16
+  });
+
+  it("day totals equal the sum of per-payment figures", () => {
+    const day = groupInsights(ins, "day")[0]!;
+    const first = ins.filter((x) => x.txn.day === day.key);
+    const sum = (f: (x: typeof ins[number]) => number) => first.reduce((s, x) => s + f(x), 0);
+    expect(day.honestRs).toBeCloseTo(sum((x) => x.honestRs), 10);
+    expect(day.weightRoundRs + day.benefitRoundRs).toBeCloseTo(day.roundingRs, 10);
+  });
+
   it("prices a missed best amount", () => {
     const worse = analyseTxns([{ ...book.txns[0]!, amountPaise: 11500, weightMg: 9, benefitMg: 1, totalMg: 10 }], OPTS, "2026-10-31");
     expect(worse[0]!.bestAmountPaise).toBe(10900);

@@ -2,6 +2,9 @@
 // Passbook report — drop in GRT passbook PDFs, see what the scheme and the
 // rounding actually earned, per payment / day / week / month.
 //
+// Every figure is worked out per payment (lib/goldPassbookReport.ts) and only
+// then summed, and each panel prints the formula it uses.
+//
 // Files are read in this browser (lib/pdfText.ts) and never uploaded or
 // stored; that is what lets this stay on the public Gold Round-Up page.
 // -----------------------------------------------------------------------------
@@ -21,15 +24,34 @@ import { Field, NumInput, Segmented } from "../journal/ui";
 interface LoadedFile { name: string; book: ParsedPassbook; check: TotalsCheck | null }
 
 const inr = (v: number, d = 0) =>
-  `${v < 0 ? "−" : ""}₹${Math.abs(v).toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+  `${v < -0.004 ? "−" : ""}₹${Math.abs(v).toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 const pct = (f: number, d = 1) => `${(f * 100).toFixed(d)}%`;
 const g3 = (g: number) => `${g.toFixed(3)} g`;
 const fmtFull = (day: string) => `${fmtDay(day)} ${day.slice(0, 4)}`;
+const rate = (paise: number) => inr(paise / 100);
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+// The three gain parts, in the order they appear everywhere.
+const PARTS = [
+  { key: "weight", label: "Weight rounded up", dot: "bg-amber-500" },
+  { key: "honest", label: "7% benefit", dot: "bg-teal-600" },
+  { key: "benefit", label: "Benefit rounded up", dot: "bg-amber-800" },
+] as const;
+
+function partsOf(s: GroupStats) {
+  return [
+    { ...PARTS[0], rs: s.weightRoundRs, g: s.weightRoundG },
+    { ...PARTS[1], rs: s.honestRs, g: s.honestG },
+    { ...PARTS[2], rs: s.benefitRoundRs, g: s.benefitRoundG },
+  ];
+}
+const gainOf = (s: GroupStats) => s.honestRs + s.roundingRs;
+
+function Stat({ label, value, sub, dot }: { label: string; value: string; sub?: string; dot?: string }) {
   return (
     <div className="min-w-0 p-3.5 rounded-xl bg-brand-soft ring-1 ring-brand-border">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-mute">{label}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-mute flex items-center gap-1.5">
+        {dot && <span className={`w-2.5 h-2.5 rounded-sm ${dot}`} aria-hidden />}{label}
+      </div>
       <div className="mt-0.5 text-xl font-semibold tabular-nums">{value}</div>
       {sub && <div className="text-xs text-brand-mute tabular-nums">{sub}</div>}
     </div>
@@ -47,6 +69,32 @@ function Panel({ title, children, aside }: { title: string; children: React.Reac
     </section>
   );
 }
+
+/** How a panel's numbers are calculated. A = payment, R = that day's rate. */
+function Formula({ lines }: { lines: [string, string][] }) {
+  return (
+    <div className="mt-3 p-3 rounded-xl bg-brand-soft ring-1 ring-brand-border text-xs">
+      <div className="font-semibold text-brand-mute uppercase tracking-wide text-[10px] mb-1.5">How it's calculated</div>
+      <dl className="grid sm:grid-cols-[minmax(0,12rem)_1fr] gap-x-4 gap-y-1">
+        {lines.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="font-semibold">{k}</dt>
+            <dd className="font-mono text-[11.5px] text-brand-text/80 break-words">{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+const PER_PAYMENT_FORMULAS: [string, string][] = [
+  ["Exact gold E", "A ÷ R"],
+  ["Weight rounded up", "(credited weight − E) × R"],
+  ["7% benefit", "7% × A   (= 7% × E × R; never rounded)"],
+  ["Benefit rounded up", "(credited benefit − 7% × E) × R"],
+  ["Total gain", "(credited weight + credited benefit) × R − A"],
+  ["Each %", "that ₹ ÷ A paid"],
+];
 
 export default function PassbookReport({ ratePaise, opts }: { ratePaise: number | null; opts: RoundupOptions }) {
   const [files, setFiles] = useState<LoadedFile[]>([]);
@@ -89,6 +137,7 @@ export default function PassbookReport({ ratePaise, opts }: { ratePaise: number 
   const groups = useMemo(() => groupInsights(ins, grouping), [ins, grouping]);
   const members = new Set(files.map((f) => f.book.membershipNo).filter(Boolean));
   const skipped = merged.txns.length - ins.length;
+  const latest = ins[ins.length - 1];
 
   return (
     <div className="space-y-5">
@@ -133,22 +182,13 @@ export default function PassbookReport({ ratePaise, opts }: { ratePaise: number 
         )}
       </Panel>
 
-      {ins.length > 0 && (
+      {ins.length > 0 && latest && (
         <>
           <Checks total={total} ins={ins} duplicates={merged.duplicates} skipped={skipped}
-                  members={members.size} first={ins[0]!.txn.day} last={ins[ins.length - 1]!.txn.day} />
+                  members={members.size} first={ins[0]!.txn.day} last={latest.txn.day} />
 
-          <Panel title="What you've gained">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <Stat label="Paid" value={inr(total.paidRs)} sub={`${total.payments} payments · ${total.days} days`} />
-              <Stat label="Gold credited" value={g3(total.creditedG)} sub={`money alone buys ${g3(total.exactG)}`} />
-              <Stat label="Gained from the scheme" value={inr(total.honestRs + total.roundingRs)}
-                    sub={`${pct(pctOfPaid(total.honestRs + total.roundingRs, total))} of what you paid`} />
-              <Stat label="Rounding per payment" value={inr(total.roundingRs / total.payments, 2)}
-                    sub={`${pct(pctOfPaid(total.roundingRs, total))} of each payment`} />
-            </div>
-            <Composition total={total} />
-          </Panel>
+          <GainedPanel total={total} />
+          <WorkedExample i={latest} />
 
           {ratePaise !== null && <ValuePanel ins={ins} total={total} ratePaise={ratePaise}
                                              making={making} setMaking={setMaking} gst={gst} setGst={setGst} />}
@@ -161,6 +201,12 @@ export default function PassbookReport({ ratePaise, opts }: { ratePaise: number 
               options={[{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }]} />
           }>
             <PeriodTable groups={groups} total={total} />
+            <Formula lines={[
+              ...PER_PAYMENT_FORMULAS.slice(1, 5),
+              ["Period row", "each column = sum of that column over the period's payments"],
+              ["Each %", "that ₹ ÷ Paid in the period"],
+              ["Gain / payment", "Total gain ₹ ÷ Payments"],
+            ]} />
           </Panel>
 
           <TxnTable ins={ins} />
@@ -209,29 +255,103 @@ function Checks({ total, ins, duplicates, skipped, members, first, last }: {
   );
 }
 
-function Composition({ total }: { total: GroupStats }) {
-  const parts = [
-    { label: "Your money buys", g: total.exactG, cls: "bg-brand-mute/40" },
-    { label: "Honest benefit", g: total.honestG, cls: "bg-teal-600" },
-    { label: "Rounding extra", g: total.creditedG - total.exactG - total.honestG, cls: "bg-brand-gold" },
+function GainedPanel({ total }: { total: GroupStats }) {
+  const parts = partsOf(total);
+  const gain = gainOf(total);
+  const bar = [{ key: "money", label: "Your money buys", dot: "bg-brand-mute/40", g: total.exactG, rs: total.paidRs }, ...parts];
+  return (
+    <Panel title="What you've gained">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Stat label="Paid" value={inr(total.paidRs)} sub={`${total.payments} payments · ${total.days} days`} />
+        <Stat label="Gold credited" value={g3(total.creditedG)} sub={`money alone buys ${g3(total.exactG)}`} />
+        <Stat label="Total gain" value={inr(gain, 2)} sub={`${pct(pctOfPaid(gain, total), 2)} of what you paid`} />
+        <Stat label="Gain per payment" value={inr(gain / total.payments, 2)} sub={`of which rounding ${inr(total.roundingRs / total.payments, 2)}`} />
+      </div>
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {parts.map((p) => (
+          <Stat key={p.key} dot={p.dot} label={p.label} value={inr(p.rs, 2)}
+                sub={`${pct(pctOfPaid(p.rs, total), 2)} of paid · ${inr(p.rs / total.payments, 2)} per payment`} />
+        ))}
+      </div>
+
+      <div className="mt-4">
+        <div className="flex h-3.5 rounded-full overflow-hidden ring-1 ring-brand-border" aria-hidden>
+          {bar.map((p) => (
+            <div key={p.key} className={p.dot} style={{ width: `${Math.max(0, (p.g / total.creditedG) * 100)}%` }} />
+          ))}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
+          {bar.map((p) => (
+            <span key={p.key} className="inline-flex items-center gap-1.5 tabular-nums">
+              <span className={`w-2.5 h-2.5 rounded-sm ${p.dot}`} aria-hidden />
+              {p.label} <span className="font-semibold">{p.g.toFixed(4)} g</span>
+              <span className="text-brand-mute">({pct(p.g / total.creditedG)} of your gold)</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <Formula lines={[
+        ...PER_PAYMENT_FORMULAS,
+        ["Totals above", "sum of each payment's figure, worked out one payment at a time"],
+        ["Gold credited", `Σ passbook Total Wt = ${g3(total.creditedG)}`],
+        ["Check", `${inr(total.paidRs, 2)} + ${inr(total.weightRoundRs, 2)} + ${inr(total.honestRs, 2)} + ${inr(total.benefitRoundRs, 2)} = credited gold at each day's rate`],
+      ]} />
+    </Panel>
+  );
+}
+
+/** The latest payment, step by step — the same arithmetic every row uses. */
+function WorkedExample({ i }: { i: TxnInsight }) {
+  const t = i.txn;
+  const A = t.amountPaise / 100;
+  const R = t.ratePaise / 100;
+  const W = t.weightMg / 1000;
+  const B = t.benefitMg / 1000;
+  const bpPct = i.benefitBp / 100;
+  const rows: { step: string; formula: string; grams: string; rs: string; strong?: boolean }[] = [
+    { step: "Your money buys exactly", formula: `${A} ÷ ${R}`, grams: i.exactG.toFixed(7), rs: inr(A, 2) },
+    { step: "Credited weight (passbook)", formula: "rounded to 0.001 g", grams: W.toFixed(3), rs: inr(W * R, 2) },
+    { step: "Weight rounded up", formula: `(${W.toFixed(3)} − ${i.exactG.toFixed(7)}) × ${R}`, grams: i.weightRoundG.toFixed(7), rs: inr(i.weightRoundRs, 2), strong: true },
+    { step: `${bpPct}% benefit, exact`, formula: `${bpPct}% × ${i.exactG.toFixed(7)}`, grams: i.honestG.toFixed(7), rs: inr(i.honestRs, 2), strong: true },
+    { step: "Credited benefit (passbook)", formula: "rounded to 0.001 g", grams: B.toFixed(3), rs: inr(B * R, 2) },
+    { step: "Benefit rounded up", formula: `(${B.toFixed(3)} − ${i.honestG.toFixed(7)}) × ${R}`, grams: i.benefitRoundG.toFixed(7), rs: inr(i.benefitRoundRs, 2), strong: true },
+    { step: "Total gain", formula: `(${W.toFixed(3)} + ${B.toFixed(3)}) × ${R} − ${A}`, grams: (i.creditedG - i.exactG).toFixed(7), rs: inr(i.honestRs + i.roundingRs, 2), strong: true },
   ];
   return (
-    <div className="mt-4">
-      <div className="flex h-3.5 rounded-full overflow-hidden ring-1 ring-brand-border" aria-hidden>
-        {parts.map((p) => (
-          <div key={p.label} className={p.cls} style={{ width: `${Math.max(0, (p.g / total.creditedG) * 100)}%` }} />
-        ))}
+    <Panel title={`Worked example: your latest payment (${fmtDay(t.day)} ${t.when.slice(11)})`}>
+      <p className="text-sm text-brand-mute -mt-1 mb-3 tabular-nums">
+        {inr(A, A % 1 ? 2 : 0)} at {rate(t.ratePaise)}/g, credited {W.toFixed(3)} g + {B.toFixed(3)} g benefit.
+      </p>
+      <div className="overflow-x-auto -mx-1">
+        <table className="min-w-full text-[13px] tabular-nums">
+          <thead>
+            <tr className="text-[10px] font-bold uppercase tracking-wider text-brand-mute">
+              <th className="px-2 py-2 text-left">Step</th>
+              <th className="px-2 py-2 text-left">Formula</th>
+              <th className="px-2 py-2 text-right">Grams</th>
+              <th className="px-2 py-2 text-right">₹ at {rate(t.ratePaise)}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.step} className={`border-t border-brand-border ${r.strong ? "font-semibold" : ""}`}>
+                <td className="px-2 py-1.5 whitespace-nowrap">{r.step}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[12px] text-brand-mute">{r.formula}</td>
+                <td className="px-2 py-1.5 text-right">{r.grams}</td>
+                <td className="px-2 py-1.5 text-right">{r.rs}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-        {parts.map((p) => (
-          <span key={p.label} className="inline-flex items-center gap-1.5 tabular-nums">
-            <span className={`w-2.5 h-2.5 rounded-sm ${p.cls}`} aria-hidden />
-            {p.label} <span className="font-semibold">{g3(p.g)}</span>
-            <span className="text-brand-mute">({pct(p.g / total.creditedG)} of your gold)</span>
-          </span>
-        ))}
-      </div>
-    </div>
+      <p className="mt-3 text-sm tabular-nums">
+        {inr(i.weightRoundRs, 2)} weight rounded up + {inr(i.honestRs, 2)} {bpPct}% benefit + {inr(i.benefitRoundRs, 2)} benefit
+        rounded up = <span className="font-semibold">{inr(i.honestRs + i.roundingRs, 2)}</span> gain
+        ({pct((i.honestRs + i.roundingRs) / A, 2)} of {inr(A, A % 1 ? 2 : 0)}). The {B.toFixed(3)} g benefit you got is
+        worth {inr(B * R, 2)}: the {inr(i.honestRs, 2)} promised plus {inr(i.benefitRoundRs, 2)} from rounding.
+      </p>
+    </Panel>
   );
 }
 
@@ -243,18 +363,20 @@ function ValuePanel({ ins, total, ratePaise, making, setMaking, gst, setGst }: {
   const r = redemption(v, total.paidRs, Number(making) || 0, Number(gst) || 0);
   const rows: [string, number][] = [
     ["Gold price movement", v.priceRs],
-    ["Honest benefit", v.honestRs],
-    ["Rounding extra", v.roundingRs],
+    ["Weight rounded up", v.weightRoundRs],
+    ["7% benefit", v.honestRs],
+    ["Benefit rounded up", v.benefitRoundRs],
   ];
+  const T = ratePaise / 100;
   return (
-    <Panel title={`Worth today at ${inr(ratePaise / 100)}/g`}>
+    <Panel title={`Worth today at ${rate(ratePaise)}/g`}>
       <div className="grid sm:grid-cols-2 gap-5">
         <div>
           <div className="text-3xl font-display font-bold tabular-nums">{inr(v.valueRs)}</div>
           <div className="text-sm text-brand-mute tabular-nums">
             for {inr(total.paidRs)} paid · gain{" "}
             <span className={v.gainRs >= 0 ? "text-emerald-700 font-semibold" : "text-brand-danger font-semibold"}>
-              {inr(v.gainRs)} ({pct(v.gainRs / total.paidRs)})
+              {inr(v.gainRs, 2)} ({pct(v.gainRs / total.paidRs)})
             </span>
           </div>
           <table className="mt-3 w-full text-sm tabular-nums">
@@ -262,10 +384,15 @@ function ValuePanel({ ins, total, ratePaise, making, setMaking, gst, setGst }: {
               {rows.map(([label, rs]) => (
                 <tr key={label} className="border-t border-brand-border">
                   <td className="py-1.5">{label}</td>
-                  <td className={`py-1.5 text-right ${rs < 0 ? "text-brand-danger" : ""}`}>{inr(rs)}</td>
+                  <td className={`py-1.5 text-right ${rs < 0 ? "text-brand-danger" : ""}`}>{inr(rs, 2)}</td>
                   <td className="py-1.5 text-right text-brand-mute w-16">{pct(rs / total.paidRs)}</td>
                 </tr>
               ))}
+              <tr className="border-t border-brand-border font-semibold">
+                <td className="py-1.5">Total gain</td>
+                <td className="py-1.5 text-right">{inr(v.gainRs, 2)}</td>
+                <td className="py-1.5 text-right w-16">{pct(v.gainRs / total.paidRs)}</td>
+              </tr>
             </tbody>
           </table>
           <p className="mt-2 text-xs text-brand-mute">Uses the gold rate typed in the calculator.</p>
@@ -281,16 +408,25 @@ function ValuePanel({ ins, total, ratePaise, making, setMaking, gst, setGst }: {
             </Field>
           </div>
           <div className="mt-3 text-sm tabular-nums space-y-1">
-            <div>You pay about <span className="font-semibold">{inr(r.costRs)}</span> more at redemption.</div>
+            <div>You pay about <span className="font-semibold">{inr(r.costRs, 2)}</span> more at redemption.</div>
             <div>
               Net gain{" "}
               <span className={r.netGainRs >= 0 ? "text-emerald-700 font-semibold" : "text-brand-danger font-semibold"}>
-                {inr(r.netGainRs)} ({pct(r.netGainRs / total.paidRs)} of what you paid)
+                {inr(r.netGainRs, 2)} ({pct(r.netGainRs / total.paidRs)} of what you paid)
               </span>
             </div>
           </div>
         </div>
       </div>
+      <Formula lines={[
+        ["Worth today", `gold credited × today's rate = ${g3(total.creditedG)} × ${inr(T)}`],
+        ["Gold price movement", "Σ credited grams × (today's rate − that day's rate R)"],
+        ["Rounding and benefit rows", "valued at each payment's own rate R, as in the tables"],
+        ["Total gain", "worth today − paid = sum of the four rows above"],
+        ["Making charge", `making % × worth today`],
+        ["GST", "GST % × (worth today + making charge)"],
+        ["Net gain", "total gain − making charge − GST"],
+      ]} />
     </Panel>
   );
 }
@@ -320,7 +456,7 @@ function WindowPanel({ ins, start, firstDay, onStart }: {
             {w.left > 0 && (
               <> Keeping that pace for the remaining {w.left} days adds about{" "}
                 <span className="font-semibold tabular-nums">{inr(w.projectedPaidRs)}</span>, earning about{" "}
-                <span className="font-semibold tabular-nums text-emerald-700">{inr(w.projectedHonestRs)}</span> honest benefit and{" "}
+                <span className="font-semibold tabular-nums text-emerald-700">{inr(w.projectedHonestRs)}</span> from the 7% benefit and{" "}
                 <span className="font-semibold tabular-nums text-emerald-700">{inr(w.projectedRoundingRs)}</span> from rounding.</>
             )}
           </p>
@@ -331,44 +467,55 @@ function WindowPanel({ ins, start, firstDay, onStart }: {
           )}
         </div>
       </div>
+      <Formula lines={[
+        ["Day n", "days from the start date to today, counting both"],
+        ["Average a day", "paid inside the window ÷ days so far (days with no payment count too)"],
+        ["Adds about", "average a day × days left"],
+        ["Earning about", "adds about × your 7% share so far, and × your rounding % so far"],
+      ]} />
     </Panel>
   );
 }
 
+const thCls = "px-2 py-1.5 whitespace-nowrap";
+
 function PeriodTable({ groups, total }: { groups: GroupStats[]; total: GroupStats }) {
-  const maxPct = Math.max(...groups.map((g) => pctOfPaid(g.honestRs + g.roundingRs, g)), 0.0001);
   const row = (g: GroupStats, isTotal = false) => {
-    const totalPct = pctOfPaid(g.honestRs + g.roundingRs, g);
+    const gain = gainOf(g);
     return (
       <tr key={g.key} className={`border-t border-brand-border ${isTotal ? "font-semibold bg-brand-soft" : ""}`}>
         <td className="px-2 py-1.5 whitespace-nowrap">{isTotal ? "Total" : g.label}</td>
         <td className="px-2 py-1.5 text-right">{g.payments}</td>
         <td className="px-2 py-1.5 text-right">{inr(g.paidRs)}</td>
         <td className="px-2 py-1.5 text-right">{g3(g.creditedG)}</td>
-        <td className="px-2 py-1.5 text-right">{inr(g.honestRs)}</td>
-        <td className="px-2 py-1.5 text-right">{inr(g.roundingRs)}</td>
-        <td className="px-2 py-1.5 text-right">{pct(pctOfPaid(g.roundingRs, g))}</td>
-        <td className="px-2 py-1.5 text-right">{inr(g.roundingRs / g.payments, 2)}</td>
-        <td className="px-2 py-1.5">
-          <div className="flex items-center justify-end gap-2">
-            {!isTotal && (
-              <div className="w-16 h-1.5 rounded-full bg-brand-soft overflow-hidden" aria-hidden>
-                <div className="h-full bg-brand-gold" style={{ width: `${(totalPct / maxPct) * 100}%` }} />
-              </div>
-            )}
-            <span>{pct(totalPct)}</span>
-          </div>
-        </td>
+        {partsOf(g).map((p) => (
+          <FragmentCells key={p.key} rs={p.rs} share={pctOfPaid(p.rs, g)} />
+        ))}
+        <FragmentCells rs={gain} share={pctOfPaid(gain, g)} strong />
+        <td className="px-2 py-1.5 text-right">{inr(gain / g.payments, 2)}</td>
       </tr>
     );
   };
   return (
     <div className="overflow-x-auto -mx-1">
       <table className="min-w-full text-[13px] tabular-nums">
-        <thead>
-          <tr className="text-[10px] font-bold uppercase tracking-wider text-brand-mute">
-            {["Period", "Payments", "Paid", "Credited", "Honest ₹", "Rounding ₹", "Rounding %", "Rounding / pay", "Total gain"].map((h, i) => (
-              <th key={h} className={`px-2 py-2 whitespace-nowrap ${i ? "text-right" : "text-left"}`}>{h}</th>
+        <thead className="text-[10px] font-bold uppercase tracking-wider text-brand-mute">
+          <tr>
+            <th rowSpan={2} className={`${thCls} text-left align-bottom`}>Period</th>
+            <th rowSpan={2} className={`${thCls} text-right align-bottom`}>Payments</th>
+            <th rowSpan={2} className={`${thCls} text-right align-bottom`}>Paid</th>
+            <th rowSpan={2} className={`${thCls} text-right align-bottom`}>Credited</th>
+            {PARTS.map((p) => (
+              <th key={p.key} colSpan={2} className={`${thCls} text-center border-l border-brand-border`}>
+                <span className={`inline-block w-2 h-2 rounded-sm mr-1 ${p.dot}`} aria-hidden />{p.label}
+              </th>
+            ))}
+            <th colSpan={2} className={`${thCls} text-center border-l border-brand-border text-brand-text`}>Total gain</th>
+            <th rowSpan={2} className={`${thCls} text-right align-bottom border-l border-brand-border`}>Gain / payment</th>
+          </tr>
+          <tr>
+            {[...PARTS, { key: "total" }].map((p) => (
+              <SubHeads key={p.key} />
             ))}
           </tr>
         </thead>
@@ -378,6 +525,26 @@ function PeriodTable({ groups, total }: { groups: GroupStats[]; total: GroupStat
         </tbody>
       </table>
     </div>
+  );
+}
+
+function SubHeads() {
+  return (
+    <>
+      <th className={`${thCls} text-right border-l border-brand-border`}>₹</th>
+      <th className={`${thCls} text-right`}>%</th>
+    </>
+  );
+}
+
+function FragmentCells({ rs, share, strong = false }: { rs: number; share: number; strong?: boolean }) {
+  return (
+    <>
+      <td className={`px-2 py-1.5 text-right border-l border-brand-border ${strong ? "font-semibold" : ""} ${rs < -0.004 ? "text-brand-danger" : ""}`}>
+        {inr(rs, 2)}
+      </td>
+      <td className={`px-2 py-1.5 text-right ${strong ? "font-semibold" : "text-brand-mute"}`}>{pct(share, 2)}</td>
+    </>
   );
 }
 
@@ -392,38 +559,55 @@ function TxnTable({ ins }: { ins: TxnInsight[] }) {
           <span className="hidden group-open:inline">hide</span>
         </span>
       </summary>
-      <div className="overflow-x-auto px-3 pb-4">
-        <table className="min-w-full text-[13px] tabular-nums">
-          <thead>
-            <tr className="text-[10px] font-bold uppercase tracking-wider text-brand-mute">
-              {["When", "Paid", "Rate", "Exact", "Credited", "Honest ₹", "Rounding ₹", "Rounding %", "Note"].map((h, i) => (
-                <th key={h} className={`px-2 py-2 whitespace-nowrap ${i && i < 8 ? "text-right" : "text-left"}`}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[...ins].reverse().map((i) => {
-              const t = i.txn;
-              const note = !i.ruleMatch ? "Doesn't match the rounding rule"
-                : i.roundingG < 0 ? "Rounded down"
-                : i.missedRs > 0 ? `Best was ₹${i.bestAmountPaise / 100} (missed ${inr(i.missedRs, 2)})`
-                : "";
-              return (
-                <tr key={t.tranNo || `${t.when}-${t.sno}`} className="border-t border-brand-border">
-                  <td className="px-2 py-1.5 whitespace-nowrap">{fmtDay(t.day)} {t.when.slice(11)}</td>
-                  <td className="px-2 py-1.5 text-right">{inr(t.amountPaise / 100, t.amountPaise % 100 ? 2 : 0)}</td>
-                  <td className="px-2 py-1.5 text-right">{inr(t.ratePaise / 100)}</td>
-                  <td className="px-2 py-1.5 text-right">{i.exactG.toFixed(5)}</td>
-                  <td className="px-2 py-1.5 text-right">{(t.weightMg / 1000).toFixed(3)} + {(t.benefitMg / 1000).toFixed(3)}</td>
-                  <td className="px-2 py-1.5 text-right">{inr(i.honestRs, 2)}</td>
-                  <td className={`px-2 py-1.5 text-right ${i.roundingRs < 0 ? "text-brand-danger" : ""}`}>{inr(i.roundingRs, 2)}</td>
-                  <td className="px-2 py-1.5 text-right">{pct(i.roundingRs / (t.amountPaise / 100))}</td>
-                  <td className={`px-2 py-1.5 whitespace-nowrap ${note ? "text-amber-800 font-medium" : ""}`}>{note}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="px-3 pb-4">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-[13px] tabular-nums">
+            <thead className="text-[10px] font-bold uppercase tracking-wider text-brand-mute">
+              <tr>
+                {["When", "Paid A", "Rate R", "Exact E", "Weight", "Benefit"].map((h, idx) => (
+                  <th key={h} rowSpan={2} className={`${thCls} align-bottom ${idx ? "text-right" : "text-left"}`}>{h}</th>
+                ))}
+                {PARTS.map((p) => (
+                  <th key={p.key} colSpan={2} className={`${thCls} text-center border-l border-brand-border`}>
+                    <span className={`inline-block w-2 h-2 rounded-sm mr-1 ${p.dot}`} aria-hidden />{p.label}
+                  </th>
+                ))}
+                <th colSpan={2} className={`${thCls} text-center border-l border-brand-border text-brand-text`}>Total gain</th>
+                <th rowSpan={2} className={`${thCls} text-left align-bottom border-l border-brand-border`}>Note</th>
+              </tr>
+              <tr>
+                {[...PARTS, { key: "total" }].map((p) => <SubHeads key={p.key} />)}
+              </tr>
+            </thead>
+            <tbody>
+              {[...ins].reverse().map((i) => {
+                const t = i.txn;
+                const A = t.amountPaise / 100;
+                const note = !i.ruleMatch ? "Doesn't match the rounding rule"
+                  : i.roundingG < 0 ? "Rounded down"
+                  : i.missedRs > 0 ? `Best was ₹${i.bestAmountPaise / 100} (missed ${inr(i.missedRs, 2)})`
+                  : "";
+                const gain = i.honestRs + i.roundingRs;
+                return (
+                  <tr key={t.tranNo || `${t.when}-${t.sno}`} className="border-t border-brand-border">
+                    <td className="px-2 py-1.5 whitespace-nowrap">{fmtDay(t.day)} {t.when.slice(11)}</td>
+                    <td className="px-2 py-1.5 text-right">{inr(A, A % 1 ? 2 : 0)}</td>
+                    <td className="px-2 py-1.5 text-right">{rate(t.ratePaise)}</td>
+                    <td className="px-2 py-1.5 text-right">{i.exactG.toFixed(5)}</td>
+                    <td className="px-2 py-1.5 text-right">{(t.weightMg / 1000).toFixed(3)}</td>
+                    <td className="px-2 py-1.5 text-right">{(t.benefitMg / 1000).toFixed(3)}</td>
+                    <FragmentCells rs={i.weightRoundRs} share={i.weightRoundRs / A} />
+                    <FragmentCells rs={i.honestRs} share={i.honestRs / A} />
+                    <FragmentCells rs={i.benefitRoundRs} share={i.benefitRoundRs / A} />
+                    <FragmentCells rs={gain} share={gain / A} strong />
+                    <td className={`px-2 py-1.5 whitespace-nowrap border-l border-brand-border ${note ? "text-amber-800 font-medium" : ""}`}>{note}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <Formula lines={[...PER_PAYMENT_FORMULAS, ["Weight, Benefit", "grams credited, read straight from the passbook"]]} />
       </div>
     </details>
   );
