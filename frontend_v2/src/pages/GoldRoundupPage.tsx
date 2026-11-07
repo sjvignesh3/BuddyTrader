@@ -6,12 +6,18 @@
 // Public on purpose (see App.tsx): it is pure arithmetic in lib/goldRoundup.ts,
 // reads no API and no personal data, so it sits outside the password gate and
 // can be shared by link. Only the last rate typed is kept, in this browser.
+// The Passbook report tab reads GRT passbook PDFs in the browser too — the
+// file is never sent anywhere (components/goldRoundup/PassbookReport.tsx).
 // -----------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from "react";
 import {
   evaluatePayment, planPayments, splitBudget, topOptions, type PaymentResult,
 } from "../lib/goldRoundup";
-import { Field, NumInput } from "../components/journal/ui";
+import { Field, NumInput, Segmented } from "../components/journal/ui";
+import PassbookReport from "../components/goldRoundup/PassbookReport";
+
+type Tab = "calculator" | "report";
+const tabFromHash = (): Tab => (typeof location !== "undefined" && location.hash === "#report" ? "report" : "calculator");
 
 const RATE_KEY = "plutus.goldRoundup.rate";
 const EXAMPLE_RATE = "13150";   // last rate in the GRT passbook, 6 Nov 2026
@@ -87,6 +93,13 @@ export default function GoldRoundupPage() {
   const [testAmt, setTestAmt] = useState("109");
   const [testRate, setTestRate] = useState("");
   const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<Tab>(tabFromHash);
+
+  // /gold-roundup#report opens straight on the report, so that view can be linked.
+  function changeTab(t: Tab) {
+    setTab(t);
+    history.replaceState(null, "", t === "report" ? "#report" : location.pathname + location.search);
+  }
 
   const ratePaise = toPaise(rate);
   const rateOk = ratePaise !== null && ratePaise >= 100_000;   // ₹1,000/g floor guards typos
@@ -125,6 +138,10 @@ export default function GoldRoundupPage() {
           Type today's gold rate. It finds the payment the plan rounds up to the most gold
           per rupee, and shows what you gain over a normal purchase.
         </p>
+        <div className="mt-4">
+          <Segmented<Tab> ariaLabel="View" value={tab} onChange={changeTab}
+            options={[{ value: "calculator", label: "Calculator" }, { value: "report", label: "Passbook report" }]} />
+        </div>
       </div>
 
       <Card>
@@ -155,6 +172,13 @@ export default function GoldRoundupPage() {
           </p>
         )}
       </Card>
+
+      {/* Kept mounted while hidden so an uploaded passbook survives a tab switch. */}
+      <div hidden={tab !== "report"}>
+        <PassbookReport ratePaise={rateOk ? ratePaise : null} opts={opts} />
+      </div>
+
+      <div hidden={tab !== "calculator"} className="space-y-5">
 
       {!rateOk || !best ? (
         <Card><p className="text-sm text-brand-danger font-semibold">Enter the gold rate per gram, for example 13150.</p></Card>
@@ -219,6 +243,7 @@ export default function GoldRoundupPage() {
           If the plan ever recalculates from rupees paid, this extra is what goes away; the gold
           and benefit for the money paid stay.
         </p>
+      </div>
       </div>
     </div>
   );
