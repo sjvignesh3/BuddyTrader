@@ -105,6 +105,64 @@ export interface Position {
   lots: number;
 }
 
+// ---- IPO journal ---------------------------------------------------------------
+
+export type IpoStatus = "APPLIED" | "ALLOTTED" | "NOT_ALLOTTED";
+
+/** One sell of allotted IPO shares; partial exits are several of these. */
+export interface IpoSell {
+  id: number;
+  ipo_id: number;
+  sell_date: string;
+  sell_price: string;
+  qty: number;
+  notes: string | null;
+}
+
+/** One IPO application (per account), with its sells. */
+export interface Ipo {
+  id: number;
+  account: string;
+  ipo_name: string;
+  /** Plain NSE symbol — known from listing day. */
+  symbol: string | null;
+  apply_date: string;
+  issue_price: string;
+  lot_size: number;
+  lots_applied: number;
+  status: IpoStatus;
+  /** Day shares were credited / money refunded. */
+  allotment_date: string | null;
+  shares_allotted: number | null;
+  listing_date: string | null;
+  listing_open: string | null;
+  listing_close: string | null;
+  notes: string | null;
+  sells: IpoSell[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type IpoDraft = Partial<{
+  account: string; ipo_name: string; symbol: string | null; apply_date: string;
+  issue_price: string; lot_size: number; lots_applied: number; status: IpoStatus;
+  allotment_date: string | null; shares_allotted: number | null;
+  listing_date: string | null; listing_open: string | null; listing_close: string | null;
+  notes: string | null;
+}>;
+export type IpoSellDraft = Partial<Pick<IpoSell, "sell_date" | "sell_price" | "qty" | "notes">>;
+
+/** Listing-day prices looked up from market data (not saved until you save). */
+export interface IpoListing {
+  symbol: string;
+  listing_date: string;
+  listing_open: string;
+  /** Null while the listing day is still trading. */
+  listing_close: string | null;
+  ltp: string;
+  ltp_date: string;
+}
+
 /** Editable payloads (id/status timestamps excluded). */
 export type OpportunityDraft = Partial<Omit<Opportunity, "id" | "created_at" | "updated_at">>;
 export type TradeDraft = Partial<Omit<Trade, "id" | "created_at" | "updated_at">>;
@@ -160,6 +218,25 @@ export const journalApi = {
     send<{ note: StockNote }>("PUT", `/api/journal/notes/${id}`, draft),
   deleteNote: (id: number) =>
     send<{ deleted: number }>("DELETE", `/api/journal/notes/${id}`),
+
+  ipos: () => send<{ ipos: Ipo[]; count: number }>("GET", "/api/journal/ipos"),
+  createIpo: (draft: IpoDraft) => send<{ ipo: Ipo }>("POST", "/api/journal/ipos", draft),
+  updateIpo: (id: number, draft: IpoDraft) =>
+    send<{ ipo: Ipo }>("PUT", `/api/journal/ipos/${id}`, draft),
+  deleteIpo: (id: number) => send<{ deleted: number }>("DELETE", `/api/journal/ipos/${id}`),
+  addIpoSell: (ipoId: number, draft: IpoSellDraft) =>
+    send<{ ipo: Ipo }>("POST", `/api/journal/ipos/${ipoId}/sells`, draft),
+  updateIpoSell: (sellId: number, draft: IpoSellDraft) =>
+    send<{ ipo: Ipo }>("PUT", `/api/journal/ipos/sells/${sellId}`, draft),
+  deleteIpoSell: (sellId: number) =>
+    send<{ ipo: Ipo }>("DELETE", `/api/journal/ipos/sells/${sellId}`),
+  /** Listing-day prices from market data; `applyDate` guards a wrong symbol. */
+  ipoListing: (symbol: string, applyDate?: string) =>
+    send<IpoListing>("GET", `/api/journal/ipos/listing?symbol=${encodeURIComponent(symbol)}${
+      applyDate ? `&apply_date=${applyDate}` : ""}`),
+  ipoQuotes: (symbols: string[]) =>
+    send<{ quotes: Record<string, { ltp: string; date: string }>; errors: Record<string, string> }>(
+      "GET", `/api/journal/ipos/quotes?symbols=${encodeURIComponent(symbols.join(","))}`),
 
   bulkImport: (payload: { opportunities?: OpportunityDraft[]; trades?: TradeDraft[] }) =>
     send<{ imported: { opportunities: number; trades: number } }>(

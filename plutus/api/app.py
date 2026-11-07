@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def create_app(*, supabase_client: Optional[Any] = None,
-               fetch_info: Optional[Any] = None) -> Any:
+               fetch_info: Optional[Any] = None,
+               fetch_daily: Optional[Any] = None) -> Any:
     """
     Build a FastAPI app instance.
 
@@ -52,6 +53,8 @@ def create_app(*, supabase_client: Optional[Any] = None,
     # Universe paste flow: symbol -> Result[dict] (yfinance .info). Tests
     # inject a fake so the suite stays offline.
     app.state.fetch_info = fetch_info
+    # IPO journal: (plain symbol, period) -> Result[list[bar]] daily candles.
+    app.state.fetch_daily = fetch_daily
 
     def cli() -> Any:
         return app.state.supabase_client
@@ -290,6 +293,10 @@ def create_app(*, supabase_client: Optional[Any] = None,
     # -- Trading Journal (writable; personal tool) ---------------------------
     from plutus.api.journal import register_journal_routes
     register_journal_routes(app, cli)
+
+    # -- IPO journal (writable; applications, sells, listing-day fetch) -------
+    from plutus.api.ipo import register_ipo_routes
+    register_ipo_routes(app, cli, fetch_daily=app.state.fetch_daily)
 
     # -- Expense Tracker (writable; personal tool) ----------------------------
     from plutus.api.expenses import register_expense_routes

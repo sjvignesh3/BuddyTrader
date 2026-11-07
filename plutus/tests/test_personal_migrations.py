@@ -29,6 +29,7 @@ FILES = {
                           "networth_income", "networth_milestones", "networth_settings"],
     "019_universe.sql": ["universe_syncs"],
     "020_watchlists.sql": ["watchlists"],
+    "024_ipo_journal.sql": ["ipo_applications", "ipo_sells"],
 }
 
 
@@ -103,6 +104,8 @@ class TestPersonalMigrations:
             "017_net_worth.sql": ["current_value", "cost_basis", "outstanding", "emi",
                                   "equity_value", "assets_value", "liabilities_value",
                                   "net_worth", "amount", "target", "ff_target_corpus"],
+            "024_ipo_journal.sql": ["issue_price", "listing_open", "listing_close",
+                                    "sell_price"],
         }
         for name, cols in money_cols.items():
             for col in cols:
@@ -124,7 +127,8 @@ class TestPersonalMigrations:
 
     def test_readme_lists_new_migrations(self):
         readme = (MIGRATIONS / "README.md").read_text(encoding="utf-8")
-        for name in ("015_expenses.sql", "016_sizing_plans.sql", "017_net_worth.sql"):
+        for name in ("015_expenses.sql", "016_sizing_plans.sql", "017_net_worth.sql",
+                     "024_ipo_journal.sql"):
             assert name in readme, f"migrations/README.md must list {name}"
 
     def test_017_evolves_the_asset_class_constraint_idempotently(self, sqls):

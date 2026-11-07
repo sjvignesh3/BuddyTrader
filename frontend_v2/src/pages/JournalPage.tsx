@@ -21,19 +21,21 @@ import OpportunitiesTab from "../components/journal/OpportunitiesTab";
 import OpenTradesTab, { type OpenFocus } from "../components/journal/OpenTradesTab";
 import ClosedTradesTab from "../components/journal/ClosedTradesTab";
 import PortfolioTab from "../components/journal/PortfolioTab";
+import IpoTab, { IPO_QUERY_KEY } from "../components/journal/IpoTab";
 import {
   CloseTradeModal, ConvertModal, OpportunityModal, TradeModal,
 } from "../components/journal/modals";
 import { ConfirmDialog, GhostBtn, PrimaryBtn } from "../components/journal/ui";
 import { OwnerOnly, useCanEdit } from "../components/AuthGate";
 
-type TabKey = "opportunities" | "open" | "closed" | "portfolio";
+type TabKey = "opportunities" | "open" | "closed" | "portfolio" | "ipos";
 
 const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "opportunities", label: "Opportunities", icon: "🔭" },
   { key: "open", label: "Open Trades", icon: "📈" },
   { key: "closed", label: "Closed Trades", icon: "🏁" },
   { key: "portfolio", label: "Portfolio", icon: "💼" },
+  { key: "ipos", label: "IPOs", icon: "🎯" },
 ];
 
 /** Restore the tab from the URL hash so a refresh doesn't reset the view. */
@@ -65,6 +67,8 @@ export default function JournalPage() {
     queryFn: () => journalApi.opportunities("ACTIVE"),
   });
   const tradesQ = useQuery({ queryKey: jqk.trades, queryFn: () => journalApi.trades() });
+  // Shared with IpoTab (same key) — here only for the tab's count.
+  const iposQ = useQuery({ queryKey: IPO_QUERY_KEY, queryFn: journalApi.ipos });
 
   const opportunities = oppsQ.data?.opportunities ?? [];
   const trades = tradesQ.data?.trades ?? [];
@@ -296,6 +300,7 @@ export default function JournalPage() {
             const count = t.key === "opportunities" ? opportunities.length
               : t.key === "open" ? openTrades.length
               : t.key === "closed" ? closedTrades.length
+              : t.key === "ipos" ? iposQ.data?.count ?? 0
               : new Set(openTrades.map((x) => x.symbol)).size;
             return (
               <button key={t.key} role="tab" aria-selected={active}
@@ -322,7 +327,7 @@ export default function JournalPage() {
           })}
         </div>
         <div className="flex items-center gap-2">
-          {tab !== "portfolio" && (
+          {tab !== "portfolio" && tab !== "ipos" && (
             <>
               <OwnerOnly>
                 <GhostBtn onClick={() => fileRef.current?.click()} disabled={busy}>
@@ -360,7 +365,7 @@ export default function JournalPage() {
         <div className="mb-3 px-3.5 py-2 rounded-xl bg-teal-50 ring-1 ring-teal-200
                         text-teal-900 text-sm">{notice}</div>
       )}
-      {missingData.length > 0 && tab !== "closed" && (
+      {missingData.length > 0 && tab !== "closed" && tab !== "ipos" && (
         <details className="mb-3 px-3.5 py-2 rounded-xl bg-amber-50 ring-1 ring-amber-200
                             text-amber-900 text-xs">
           <summary className="cursor-pointer select-none">
@@ -410,6 +415,7 @@ export default function JournalPage() {
       {tab === "portfolio" && (
         <PortfolioTab openTrades={openTrades} closedTrades={closedTrades} ctx={ctx} />
       )}
+      {tab === "ipos" && <IpoTab />}
 
       {/* Modals */}
       {oppModal && (
