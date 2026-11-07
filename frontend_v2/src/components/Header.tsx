@@ -2,14 +2,12 @@ import { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth, signOut } from "./AuthGate";
 
+// Kept short on purpose: the daily tools only. Every other tool (Market
+// Analysis, Sizer, Net Worth, Sync, Gold Round-Up) is a card on Home.
 const NAV = [
   { to: "/", label: "Home", end: true },
-  { to: "/pools", label: "Market Analysis" },
   { to: "/journal", label: "Journal" },
   { to: "/expenses", label: "Expenses" },
-  { to: "/position-sizer", label: "Sizer" },
-  { to: "/net-worth", label: "Net Worth" },
-  { to: "/status", label: "Sync" },
   // Access control — nothing a view-only session can act on.
   { to: "/console", label: "Console", ownerOnly: true },
 ];

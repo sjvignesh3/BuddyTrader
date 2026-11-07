@@ -5,6 +5,7 @@ import ConsolePage from "./pages/ConsolePage";
 import HomePage from "./pages/HomePage";
 import JournalPage from "./pages/JournalPage";
 import ExpensesPage from "./pages/ExpensesPage";
+import GoldRoundupPage from "./pages/GoldRoundupPage";
 import PositionSizerPage from "./pages/PositionSizerPage";
 import NetWorthPage from "./pages/NetWorthPage";
 import PoolsPage from "./pages/PoolsPage";
@@ -30,10 +31,13 @@ export default function App() {
     <div className="min-h-full flex flex-col">
       <Header />
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-4 py-4 sm:py-6">
-        {/* Home is the only public route — every tool sits behind the
-            password gate, and the API enforces the same token server-side. */}
+        {/* Home and Gold Round-Up are the only public routes — every other
+            tool sits behind the password gate, and the API enforces the same
+            token server-side. Gold Round-Up is shareable by link because it
+            is pure arithmetic: it calls no API and shows no personal data. */}
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/gold-roundup" element={<GoldRoundupPage />} />
           {/* Header's "Sign in" target: shows the lock screen while locked,
               bounces Home once unlocked. */}
           <Route
