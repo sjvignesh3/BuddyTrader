@@ -9,8 +9,10 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Link } from "react-router-dom";
 import {
+  API_BASE,
   getAuthSnapshot,
   refreshAuthRequirement,
+  STATUS_TIMEOUT_MS,
   signIn,
   signOut,
   subscribe,
@@ -61,21 +63,68 @@ export function ReadOnlyBanner() {
 }
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { unlocked, required } = useAuth();
+  const { unlocked, required, serverError } = useAuth();
 
   // One status probe per app load: tells us whether the gate is even on
-  // (it is off on a local API with no password set).
+  // (it is off on a local API with no password set). A failed probe leaves
+  // `required` null with `serverError` set; only Retry probes again.
   useEffect(() => {
-    if (required === null) void refreshAuthRequirement();
-  }, [required]);
+    if (required === null && serverError === null) void refreshAuthRequirement();
+  }, [required, serverError]);
 
-  if (required === null) {
-    return (
-      <div className="py-16 text-center text-brand-mute text-sm">Checking access…</div>
-    );
-  }
+  if (serverError !== null) return <ServerUnreachable reason={serverError} />;
+  if (required === null) return <CheckingAccess />;
   if (!unlocked) return <LockScreen />;
   return <>{children}</>;
+}
+
+/** After a few seconds of waiting, say why: the API host sleeps when idle. */
+function CheckingAccess() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 5000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="py-16 text-center text-sm">
+      <div className="text-brand-mute">Checking access…</div>
+      {slow && (
+        <p className="mt-2 max-w-sm mx-auto text-xs text-brand-mute">
+          The Plutus server sleeps when it hasn't been used for a while and can take up to a
+          minute to wake. This page keeps waiting for up to {Math.round(STATUS_TIMEOUT_MS / 1000)} seconds.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ServerUnreachable({ reason }: { reason: string }) {
+  return (
+    <div className="max-w-md mx-auto mt-10 sm:mt-16">
+      <div role="alert" className="p-6 sm:p-7 rounded-2xl bg-brand-panel ring-1 ring-brand-border shadow-card">
+        <h1 className="font-display text-2xl font-bold tracking-tight">Can't reach the Plutus server</h1>
+        <p className="mt-1.5 text-sm text-brand-mute">
+          The access check got no usable answer ({reason}). Your tools stay locked until it does.
+          If Retry keeps failing, the server itself is down: check its logs on the host.
+        </p>
+        <p className="mt-2 text-xs text-brand-mute break-all">
+          Server: <span className="font-mono">{API_BASE || window.location.origin}</span>
+        </p>
+        <button
+          type="button"
+          onClick={() => void refreshAuthRequirement()}
+          className="mt-5 w-full py-2.5 rounded-xl bg-teal-700 text-white text-sm font-semibold
+                     shadow-card hover:bg-teal-800 transition-colors">
+          Retry
+        </button>
+        <div className="mt-5 pt-4 border-t border-brand-border text-center">
+          <Link to="/" className="text-xs font-semibold text-brand-mute hover:text-brand-text">
+            ← Back to Home
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function LockScreen() {

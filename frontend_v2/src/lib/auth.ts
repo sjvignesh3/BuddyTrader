@@ -39,6 +39,8 @@ export interface AuthState {
   unlocked: boolean;
   /** True when this session may mutate data. Viewers: false. */
   canEdit: boolean;
+  /** Set when the access check could not reach the API (down, asleep too long). */
+  serverError: string | null;
 }
 
 export interface ViewerState {
@@ -94,6 +96,7 @@ if (token && !isLive(token)) {
   storeToken(null);
 }
 let required: boolean | null = null;
+let serverError: string | null = null;
 let snapshot: AuthState = buildSnapshot();
 
 function buildSnapshot(): AuthState {
@@ -108,6 +111,7 @@ function buildSnapshot(): AuthState {
     required,
     unlocked: gateOff || live,
     canEdit: role === "owner",
+    serverError,
   };
 }
 
@@ -189,34 +193,59 @@ export async function signIn(password: string): Promise<Role> {
   return body.role ?? "viewer";
 }
 
+/** A free Render instance takes ~50 s to wake; give it room, then stop waiting. */
+export const STATUS_TIMEOUT_MS = 75_000;
+
+/** The API base, for showing where the check went. */
+export const API_BASE = BASE;
+
+let inFlight: Promise<void> | null = null;
+
 /**
  * Ask the API whether the gate is configured at all.
  *
- * Fails CLOSED: if the API is unreachable we assume the lock is on rather
- * than flashing the tools open. An API with no PLUTUS_APP_PASSWORD (local
- * dev) reports `required: false`, which keeps `npm run dev` password-free.
+ * Fails CLOSED: if the API is unreachable the tools stay hidden — `required`
+ * stays null and `serverError` says why, so the gate shows "can't reach the
+ * server" with a retry instead of either flashing the tools open or waiting
+ * forever on a request that never answers. An API with no
+ * PLUTUS_APP_PASSWORD (local dev) reports `required: false`, which keeps
+ * `npm run dev` password-free.
  */
-export async function refreshAuthRequirement(): Promise<void> {
-  try {
-    const res = await fetch(`${BASE}/api/auth/status`, {
-      headers: { Accept: "application/json", ...authHeaders() },
-    });
-    if (!res.ok) throw new Error(String(res.status));
-    const body = (await res.json()) as {
-      required?: boolean;
-      authenticated?: boolean;
-    };
-    required = body.required !== false;
-    // The server is the authority on our token: if it says we are not
-    // authenticated while the gate is on, whatever we hold is worthless.
-    if (required && token && body.authenticated === false) {
-      token = null;
-      storeToken(null);
-    }
-  } catch {
-    required = true;
-  }
+export function refreshAuthRequirement(): Promise<void> {
+  if (inFlight) return inFlight;
+  serverError = null;
   emit();
+  inFlight = (async () => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), STATUS_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${BASE}/api/auth/status`, {
+        headers: { Accept: "application/json", ...authHeaders() },
+        signal: ctl.signal,
+      });
+      if (!res.ok) throw new Error(`the server answered ${res.status}`);
+      const body = (await res.json()) as {
+        required?: boolean;
+        authenticated?: boolean;
+      };
+      required = body.required !== false;
+      // The server is the authority on our token: if it says we are not
+      // authenticated while the gate is on, whatever we hold is worthless.
+      if (required && token && body.authenticated === false) {
+        token = null;
+        storeToken(null);
+      }
+    } catch (err) {
+      serverError = ctl.signal.aborted
+        ? `no answer after ${Math.round(STATUS_TIMEOUT_MS / 1000)} seconds`
+        : err instanceof Error ? err.message : String(err);
+    } finally {
+      clearTimeout(timer);
+      inFlight = null;
+    }
+    emit();
+  })();
+  return inFlight;
 }
 
 // ---- view-only credential (owner only) -------------------------------------
