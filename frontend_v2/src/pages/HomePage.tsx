@@ -2,7 +2,6 @@
 // Plutus home — personal toolbench landing. New tools get a card here.
 // -----------------------------------------------------------------------------
 import { Link } from "react-router-dom";
-import { useAuth } from "../components/AuthGate";
 
 interface Tool {
   icon: string;
@@ -10,7 +9,6 @@ interface Tool {
   desc: string;
   to?: string;      // absent = coming soon
   accent: string;   // gradient classes for the icon tile
-  signedInOnly?: boolean;   // listed only once unlocked (the route itself may be public)
 }
 
 const TOOLS: Tool[] = [
@@ -59,18 +57,13 @@ const TOOLS: Tool[] = [
   {
     icon: "🥇",
     name: "Gold Round-Up",
-    desc: "Type the day's gold rate and get the savings-plan payment that rounds up to the most gold. Shareable by link.",
+    desc: "Type the day's gold rate and get the savings-plan payment that rounds up to the most gold. Open to everyone, no sign-in needed.",
     to: "/gold-roundup",
     accent: "from-yellow-700 to-amber-400",
-    signedInOnly: true,
   },
 ];
 
 export default function HomePage() {
-  const { unlocked, required } = useAuth();
-  // Gold Round-Up is public by link, but only listed here for you — a visitor
-  // on Home still sees just the locked tools.
-  const tools = TOOLS.filter((t) => !t.signedInOnly || unlocked || required === false);
   return (
     <div>
       <div className="mt-4 mb-8">
@@ -82,7 +75,7 @@ export default function HomePage() {
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {tools.map((t) =>
+        {TOOLS.map((t) =>
           t.to ? (
             <Link key={t.name} to={t.to}
               className="group block p-5 rounded-2xl bg-brand-panel ring-1 ring-brand-border
