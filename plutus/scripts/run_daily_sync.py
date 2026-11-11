@@ -29,6 +29,9 @@ from plutus.alerts.sync_hook import maybe_alert_on_run_report
 from plutus.sync.context import build_run_context
 from plutus.sync.worker import DailySyncWorker
 
+from plutus.markets import (
+    IN, US, filter_market, get_market, market_of, normalize_market, today_in,
+)
 logger = logging.getLogger("plutus.run_daily_sync")
 
 
@@ -79,6 +82,11 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     ap.add_argument("--no-enrich", action="store_true",
                     help="Skip the fetch-on-miss Screener enrichment for "
                          "symbols with no fundamentals / ratios in the DB.")
+    ap.add_argument("--market", type=str, default=None,
+                    help="IN (default) or US. Each market is its own run: "
+                         "its own session calendar, sync_jobs row and "
+                         "valuation source. With --symbols the market is "
+                         "read off the tickers when omitted.")
     ap.add_argument("--verbose", action="store_true")
     return ap.parse_args(argv)
 
@@ -229,14 +237,67 @@ def enrichment_alert_report(enrichment: dict, as_of: date) -> Optional[dict]:
     }
 
 
-def _resolve_as_of(raw: Optional[str]) -> date:
+def _resolve_as_of(raw: Optional[str], market: str = IN) -> date:
     if raw is None:
-        # "Today" in IST — the market's calendar — regardless of runner TZ
-        # (GitHub Actions runs in UTC; 18:30+ IST would otherwise date-shift).
-        from datetime import timedelta, timezone
-        ist = timezone(timedelta(hours=5, minutes=30))
-        return datetime.now(tz=ist).date()
+        # "Today" on the MARKET's calendar (IST for India, New York for the
+        # US) regardless of runner TZ — GitHub Actions runs in UTC, so
+        # 18:30+ IST would otherwise date-shift.
+        return today_in(market)
     return datetime.strptime(raw, "%Y-%m-%d").date()
+
+
+def resolve_market(raw: Optional[str], explicit_symbols: Sequence[str]) -> str:
+    """Which market this run is for. Raises ValueError on a mixed or
+    contradictory request — one run never spans two markets (they have
+    different calendars and sync_jobs rows)."""
+    seen = {market_of(s) for s in explicit_symbols}
+    if len(seen) > 1:
+        raise ValueError("--symbols mixes Indian and US tickers; run them separately")
+    if raw is None:
+        return seen.pop() if seen else IN
+    market = normalize_market(raw)
+    if seen and seen != {market}:
+        raise ValueError(f"--market {market} does not match the tickers in --symbols")
+    return market
+
+
+def backfill_us_profiles(symbols: Sequence[str], *, supabase_client: Any = None,
+                         fetch_info: Any = None) -> int:
+    """Fill name / sector / industry / exchange on US `stocks` rows that lack
+    them, from Yahoo. Best-effort: never raises, returns rows updated. Indian
+    rows get these from the universe import, so this is US-only."""
+    updated = 0
+    try:
+        from plutus.adapters.supabase_client import get_client
+        from plutus.markets import us_exchange
+        if fetch_info is None:
+            from plutus.adapters.yf_client import fetch_info as _fi
+            fetch_info = _fi
+        cli = supabase_client if supabase_client is not None else get_client()
+        res = (cli.table("stocks").select("symbol,name,sector,industry,exchange")
+               .in_("symbol", list(symbols)).execute())
+        for row in getattr(res, "data", None) or []:
+            if row.get("name") and row.get("sector") and row.get("industry"):
+                continue
+            info_res = fetch_info(row["symbol"])
+            if not getattr(info_res, "ok", False):
+                continue
+            info = info_res.value or {}
+            patch = {}
+            name = info.get("longName") or info.get("shortName")
+            for col, val in (("name", name), ("sector", info.get("sector")),
+                             ("industry", info.get("industry"))):
+                if not row.get(col) and isinstance(val, str) and val.strip():
+                    patch[col] = val.strip()
+            exch = us_exchange(info.get("exchange"))
+            if exch and exch != row.get("exchange"):
+                patch["exchange"] = exch
+            if patch:
+                cli.table("stocks").update(patch).eq("symbol", row["symbol"]).execute()
+                updated += 1
+    except Exception as exc:  # noqa: BLE001 — cosmetic data, never fails a sync
+        logger.warning("US profile backfill skipped: %s", exc)
+    return updated
 
 
 def main(
@@ -251,24 +312,38 @@ def main(
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
+    explicit = ([s.strip() for s in args.symbols.split(",") if s.strip()]
+                if args.symbols else [])
+    try:
+        market = resolve_market(args.market, explicit)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return 2
+
     if args.symbols:
-        symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+        symbols = explicit
         if args.limit is not None:
             symbols = symbols[:args.limit]
     else:
         loader = load_symbols or _load_symbols_from_db
         try:
-            symbols = loader(pool=args.pool, limit=args.limit)
+            loaded = loader(pool=args.pool, limit=args.limit)
+            symbols = filter_market(loaded, market)
+            if args.limit is not None and len(symbols) != len(loaded):
+                # The limit was applied across both markets — redo it on
+                # this market's symbols only.
+                symbols = filter_market(
+                    loader(pool=args.pool, limit=None), market)[:args.limit]
         except Exception as exc:
             logger.error("symbol load failed: %s", exc)
             return 2
 
     if not symbols:
-        logger.error("no symbols to sync (pool=%s limit=%s)",
-                     args.pool, args.limit)
+        logger.error("no symbols to sync (market=%s pool=%s limit=%s)",
+                     market, args.pool, args.limit)
         return 2
 
-    as_of = _resolve_as_of(args.as_of)
+    as_of = _resolve_as_of(args.as_of, market)
 
     # Wire PLUTUS_YF_TIMEOUT_SECONDS into yfinance's HTTP session so a hung
     # Yahoo socket cannot stall the whole run. Best-effort — a failure here
@@ -291,17 +366,25 @@ def main(
         pool=args.pool,
         symbols=symbols if args.symbols else None,
     )
+    if market != IN:
+        run_ctx["market"] = market   # IN rows keep their existing shape
 
+    # Screener.in covers Indian companies only — a US run has nothing to
+    # fetch-on-miss; its valuation rides on the Yahoo quote instead.
     enrichment: Optional[dict] = None
-    if not args.dry_run and not args.no_enrich:
+    if not args.dry_run and not args.no_enrich and get_market(market).uses_screener:
         enrichment = enrich_missing_fundamentals(
             symbols, context={**run_ctx, "via": "daily_sync fetch-on-miss"})
         if enrichment["errors"]:
             logger.warning("enrichment errors: %s", enrichment["errors"][:5])
 
-    w = worker or DailySyncWorker(run_context=run_ctx)
+    w = worker or DailySyncWorker.for_market(market, run_context=run_ctx)
     if worker is not None and getattr(worker, "run_context", False) is None:
         worker.run_context = run_ctx  # injected worker without a context
+    if market == US and not args.dry_run and worker is None:
+        filled = backfill_us_profiles(symbols)
+        if filled:
+            logger.info("filled name / sector / exchange on %d US stocks", filled)
     report = w.run_all(symbols, as_of=as_of, dry_run=args.dry_run)
 
     # One-shot summary to stdout for humans + machines.
@@ -318,7 +401,8 @@ def main(
         logger.warning(
             "snapshots describe session %s, expected %s — market holiday, or "
             "Yahoo has not published the last session yet (re-run after "
-            "~16:00 IST)", report.session_date, report.expected_session_date)
+            "%s)", report.session_date, report.expected_session_date,
+            get_market(market).settle_hint)
     if report.stale_symbols:
         logger.warning("%d symbols landed on an older session than %s: %s",
                        len(report.stale_symbols), report.session_date,

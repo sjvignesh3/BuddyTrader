@@ -49,6 +49,10 @@ class SnapshotInputs:
     # sync/weekly_ratios.py). Keys: pe, pb, market_cap (ABSOLUTE ₹),
     # all Decimal. None/{} => valuation fields stay NULL with an error note.
     screener_ratios: Optional[Dict[str, Any]] = None
+    # 'IN' | 'US' (plutus.markets). For US the ratios above come from Yahoo
+    # (market_cap in USD) and cap_bucket stays NULL — the Large / Mid / Small
+    # cut-offs are ₹-crore thresholds and mean nothing against dollars.
+    market: str = "IN"
 
 
 def _safe(callable_, *args, errors: List[str], label: str, **kwargs):
@@ -197,8 +201,8 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
     mc = _safe(to_decimal, ratios.get("market_cap"),
                errors=errors, label="market_cap")
     row["market_cap"] = mc
-    row["cap_bucket"] = _safe(classify_market_cap, mc,
-                              errors=errors, label="cap_bucket")
+    row["cap_bucket"] = None if inp.market != "IN" else _safe(
+        classify_market_cap, mc, errors=errors, label="cap_bucket")
     row["pe_current"] = _safe(to_decimal, ratios.get("pe"),
                               errors=errors, label="pe_current")
     row["pb_current"] = _safe(to_decimal, ratios.get("pb"),
@@ -206,7 +210,10 @@ def compute_snapshot(inp: SnapshotInputs) -> Dict[str, Any]:
     if not ratios:
         errors.append(
             "valuation: no screener_ratios for symbol — run the weekly "
-            "ratios sync (pe/pb/market_cap left NULL)")
+            "ratios sync (pe/pb/market_cap left NULL)"
+            if inp.market == "IN" else
+            "valuation: Yahoo returned no PE / PB / market cap "
+            "(pe/pb/market_cap left NULL)")
 
     # ----- Other .info-sourced Tier-A fields -----
     if inp.info:

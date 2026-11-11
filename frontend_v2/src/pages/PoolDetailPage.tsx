@@ -12,6 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { ScanResult, Stock } from "../lib/api";
 import {
   useLatestScan,
+  usePools,
   useScanResults,
   useScanResultsForSymbols,
   useSnapshots,
@@ -31,6 +32,7 @@ import PlayAreaManager from "../components/PlayAreaManager";
 import PoolTabs from "../components/PoolTabs";
 import StockTable, { RALLY_POOLS } from "../components/StockTable";
 import { fmtDate } from "../lib/money";
+import { dailyJobType, exchangeMap, plainSymbol, poolMarket } from "../lib/market";
 
 const CAP_BUCKETS = ["Large", "Mid", "Small", "Micro"] as const;
 const POOL_TITLES: Record<string, string> = {
@@ -52,6 +54,10 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 export default function PoolDetailPage() {
   const { code = "F40" } = useParams();
   const isPlayArea = code === "PlayArea";
+  // The pool's market decides currency, columns and which sync it follows.
+  const pool = usePools().data?.pools.find((p) => p.code === code);
+  const market = poolMarket(pool);
+  const isUs = market === "US";
   const qc = useQueryClient();
   const navigate = useNavigate();
 
@@ -65,7 +71,7 @@ export default function PoolDetailPage() {
 
   // ---- Data -----------------------------------------------------------------
   const stocksQ = useStocks(isPlayArea ? undefined : code);
-  const jobs = useSyncJobs("daily_sync");
+  const jobs = useSyncJobs(dailyJobType(market));
   const poolSnaps = useSnapshots(isPlayArea ? "" : code);
   const watchSnaps = useSnapshotsBySymbols(isPlayArea ? watchlist : []);
   const snapsQ = isPlayArea ? watchSnaps : poolSnaps;
@@ -126,8 +132,10 @@ export default function PoolDetailPage() {
   const heldSymbols = useMemo(
     () => new Set((positionsQ.data?.positions ?? []).map((p) => p.symbol)),
     [positionsQ.data]);
-  const isHeld = (r: StockRow) =>
-    heldSymbols.has(r.symbol.replace(/\.(NS|BO)$/i, ""));
+  // The Trading Journal is Indian-only for now, so a US row is never "held"
+  // (a US ticker must not match an NSE symbol of the same name).
+  const isHeld = (r: StockRow) => !isUs && heldSymbols.has(plainSymbol(r.symbol));
+  const exchanges = useMemo(() => exchangeMap(stocksQ.data?.stocks), [stocksQ.data]);
 
   // ---- Filters ----------------------------------------------------------------
   // Kept in the URL query string (?q=&cap=&sector=&signal=&hold=&min=) so
@@ -202,7 +210,7 @@ export default function PoolDetailPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">
-            {POOL_TITLES[code] ?? code}
+            {POOL_TITLES[code] ?? pool?.name ?? code}
           </h1>
           <div className="text-[11px] text-brand-mute mt-0.5">
             Snapshot {fmtDate(snapsQ.data?.snapshot_date ?? null)} · Last sync{" "}
@@ -232,15 +240,20 @@ export default function PoolDetailPage() {
               tone={buyCount > 0 ? "text-teal-700" : "text-brand-mute"} />
         <Stat label="Opportunities" value={String(oppCount)}
               tone={oppCount > 0 ? "text-amber-700" : "text-brand-mute"} />
-        <Stat label="Avg funda score" value={avgScore === "—" ? "—" : `${avgScore}/11`}
-              tone={Number(avgScore) >= 8 ? "text-teal-700"
-                : Number(avgScore) >= 6 ? "text-amber-700" : ""} />
+        {isUs ? (
+          <Stat label="Valid setups"
+                value={String(rows.filter((r) => r.bestStatus === "VALID").length)} />
+        ) : (
+          <Stat label="Avg funda score" value={avgScore === "—" ? "—" : `${avgScore}/11`}
+                tone={Number(avgScore) >= 8 ? "text-teal-700"
+                  : Number(avgScore) >= 6 ? "text-amber-700" : ""} />
+        )}
       </div>
 
       {/* ── Opportunity radar ── */}
       <OpportunityRadar
         rows={radarRows}
-        heldSymbols={heldSymbols}
+        heldSymbols={isUs ? undefined : heldSymbols}
         compared={compared}
         onToggleCompare={toggleCompare}
         onOpen={(symbol) => navigate(`/stocks/${encodeURIComponent(symbol)}`)}
@@ -254,9 +267,11 @@ export default function PoolDetailPage() {
           placeholder="Search symbol…"
           className="bg-brand-panel ring-1 ring-brand-border rounded-xl px-3.5 py-2 w-44 shadow-card focus:ring-2 focus:ring-brand-accent/40 outline-none placeholder:text-brand-mute"
         />
-        <Dropdown value={capFilter} onChange={setFilter("cap")} placeholder="All caps"
-                  options={[{ value: "", label: "All caps" },
-                    ...CAP_BUCKETS.map((c) => ({ value: c, label: `${c} cap` }))]} />
+        {!isUs && (
+          <Dropdown value={capFilter} onChange={setFilter("cap")} placeholder="All caps"
+                    options={[{ value: "", label: "All caps" },
+                      ...CAP_BUCKETS.map((c) => ({ value: c, label: `${c} cap` }))]} />
+        )}
         <Dropdown value={sectorFilter} onChange={setFilter("sector")} placeholder="All sectors"
                   options={[{ value: "", label: "All sectors" },
                     ...sectors.map((s) => ({ value: s, label: s }))]} />
@@ -265,23 +280,25 @@ export default function PoolDetailPage() {
                     { value: "BUY_ZONE", label: "🟢 Buy zone" },
                     { value: "OPPORTUNITY", label: "🟡 Opportunity" },
                     { value: "VALID", label: "🔵 Valid" }]} />
-        <Dropdown value={holdFilter} onChange={setFilter("hold")} placeholder="Held + not held"
+        {!isUs && <Dropdown value={holdFilter} onChange={setFilter("hold")} placeholder="Held + not held"
                   title="Filter by your Trading Journal's open positions — applies to the radar too"
                   options={[
                     { value: "", label: "Held + not held" },
                     { value: "unheld", label: "🔍 Not holding",
                       hint: "hide stocks you already hold" },
                     { value: "held", label: "💼 Holding",
-                      hint: "only your open positions" }]} />
-        <label className="flex items-center gap-2 text-[11px] text-brand-mute pl-1">
-          Min score
-          <input type="range" min={0} max={11} value={minScore}
-                 onChange={(e) => setFilter("min")(e.target.value === "0" ? "" : e.target.value)}
-                 className="w-24 accent-teal-700" />
-          <span className="font-mono w-8 font-semibold text-brand-text">
-            {minScore > 0 ? `${minScore}+` : "any"}
-          </span>
-        </label>
+                      hint: "only your open positions" }]} />}
+        {!isUs && (
+          <label className="flex items-center gap-2 text-[11px] text-brand-mute pl-1">
+            Min score
+            <input type="range" min={0} max={11} value={minScore}
+                   onChange={(e) => setFilter("min")(e.target.value === "0" ? "" : e.target.value)}
+                   className="w-24 accent-teal-700" />
+            <span className="font-mono w-8 font-semibold text-brand-text">
+              {minScore > 0 ? `${minScore}+` : "any"}
+            </span>
+          </label>
+        )}
         {(search || capFilter || sectorFilter || signalFilter || holdFilter || minScore > 0) && (
           <button
             onClick={clearFilters}
@@ -302,7 +319,9 @@ export default function PoolDetailPage() {
         loading={isLoading}
         error={snapsQ.error ?? stocksQ.error}
         empty={!isLoading && rows.length === 0 && !isPlayArea}
-        emptyLabel="No snapshots for this pool yet — run the daily sync."
+        emptyLabel={isUs
+          ? "No snapshots for this pool yet — run the US daily sync."
+          : "No snapshots for this pool yet — run the daily sync."}
       />
 
       <div id="pool-table" className="scroll-mt-20">
@@ -313,6 +332,8 @@ export default function PoolDetailPage() {
             heldSymbols={heldSymbols}
             compared={compared}
             onToggleCompare={toggleCompare}
+            market={market}
+            exchanges={exchanges}
           />
         )}
       </div>

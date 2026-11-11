@@ -50,6 +50,8 @@ export interface StockRow {
   rallyLow: number | null;
   rallyHigh: number | null;
   marketCapCr: number | null;
+  /** Absolute market cap in the listing currency (₹ for IN, $ for US). */
+  marketCap: number | null;
   pe: number | null;
   pb: number | null;
   funda: FundaScore | null;
@@ -165,6 +167,7 @@ export function buildRows(
       rallyLow,
       rallyHigh: num(s.last_rally_high),
       marketCapCr: mcap !== null ? mcap / 1e7 : null,
+      marketCap: mcap,
       pe: num(s.pe_current),
       pb: num(s.pb_current),
       funda,

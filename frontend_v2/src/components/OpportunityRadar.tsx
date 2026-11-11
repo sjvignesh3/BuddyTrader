@@ -4,6 +4,7 @@
 // act on or throw into the comparison tray.
 // -----------------------------------------------------------------------------
 import type { StockRow } from "../lib/rows";
+import { currencySymbol, fmtMarketCap, fmtPrice, marketOf } from "../lib/market";
 import { convictionOf, topOpportunities, whyLine } from "../lib/conviction";
 import ScoreRing from "./ScoreRing";
 import SignalBadge from "./SignalBadge";
@@ -61,10 +62,11 @@ export default function OpportunityRadar({
                     )}
                   </div>
                   <div className="text-[10px] text-brand-mute truncate max-w-[120px]">
-                    {r.sector ?? "—"} · {r.cap ?? "—"}
+                    {r.sector ?? "—"} · {marketOf(r.symbol) === "US"
+                      ? fmtMarketCap(r.marketCap, "US") : r.cap ?? "—"}
                   </div>
                 </div>
-                <ScoreRing points={r.score} size={38} />
+                {marketOf(r.symbol) !== "US" && <ScoreRing points={r.score} size={38} />}
               </div>
               <div className="flex items-center gap-1.5 mt-2 pl-4">
                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-widest ${CONVICTION_STYLE[conv]}`}>
@@ -77,7 +79,7 @@ export default function OpportunityRadar({
               </div>
               <div className="flex items-center justify-between mt-1.5 pl-4">
                 <span className="font-mono tabular-nums text-sm font-semibold">
-                  ₹{r.close?.toLocaleString("en-IN", { minimumFractionDigits: 2 }) ?? "—"}
+                  {currencySymbol(marketOf(r.symbol))}{fmtPrice(r.close, marketOf(r.symbol))}
                 </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); onToggleCompare(r.symbol); }}

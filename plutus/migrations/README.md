@@ -56,6 +56,7 @@ Or one-by-one:
 023_reset_sequences.sql  -- plutus_reset_sequences() RPC used after restore_personal (service_role only)
 024_ipo_journal.sql      -- IPO applications (per account) + sell legs (Journal → IPOs tab)
 025_notebook.sql         -- notebook_items: tasks, targets/limits, watch ideas, notes (Notes page)
+026_markets.sql          -- pools.market (IN | US) + the US Mega Cap pool and its 17 stocks
 ```
 
 Row-Level Security policies live in `010_rls.sql` and `011_canary_checks.sql`

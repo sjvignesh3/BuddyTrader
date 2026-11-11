@@ -235,6 +235,17 @@ export default function SyncTriggerPanel() {
             canRun={canRun}
             onDone={onDone}
           />
+          {/* US market: always every US pool — the pool picker above lists
+              the Indian pools only. */}
+          <TriggerButton
+            label="Run US price sync + scan"
+            hint="US pools — OHLCV, snapshots, price strategies (US daily workflow)"
+            workflow="daily_us"
+            pool="ALL"
+            token={token}
+            canRun={canRun}
+            onDone={onDone}
+          />
         </div>
         <div className="rounded-xl ring-1 ring-brand-border bg-brand-soft/60 px-3 py-2.5 space-y-2">
           <div className="text-xs font-bold uppercase tracking-wide text-brand-mute">

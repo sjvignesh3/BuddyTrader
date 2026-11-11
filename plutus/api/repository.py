@@ -39,7 +39,7 @@ def list_pools(client: Optional[Any] = None) -> List[Dict[str, Any]]:
     cli = _client(client)
     res = (
         cli.table("pools")
-           .select("code,name,description,display_order,strategies,metadata")
+           .select("*")          # incl. `market` once migration 026 is applied
            .order("display_order")
            .execute()
     )
@@ -105,6 +105,37 @@ def latest_snapshot_date(client: Optional[Any] = None) -> Optional[str]:
     return row.get("snapshot_date") if row else None
 
 
+def latest_snapshot_date_for(symbols: Sequence[str],
+                             client: Optional[Any] = None) -> Optional[str]:
+    """Newest session THESE symbols have a row for.
+
+    India and the US sync at different times and keep different holidays, so
+    the table-wide newest date can be a day only the other market traded —
+    a pool queried on it would come back empty. A list that spans both
+    markets is dated by the market most of it belongs to.
+    """
+    from plutus.markets import split_by_market
+    cli = _client(client)
+    groups = split_by_market(symbols)
+    wanted = max(groups.values(), key=len)
+    if not wanted:
+        return None
+    try:
+        res = (
+            cli.table("daily_snapshots")
+               .select("snapshot_date")
+               .in_("symbol", wanted)
+               .order("snapshot_date", desc=True)
+               .limit(1)
+               .execute()
+        )
+    except (AttributeError, TypeError):
+        # Minimal fake clients without .in_ — fall back to the global date.
+        return latest_snapshot_date(client=cli)
+    row = _one(res)
+    return row.get("snapshot_date") if row else None
+
+
 def snapshots_for_pool(
     pool_code: str,
     snapshot_date: Optional[str] = None,
@@ -117,7 +148,7 @@ def snapshots_for_pool(
     symbols = [s["symbol"] for s in stocks]
     if not symbols:
         return []
-    d = snapshot_date or latest_snapshot_date(client=cli)
+    d = snapshot_date or latest_snapshot_date_for(symbols, client=cli)
     if not d:
         return []
     res = (
@@ -144,7 +175,7 @@ def snapshots_for_symbols(
     symbols = [s for s in symbols if s]
     if not symbols:
         return []
-    d = snapshot_date or latest_snapshot_date(client=cli)
+    d = snapshot_date or latest_snapshot_date_for(symbols, client=cli)
     if not d:
         return []
     res = (

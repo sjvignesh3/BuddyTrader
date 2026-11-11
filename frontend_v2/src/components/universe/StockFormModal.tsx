@@ -22,9 +22,11 @@ export const GROUP_HELP: Record<SectorGroup, string> = {
   Normal: "Non-banking criteria: Net Debt/Equity, ROCE and Net profit",
 };
 
-export default function StockFormModal({ pool, initial, existing, onSave, onClose, busy }: {
+export default function StockFormModal({ pool, initial, existing, onSave, onClose, busy, us = false }: {
   /** Pool the stock is being added to (ignored when editing). */
   pool: string;
+  /** US pool — plain ticker, no cap bucket / criteria group (Indian concepts). */
+  us?: boolean;
   /** Editing this stock (symbol fixed) — null when adding. */
   initial: UniverseStock | null;
   /** Every known stock, to warn about duplicates while typing. */
@@ -74,9 +76,9 @@ export default function StockFormModal({ pool, initial, existing, onSave, onClos
           <TextInput value={f.name} onChange={set("name")} placeholder="Company name (optional)" />
         </Field>
         <Field label="Sector" span2>
-          <TextInput value={f.sector} onChange={set("sector")} placeholder="e.g. AUTO, FMCG, BANKS" />
+          <TextInput value={f.sector} onChange={set("sector")} placeholder={us ? "e.g. Technology" : "e.g. AUTO, FMCG, BANKS"} />
         </Field>
-        <Field label="Cap type (manual)" span2>
+        {!us && <Field label="Cap type (manual)" span2>
           <Segmented ariaLabel="Cap type"
             options={[
               { value: "" as const, label: "Auto", title: "Use the bucket derived from market cap" },
@@ -85,8 +87,8 @@ export default function StockFormModal({ pool, initial, existing, onSave, onClos
               })),
             ]}
             value={f.cap} onChange={(v) => setF((p) => ({ ...p, cap: v }))} />
-        </Field>
-        <Field label="Criteria group — the sector key for S200 screening" span2>
+        </Field>}
+        {!us && <Field label="Criteria group — the sector key for S200 screening" span2>
           <Segmented ariaLabel="Sector group"
             options={[
               { value: "" as const, label: "Not set" },
@@ -99,7 +101,13 @@ export default function StockFormModal({ pool, initial, existing, onSave, onClos
             Banks &amp; NBFC are screened on ROE and Net profit; everything else on Net Debt/Equity,
             ROCE and Net profit. This is what makes the sector rule strict.
           </p>
-        </Field>
+        </Field>}
+        {us && (
+          <p className="sm:col-span-2 text-[11px] text-brand-mute">
+            US stock — type the plain ticker (NVDA, BRK.B). Name, sector and exchange are
+            filled from Yahoo on the next US sync.
+          </p>
+        )}
       </div>
       <div className="mt-5 flex items-center justify-end gap-3">
         {problem && key && <span className="text-[11px] text-rose-600 mr-auto">{problem}</span>}

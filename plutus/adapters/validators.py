@@ -32,6 +32,19 @@ def sanity_check_symbol(symbol: Any) -> str:
     return s
 
 
+def sanity_check_market_symbol(symbol: Any) -> str:
+    """Like `sanity_check_symbol`, but also accepts a plain US ticker
+    ('NVDA', 'BRK-B'). Used by the Yahoo adapter, which serves both markets;
+    the Screener.in workers keep the strict NSE/BSE check above."""
+    if not isinstance(symbol, str):
+        raise ValueError(f"symbol must be str, got {type(symbol).__name__}")
+    from plutus.markets import is_valid_symbol
+    s = symbol.strip().upper()
+    if not is_valid_symbol(s):
+        raise ValueError(f"invalid symbol format: {symbol!r}")
+    return s
+
+
 # -----------------------------------------------------------------------------
 # Price — must be strictly positive, finite, within a sane Indian equity band.
 # Upper cap of ₹10,000,000 catches obvious data corruption (MRF trades ~1.5L).

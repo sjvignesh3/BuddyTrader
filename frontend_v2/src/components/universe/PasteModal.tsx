@@ -21,8 +21,10 @@ const SOURCE_LABEL: Record<string, { text: string; cls: string }> = {
   failed: { text: "lookup failed", cls: "text-rose-700" },
 };
 
-export default function PasteModal({ pool, onPreview, onApply, onClose, busy }: {
+export default function PasteModal({ pool, onPreview, onApply, onClose, busy, us = false }: {
   pool: string;
+  /** US pool — tickers are read as US ("NASDAQ:SNDK", "NYSE:CAT", "NVDA"). */
+  us?: boolean;
   onPreview: (text: string, refresh: boolean, mode: Mode) => Promise<PasteResult>;
   onApply: (text: string, refresh: boolean, mode: Mode) => Promise<PasteResult>;
   onClose: (applied?: PasteResult) => void;
@@ -54,13 +56,15 @@ export default function PasteModal({ pool, onPreview, onApply, onClose, busy }: 
         <div className="rounded-xl ring-1 ring-brand-border bg-brand-soft/60 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
             <div className="text-[11px] font-bold uppercase tracking-wide text-brand-mute">
-              1 · Symbols — one per line or comma separated · NSE: / BSE: prefixes are fine
+              1 · Symbols — one per line or comma separated ·{" "}
+              {us ? "NASDAQ: / NYSE: prefixes are fine" : "NSE: / BSE: prefixes are fine"}
             </div>
             <span className="text-[11px] text-brand-mute">{tokens} token{tokens === 1 ? "" : "s"}</span>
           </div>
           <textarea value={text} rows={7} autoFocus
                     onChange={(e) => { setText(e.target.value); setPreview(null); }}
-                    placeholder={"NSE:APTUS,\nNSE:CANFINHOME,\nNSE:CGCL,\nTCS, INFY"}
+                    placeholder={us ? "NASDAQ:SNDK,\nNYSE:CAT,\nNVDA, GOOGL"
+                                    : "NSE:APTUS,\nNSE:CANFINHOME,\nNSE:CGCL,\nTCS, INFY"}
                     className="w-full rounded-lg ring-1 ring-brand-border bg-white px-2.5 py-1.5 text-sm font-mono
                                focus:outline-none focus:ring-2 focus:ring-teal-600/50 placeholder:text-brand-mute/50" />
           <label className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-brand-mute select-none">

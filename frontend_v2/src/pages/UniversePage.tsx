@@ -6,6 +6,7 @@
 // -----------------------------------------------------------------------------
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { poolMarket } from "../lib/market";
 import LoadError from "../components/LoadError";
 import { OwnerOnly } from "../components/AuthGate";
 import ImportModal from "../components/universe/ImportModal";
@@ -26,13 +27,16 @@ const POOL_META: Record<string, { icon: string; kind: string; blurb: string }> =
           blurb: "Built by screening. Imported by hand until the Screener sync is wired." },
   PlayArea: { icon: "⚡", kind: "Tactical", blurb: "Browser watchlist lives on the pool page." },
 };
-const TABS = ["F40", "E40", "S200", "ALL"] as const;
+const IN_TABS = ["F40", "E40", "S200"];
+const US_META = { icon: "🗽", kind: "US · NASDAQ / NYSE",
+                  blurb: "Hand-picked US names, priced in dollars. Paste TradingView symbols like NASDAQ:SNDK." };
+const metaOf = (code: string, us: boolean) => POOL_META[code] ?? (us ? US_META : undefined);
 
 export default function UniversePage() {
   const [showInactive, setShowInactive] = useState(false);
   const { data, isLoading, error } = useUniverse(showInactive);
   const m = useUniverseMutations();
-  const [tab, setTab] = useState<(typeof TABS)[number]>("F40");
+  const [tab, setTab] = useState<string>("F40");
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<{ initial: UniverseStock | null } | null>(null);
   const [importing, setImporting] = useState(false);
@@ -54,6 +58,10 @@ export default function UniversePage() {
 
   if (isLoading || error || !data) return <LoadError loading={isLoading} error={error} />;
 
+  // US pools (migration 026) follow the Indian ones; none = the page is as before.
+  const usCodes = data.pools.filter((p) => poolMarket(p) === "US").map((p) => p.code);
+  const TABS = [...IN_TABS, ...usCodes, "ALL"];
+  const isUsPool = pool !== null && usCodes.includes(pool);
   const editable = pool !== null && data.editable_pools.includes(pool);
   const lastSync = pool ? data.last_syncs[pool] : undefined;
   const busy = m.addMember.isPending || m.updateStock.isPending || m.removeMember.isPending
@@ -102,7 +110,7 @@ export default function UniversePage() {
                     className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${
                       tab === t ? "bg-teal-700 text-white shadow-card"
                                 : "text-brand-mute hover:text-brand-text hover:bg-brand-soft"}`}>
-              {t === "ALL" ? "All" : `${POOL_META[t]?.icon ?? ""} ${t}`}
+              {t === "ALL" ? "All" : `${metaOf(t, usCodes.includes(t))?.icon ?? ""} ${t}`}
               <span className={`text-[10px] font-normal ml-1.5 ${tab === t ? "text-teal-100" : "text-brand-mute"}`}>
                 {t === "ALL" ? data.stocks.length : data.counts[t] ?? 0}
               </span>
@@ -132,13 +140,13 @@ export default function UniversePage() {
       {pool && (
         <div className="mb-4 space-y-3">
           <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3 flex flex-wrap items-center gap-3">
-            <span className="text-2xl">{POOL_META[pool]?.icon}</span>
+            <span className="text-2xl">{metaOf(pool, isUsPool)?.icon}</span>
             <div>
               <div className="font-display font-semibold">
                 {data.pools.find((p) => p.code === pool)?.name ?? pool}
-                <span className="ml-2 text-[10px] uppercase tracking-widest text-brand-mute font-semibold">{POOL_META[pool]?.kind}</span>
+                <span className="ml-2 text-[10px] uppercase tracking-widest text-brand-mute font-semibold">{metaOf(pool, isUsPool)?.kind}</span>
               </div>
-              <div className="text-xs text-brand-mute">{POOL_META[pool]?.blurb}</div>
+              <div className="text-xs text-brand-mute">{metaOf(pool, isUsPool)?.blurb}</div>
             </div>
             <div className="ml-auto text-[11px] text-brand-mute text-right">
               {lastSync
@@ -164,7 +172,7 @@ export default function UniversePage() {
 
       {/* Modals */}
       {form && (
-        <StockFormModal pool={pool ?? "F40"} initial={form.initial} existing={data.stocks} busy={busy}
+        <StockFormModal us={isUsPool} pool={pool ?? "F40"} initial={form.initial} existing={data.stocks} busy={busy}
           onClose={() => setForm(null)}
           onSave={(symbol, draft) => {
             if (form.initial) {
@@ -185,7 +193,7 @@ export default function UniversePage() {
           }} />
       )}
       {pasting && pool && (
-        <PasteModal pool={pool} busy={m.pasteMembers.isPending}
+        <PasteModal us={isUsPool} pool={pool} busy={m.pasteMembers.isPending}
           onPreview={(text, refresh, mode) => m.pasteMembers.mutateAsync({ pool, text, dryRun: true, refresh, mode })}
           onApply={(text, refresh, mode) => m.pasteMembers.mutateAsync({ pool, text, dryRun: false, refresh, mode })}
           onClose={onPasteClosed} />

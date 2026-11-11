@@ -233,14 +233,29 @@ def create_app(*, supabase_client: Optional[Any] = None,
             from plutus.sync.context import TRIGGER_ON_DEMAND, build_run_context
             from plutus.sync.worker import DailySyncWorker
 
-            as_of = _resolve_as_of(None)
-            run_ctx = build_run_context(
-                pool="PlayArea", symbols=symbols, trigger=TRIGGER_ON_DEMAND)
-            # Screener enrichment FIRST so the daily sync can stamp the
-            # fresh PE/PB/MCap into the snapshot it is about to write.
-            enrich_missing_fundamentals(
-                symbols, context={**run_ctx, "via": "on-demand fetch-on-miss"})
-            DailySyncWorker(run_context=run_ctx).run_all(symbols, as_of=as_of)
+            from plutus.markets import IN, get_market, split_by_market
+            from plutus.scripts.run_scan import strategies_for_market
+
+            # One sync per market: each has its own calendar, sync_jobs row
+            # and valuation source (Screener for IN, Yahoo for US).
+            as_of_by_market: dict = {}
+            for market, group in split_by_market(symbols).items():
+                if not group:
+                    continue
+                as_of = _resolve_as_of(None, market)
+                as_of_by_market[market] = as_of
+                run_ctx = build_run_context(
+                    pool="PlayArea" if market == IN else None,
+                    symbols=group, trigger=TRIGGER_ON_DEMAND)
+                if get_market(market).uses_screener:
+                    # Screener enrichment FIRST so the daily sync can stamp
+                    # the fresh PE/PB/MCap into the snapshot it writes.
+                    enrich_missing_fundamentals(
+                        group, context={**run_ctx, "via": "on-demand fetch-on-miss"})
+                else:
+                    run_ctx["market"] = market
+                DailySyncWorker.for_market(
+                    market, run_context=run_ctx).run_all(group, as_of=as_of)
 
             # Re-score: run the scan for each pool the symbols belong to.
             from plutus.adapters import supabase_client as _sb
@@ -255,10 +270,15 @@ def create_app(*, supabase_client: Optional[Any] = None,
             except Exception as exc:  # noqa: BLE001
                 log.warning("pool lookup failed: %s", exc)
             eng = ScanEngine(supabase_client=client)
-            # Rows are labelled by session date — scan the one just written.
-            scan_date = eng.resolve_snapshot_date(as_of) or as_of
             for pool in sorted(pools):
+                market = eng.pool_market_code(pool)
+                as_of = as_of_by_market.get(market)
+                if as_of is None:
+                    continue   # no symbol of this pool's market was synced
+                # Rows are labelled by session date — scan the pool's newest.
+                scan_date = eng.resolve_pool_snapshot_date(pool, as_of) or as_of
                 eng.run(pool_code=pool, snapshot_date=scan_date,
+                        strategy_ids=strategies_for_market(market),
                         triggered_by="api")
             log.info("on-demand sync done: %s (pools %s)", symbols, sorted(pools))
         except Exception as exc:  # noqa: BLE001

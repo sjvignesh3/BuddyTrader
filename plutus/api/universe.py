@@ -27,6 +27,11 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from plutus.markets import (
+    IN, US, default_exchange, market_of, pool_market, us_exchange,
+)
+from plutus.markets import canonical_symbol as _canonical_symbol
+
 logger = logging.getLogger(__name__)
 
 POOL_CODES = ("F40", "E40", "S200", "PlayArea")
@@ -45,7 +50,6 @@ SYNC_SELECT = ("id,pool_code,kind,status,mode,criteria,diff,error,"
                "triggered_by,created_at,applied_at,updated_at")
 
 _SUFFIX_RE = re.compile(r"\.(NS|BO)$", re.IGNORECASE)
-_SYMBOL_BODY_RE = re.compile(r"^[A-Z0-9&\-]{1,20}$")
 
 # Default S200 screen criteria (also seeded by migration 019). Strings only.
 DEFAULT_SCREEN_CRITERIA: Dict[str, Any] = {
@@ -82,20 +86,25 @@ def plain_symbol(symbol: str) -> str:
     return _SUFFIX_RE.sub("", (symbol or "").strip().upper())
 
 
-def canonical_symbol(raw: Any) -> Optional[str]:
-    """'tcs' / 'TCS' / 'TCS.NS' -> 'TCS.NS'; 'XYZ.BO' passes through.
-    Returns None for anything that is not a plausible NSE/BSE ticker."""
+def canonical_symbol(raw: Any, market: str = IN) -> Optional[str]:
+    """IN (default): 'tcs' / 'TCS' / 'TCS.NS' -> 'TCS.NS'; 'XYZ.BO' passes
+    through. US: 'nvda' -> 'NVDA', 'BRK.B' -> 'BRK-B'.
+    Returns None for anything that is not a plausible ticker in that market."""
+    return _canonical_symbol(raw, market)
+
+
+def stored_symbol(raw: Any) -> Optional[str]:
+    """A symbol as it appears in a URL / existing row -> stored form, with the
+    market read off the symbol itself ('TCS.NS' is IN, 'NVDA' is US). Use
+    `canonical_symbol(raw, market)` instead when a POOL gives the market —
+    a bare 'TCS' typed into an Indian pool means 'TCS.NS'."""
     if not isinstance(raw, str):
         return None
-    s = raw.strip().upper()
-    if not s:
-        return None
-    m = _SUFFIX_RE.search(s)
-    suffix = m.group(0).upper() if m else ".NS"
-    body = _SUFFIX_RE.sub("", s)
-    if not _SYMBOL_BODY_RE.match(body):
-        return None
-    return f"{body}{suffix}"
+    return _canonical_symbol(raw, market_of(raw))
+
+
+def _bad_symbol_reason(market: str) -> str:
+    return "not a valid US ticker" if market == US else "not a valid NSE/BSE symbol"
 
 
 def normalize_cap_type(raw: Any) -> Optional[str]:
@@ -153,7 +162,8 @@ def _clean_stock_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def parse_import_rows(rows: Iterable[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+def parse_import_rows(rows: Iterable[Dict[str, Any]],
+                      market: str = IN) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
     """Validate import rows -> (clean rows keyed by canonical symbol, rejects).
     Duplicate symbols collapse to one row (last non-empty value wins)."""
     clean: Dict[str, Dict[str, Any]] = {}
@@ -162,12 +172,16 @@ def parse_import_rows(rows: Iterable[Dict[str, Any]]) -> Tuple[List[Dict[str, An
         if not isinstance(raw, dict):
             rejects.append({"symbol": str(raw), "reason": "not an object"})
             continue
-        sym = canonical_symbol(raw.get("symbol"))
+        sym = canonical_symbol(raw.get("symbol"), market)
         if sym is None:
             rejects.append({"symbol": str(raw.get("symbol", "")),
-                            "reason": "not a valid NSE/BSE symbol"})
+                            "reason": _bad_symbol_reason(market)})
             continue
         row = clean.setdefault(sym, {"symbol": sym})
+        if market == US:
+            exch = us_exchange(raw.get("exchange"))
+            if exch:
+                row["exchange"] = exch
         name = raw.get("name")
         if isinstance(name, str) and name.strip():
             row["name"] = name.strip()
@@ -177,6 +191,8 @@ def parse_import_rows(rows: Iterable[Dict[str, Any]]) -> Tuple[List[Dict[str, An
         industry = raw.get("industry")
         if isinstance(industry, str) and industry.strip():
             row["industry"] = industry.strip()
+        if market != IN:
+            continue   # cap bucket + criteria group are Indian concepts
         cap = normalize_cap_type(raw.get("cap_type_manual") or raw.get("cap_type") or raw.get("cap"))
         if cap:
             row["cap_type_manual"] = cap
@@ -195,7 +211,39 @@ def parse_import_rows(rows: Iterable[Dict[str, Any]]) -> Tuple[List[Dict[str, An
 
 
 _PREFIX_RE = re.compile(r"^(NSE|BSE)\s*:\s*", re.IGNORECASE)
+_US_PREFIX_RE = re.compile(r"^([A-Z]+)\s*:\s*", re.IGNORECASE)
 PASTE_MAX_SYMBOLS = 300
+
+
+def parse_us_symbol_list(text: Any) -> Tuple[List[str], List[str], Dict[str, str]]:
+    """Free-text US ticker list -> (symbols, rejected tokens, exchange hints).
+
+    Accepts TradingView exports ('NASDAQ:SNDK,' / 'NYSE:CAT'), or plain
+    tickers separated by comma / space / newline / semicolon. The prefix,
+    when present and recognised, is returned as that symbol's exchange hint.
+    Order preserved, duplicates dropped."""
+    if not isinstance(text, str):
+        return [], [], {}
+    out: List[str] = []
+    rejects: List[str] = []
+    hints: Dict[str, str] = {}
+    seen: Set[str] = set()
+    for tok in re.split(r"[,\s;]+", text):
+        tok = tok.strip().strip('"').strip("'")
+        if not tok:
+            continue
+        m = _US_PREFIX_RE.match(tok)
+        sym = canonical_symbol(_US_PREFIX_RE.sub("", tok), US)
+        if sym is None:
+            rejects.append(tok)
+            continue
+        exch = us_exchange(m.group(1)) if m else None
+        if exch:
+            hints[sym] = exch
+        if sym not in seen:
+            seen.add(sym)
+            out.append(sym)
+    return out, rejects, hints
 
 
 def parse_symbol_list(text: Any) -> Tuple[List[str], List[str]]:
@@ -248,9 +296,11 @@ def classify_sector_group(sector: Any, industry: Any) -> Optional[str]:
     return "Normal"
 
 
-def fields_from_info(info: Dict[str, Any]) -> Dict[str, Any]:
+def fields_from_info(info: Dict[str, Any], market: str = IN) -> Dict[str, Any]:
     """yfinance `.info` -> the universe columns we can fill. Never raises;
-    missing keys simply stay absent so existing values are not overwritten."""
+    missing keys simply stay absent so existing values are not overwritten.
+    US: no cap bucket / criteria group (₹-crore cut-offs and Banks / NBFC
+    rules are Indian), but the listing exchange is filled."""
     from plutus.metrics.cap_bucket import classify_market_cap
     from plutus.registry.types import to_decimal
 
@@ -266,6 +316,11 @@ def fields_from_info(info: Dict[str, Any]) -> Dict[str, Any]:
     industry = info.get("industry")
     if isinstance(industry, str) and industry.strip():
         out["industry"] = industry.strip()
+    if market == US:
+        exch = us_exchange(info.get("exchange"))
+        if exch:
+            out["exchange"] = exch
+        return out
     mcap = info.get("marketCap")
     if mcap is not None:
         try:
@@ -284,8 +339,12 @@ def fields_from_info(info: Dict[str, Any]) -> Dict[str, Any]:
 _ENRICH_FIELDS = ("name", "sector", "industry", "cap_type_manual", "sector_group")
 
 
-def needs_enrichment(existing: Optional[Dict[str, Any]]) -> bool:
-    return existing is None or any(not existing.get(k) for k in _ENRICH_FIELDS)
+_ENRICH_FIELDS_US = ("name", "sector", "industry")
+
+
+def needs_enrichment(existing: Optional[Dict[str, Any]], market: str = IN) -> bool:
+    fields = _ENRICH_FIELDS_US if market == US else _ENRICH_FIELDS
+    return existing is None or any(not existing.get(k) for k in fields)
 
 
 def compute_pool_diff(
@@ -326,7 +385,8 @@ def compute_pool_diff(
             continue
         changed = any(
             k in r and r[k] != existing.get(k)
-            for k in ("name", "sector", "industry", "cap_type_manual", "sector_group")
+            for k in ("name", "sector", "industry", "cap_type_manual",
+                      "sector_group", "exchange")
         )
         (updated if changed else unchanged).append(sym)
     removed = sorted(members_now - incoming_syms) if mode == "replace" else []
@@ -415,6 +475,14 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
             raise HTTPException(status_code=404, detail=f"pool {code} not found")
         return rows[0]
 
+    def _editable_pool(code: str) -> str:
+        """404 / 403 guard for a membership edit; returns the pool's market.
+        Every US pool is hand-curated, so all of them are editable."""
+        market = pool_market(_pool_or_404(code))
+        if market == IN and code not in EDITABLE_POOLS:
+            raise HTTPException(status_code=403, detail=f"{code} is not editable")
+        return market
+
     def _all_stocks() -> Dict[str, Dict[str, Any]]:
         rows = _rows(client().table("stocks").select(STOCK_SELECT)
                      .order("symbol").limit(5000).execute())
@@ -465,7 +533,7 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
         if existing is None:
             row = {
                 "symbol": sym,
-                "exchange": "BSE" if sym.endswith(".BO") else "NSE",
+                "exchange": fields.get("exchange") or default_exchange(sym),
                 "active": True,
                 "pools": [pool],
                 "metadata": {"membership": {pool: {"source": source, "at": _now()}}},
@@ -484,6 +552,8 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
         for k, v in fields.items():
             if k in STOCK_EDIT_FIELDS and v is not None:
                 patch[k] = v
+        if fields.get("exchange") and market_of(sym) == US:
+            patch["exchange"] = fields["exchange"]
         return _update_stock(sym, patch)
 
     def _remove_member(existing: Dict[str, Any], pool: str,
@@ -531,17 +601,22 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
             "counts": counts,
             "journal_refs": _journal_refs(),
             "last_syncs": {k: to_wire(v) for k, v in _latest_applied_syncs().items()},
-            "editable_pools": sorted(EDITABLE_POOLS),
+            "editable_pools": sorted(
+                set(EDITABLE_POOLS) | {p["code"] for p in pools if pool_market(p) != IN}),
         }
 
     # -- single stock -------------------------------------------------------
     @app.put("/api/universe/stocks/{symbol}")
     @guard
     def update_stock(symbol: str, payload: dict = Body(...)) -> dict:
-        sym = canonical_symbol(symbol)
+        sym = stored_symbol(symbol)
         if sym is None:
             raise HTTPException(status_code=400, detail="invalid symbol")
         existing = _stock(sym)
+        if existing is None and market_of(sym) == US:
+            # A bare 'TCS' in the URL is an Indian symbol missing its suffix.
+            sym = canonical_symbol(symbol) or sym
+            existing = _stock(sym)
         if existing is None:
             raise HTTPException(status_code=404, detail=f"{sym} is not in the universe")
         patch = _clean_stock_fields(payload)
@@ -553,13 +628,18 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
     @app.post("/api/universe/pools/{code}/members")
     @guard
     def add_member(code: str, payload: dict = Body(...)) -> dict:
-        _pool_or_404(code)
-        if code not in EDITABLE_POOLS:
-            raise HTTPException(status_code=403, detail=f"{code} is not editable")
-        sym = canonical_symbol(payload.get("symbol"))
+        market = _editable_pool(code)
+        sym = canonical_symbol(payload.get("symbol"), market)
         if sym is None:
-            raise HTTPException(status_code=400, detail="symbol is required (e.g. TCS or TCS.NS)")
+            raise HTTPException(
+                status_code=400,
+                detail=("symbol is required (e.g. NVDA)" if market == US
+                        else "symbol is required (e.g. TCS or TCS.NS)"))
         fields = _clean_stock_fields(payload)
+        if market == US:
+            exch = us_exchange(payload.get("exchange"))
+            if exch:
+                fields["exchange"] = exch
         existing = _stock(sym)
         already = existing is not None and code in (existing.get("pools") or [])
         row = _add_member(sym, code, fields, existing=existing, source="manual")
@@ -568,10 +648,8 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
     @app.delete("/api/universe/pools/{code}/members/{symbol}")
     @guard
     def remove_member(code: str, symbol: str) -> dict:
-        _pool_or_404(code)
-        if code not in EDITABLE_POOLS:
-            raise HTTPException(status_code=403, detail=f"{code} is not editable")
-        sym = canonical_symbol(symbol)
+        market = _editable_pool(code)
+        sym = canonical_symbol(symbol, market)
         existing = _stock(sym) if sym else None
         if existing is None or code not in (existing.get("pools") or []):
             raise HTTPException(status_code=404, detail=f"{symbol} is not in {code}")
@@ -582,14 +660,12 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
     @app.post("/api/universe/pools/{code}/import")
     @guard
     def import_members(code: str, payload: dict = Body(...)) -> dict:
-        _pool_or_404(code)
-        if code not in EDITABLE_POOLS:
-            raise HTTPException(status_code=403, detail=f"{code} is not editable")
+        market = _editable_pool(code)
         mode = str(payload.get("mode") or "merge").lower()
         if mode not in ("merge", "replace"):
             raise HTTPException(status_code=400, detail="mode must be merge or replace")
         dry_run = bool(payload.get("dry_run", False))
-        incoming, rejects = parse_import_rows(payload.get("rows") or [])
+        incoming, rejects = parse_import_rows(payload.get("rows") or [], market)
         if not incoming:
             raise HTTPException(status_code=400, detail="no valid rows to import")
 
@@ -629,10 +705,12 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
     @app.post("/api/universe/pools/{code}/paste")
     @guard
     def paste_members(code: str, payload: dict = Body(...)) -> dict:
-        _pool_or_404(code)
-        if code not in EDITABLE_POOLS:
-            raise HTTPException(status_code=403, detail=f"{code} is not editable")
-        symbols, rejected = parse_symbol_list(payload.get("text"))
+        market = _editable_pool(code)
+        hints: Dict[str, str] = {}
+        if market == US:
+            symbols, rejected, hints = parse_us_symbol_list(payload.get("text"))
+        else:
+            symbols, rejected = parse_symbol_list(payload.get("text"))
         if not symbols:
             raise HTTPException(status_code=400, detail="no symbols found in the pasted text")
         if len(symbols) > PASTE_MAX_SYMBOLS:
@@ -653,10 +731,10 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
             fields: Dict[str, Any] = {}
             source = "existing"
             error: Optional[str] = None
-            if refresh or needs_enrichment(existing):
+            if refresh or needs_enrichment(existing, market):
                 res = fetch_info(sym)
                 if getattr(res, "ok", False):
-                    fetched = fields_from_info(res.value or {})
+                    fetched = fields_from_info(res.value or {}, market)
                     # Fill gaps only (refresh overwrites) — never blank a value
                     # the owner typed by hand.
                     for k, v in fetched.items():
@@ -666,6 +744,9 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
                 else:
                     source = "failed"
                     error = getattr(res, "error", None) or "lookup failed"
+            if sym in hints and not fields.get("exchange") \
+                    and (existing is None or refresh):
+                fields["exchange"] = hints[sym]   # 'NASDAQ:SNDK' said so
             merged = {**(existing or {}), **fields}
             rows.append({"symbol": sym, **fields})
             details.append({
@@ -679,10 +760,11 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
                 "industry": merged.get("industry"),
                 "cap_type_manual": merged.get("cap_type_manual"),
                 "sector_group": merged.get("sector_group"),
+                "exchange": merged.get("exchange"),
             })
 
         diff = compute_pool_diff(code, current, rows, mode=mode)
-        diff["rejected"] = [{"symbol": t, "reason": "not a valid NSE/BSE symbol"} for t in rejected]
+        diff["rejected"] = [{"symbol": t, "reason": _bad_symbol_reason(market)} for t in rejected]
         # Replace mode: members not pasted leave the pool. A stock with no pool
         # left is retired unless the journal still holds it (then it stays
         # active so its LTP keeps syncing) — surfaced here for the preview.

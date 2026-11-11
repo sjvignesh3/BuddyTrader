@@ -62,6 +62,8 @@ export interface Pool {
   display_order: number;
   strategies: string[];
   metadata: Record<string, unknown>;
+  /** "IN" | "US" (migration 026). Absent on an un-migrated database = IN. */
+  market?: "IN" | "US";
 }
 
 export interface Stock {
@@ -141,7 +143,7 @@ export interface Fundamentals {
 }
 
 /** On-demand sync — workflow keys the API can dispatch on GitHub. */
-export type SyncWorkflow = "daily" | "quarterly" | "ratios";
+export type SyncWorkflow = "daily" | "daily_us" | "quarterly" | "ratios";
 
 export interface TriggerStatus {
   configured: boolean;

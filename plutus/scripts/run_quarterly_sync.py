@@ -18,6 +18,7 @@ from typing import Any, List, Optional, Sequence
 from plutus.alerts.sync_hook import maybe_alert_on_run_report
 from plutus.sync.context import build_run_context
 from plutus.sync.quarterly import QuarterlySyncWorker, apply_manual_overrides
+from plutus.markets import IN, market_of
 
 logger = logging.getLogger("plutus.run_quarterly_sync")
 
@@ -35,7 +36,8 @@ def _load_symbols_from_db(*, pool, limit, supabase_client=None) -> List[str]:
             if pool not in tags:
                 continue
         sym = r.get("symbol")
-        if sym:
+        # Screener.in covers Indian companies only — US tickers are skipped.
+        if sym and market_of(sym) == IN:
             symbols.append(sym)
     if limit is not None:
         symbols = symbols[:limit]

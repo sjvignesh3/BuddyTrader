@@ -8,9 +8,10 @@
 import { useMemo } from "react";
 
 export default function TradingViewChart({ tvSymbol }: {
-  /** Exchange-qualified symbol, e.g. "NSE:DIXON" or "BSE:500002". */
+  /** Exchange-qualified symbol, e.g. "NSE:DIXON", "BSE:500002", "NASDAQ:SNDK". */
   tvSymbol: string;
 }) {
+  const us = /^(NASDAQ|NYSE|AMEX):/.test(tvSymbol) || !tvSymbol.includes(":");
   const src = useMemo(() => {
     const q = new URLSearchParams({
       symbol: tvSymbol,
@@ -18,8 +19,9 @@ export default function TradingViewChart({ tvSymbol }: {
       range: "12M",               // open at 1 year of daily candles
       theme: "light",
       style: "1",                 // candles
-      timezone: "Asia/Kolkata",
-      locale: "in",
+      // US charts read in exchange time; Indian ones in IST, as before.
+      timezone: us ? "America/New_York" : "Asia/Kolkata",
+      locale: us ? "en" : "in",
       withdateranges: "1",        // 1M / 3M / 6M / 1Y / 5Y / All strip
       hide_side_toolbar: "1",
       allow_symbol_change: "0",
@@ -28,7 +30,7 @@ export default function TradingViewChart({ tvSymbol }: {
       toolbar_bg: "#f7f5f0",
     });
     return `https://s.tradingview.com/widgetembed/?${q.toString()}#%7B%22page-uri%22%3A%22plutus%22%7D`;
-  }, [tvSymbol]);
+  }, [tvSymbol, us]);
 
   return (
     <div className="rounded-xl overflow-hidden ring-1 ring-brand-border bg-white">

@@ -12,6 +12,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { athFallThreshold, passesAthRule, type StockRow } from "../lib/rows";
+import { fmtMarketCap, fmtPrice, plainSymbol, tvChartUrl, type Market } from "../lib/market";
 import ScoreRing from "./ScoreRing";
 import SignalBadge from "./SignalBadge";
 
@@ -208,12 +209,48 @@ const RALLY_COLS: Col[] = [
 /** plain NSE symbol (journal convention) from a yfinance one */
 const plain = (symbol: string) => symbol.replace(/\.(NS|BO)$/i, "");
 
+// ---- US pools -------------------------------------------------------------------
+// Same table, minus the two Indian-only columns: the cap bucket (₹-crore
+// cut-offs) gives way to market cap in dollars, and the fundamental score
+// (Screener.in data) is dropped. Prices are grouped the US way.
+const PRICE_KEYS = new Set(["close", "dma200", "low52w", "high52w", "ath"]);
+const US_MCAP_COL: Col = {
+  key: "marketCap", label: "MCap $", align: "right",
+  tip: "Market capitalisation in US dollars (Yahoo)",
+  value: (r) => r.marketCap,
+  render: (r) => <span className="text-brand-mute">{fmtMarketCap(r.marketCap, "US")}</span>,
+};
+
+function columnsForMarket(market: Market): Col[] {
+  if (market !== "US") return BASE_COLS;
+  return BASE_COLS.filter((c) => c.key !== "score").map((c) => {
+    if (c.key === "cap") return US_MCAP_COL;
+    if (c.key === "symbol") {
+      return { ...c, render: (r: StockRow) => (
+        <span className="font-sans font-semibold text-[12px]">{plainSymbol(r.symbol)}</span>) };
+    }
+    if (c.key === "downFromAthPct") {
+      return { ...c, tip: "Fall from all-time high (adjusted). ✓ = more than 30% below it." };
+    }
+    if (!PRICE_KEYS.has(c.key)) return c;
+    const cls = c.key === "close" ? "font-semibold" : "text-brand-mute";
+    return {
+      ...c,
+      label: c.key === "close" ? "Close $" : c.label,
+      render: (r: StockRow) => (
+        <span className={cls}>{fmtPrice(c.value(r) as number | null, "US")}</span>),
+    };
+  });
+}
+
 export default function StockTable({
   rows,
   pool,
   compared,
   onToggleCompare,
   heldSymbols,
+  market = "IN",
+  exchanges,
 }: {
   rows: StockRow[];
   pool: string;
@@ -221,27 +258,44 @@ export default function StockTable({
   onToggleCompare: (symbol: string) => void;
   /** plain symbols with an open Trading Journal position — shows 💼 */
   heldSymbols?: Set<string>;
+  /** The pool's market — US drops the cap + score columns and shows dollars. */
+  market?: Market;
+  /** symbol → listing exchange, for the TradingView link on US rows. */
+  exchanges?: Map<string, string>;
 }) {
   const navigate = useNavigate();
   const isRally = RALLY_POOLS.has(pool);
+  const isUs = market === "US";
   const columns = useMemo(() => {
-    // Decorate the symbol cell with the "held" marker when applicable.
-    const base = BASE_COLS.map((c) => c.key !== "symbol" ? c : {
+    // Decorate the symbol cell with the "held" marker (and, for US rows, a
+    // TradingView link) when applicable.
+    const base = columnsForMarket(market).map((c) => c.key !== "symbol" ? c : {
       ...c,
       render: (r: StockRow) => (
         <span className="inline-flex items-center gap-1">
           {c.render(r)}
-          {heldSymbols?.has(plain(r.symbol)) && (
+          {!isUs && heldSymbols?.has(plain(r.symbol)) && (
             <span title="Open position in your Trading Journal"
                   className="text-[10px] leading-none">💼</span>
+          )}
+          {isUs && (
+            <a href={tvChartUrl(r.symbol, exchanges?.get(r.symbol))}
+               target="_blank" rel="noopener noreferrer"
+               onClick={(e) => e.stopPropagation()}
+               title={`Open ${plainSymbol(r.symbol)} on TradingView`}
+               className="text-[10px] leading-none text-brand-mute hover:text-brand-accent">
+              📊
+            </a>
           )}
         </span>
       ),
     });
     return isRally ? [...base, ...RALLY_COLS] : [...base, SIGNAL_COL];
-  }, [isRally, heldSymbols]);
+  }, [isRally, heldSymbols, market, isUs, exchanges]);
 
-  const [sortKey, setSortKey] = useState<string>(isRally ? "daysSinceRally" : "score");
+  // US rows carry no fundamental score — lead with the signal instead.
+  const [sortKey, setSortKey] = useState<string>(
+    isRally ? "daysSinceRally" : isUs ? "bestStatus" : "score");
   const [sortAsc, setSortAsc] = useState<boolean>(isRally);
 
   const handleSort = (key: string) => {
@@ -328,16 +382,27 @@ export default function StockTable({
         </div>
       )}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 border-t border-brand-border bg-brand-soft text-[10px] text-brand-mute">
-        <span className="font-bold text-brand-accent">Score:</span>
-        <span><b className="text-teal-700">8–11</b> strong</span>
-        <span><b className="text-amber-700">6–7</b> moderate</span>
-        <span><b className="text-rose-600">0–5</b> weak</span>
-        <span>– = not scored yet</span>
-        <span className="border-l border-brand-border pl-3">
-          <span className="font-bold text-brand-accent">% ↓ ATH rule:</span>{" "}
-          <b>LRG</b> &gt;20 · <b>MID</b> &gt;30 · <b>SML/MCR</b> &gt;40 ·{" "}
-          <b className="text-teal-700">✓</b> clears it
-        </span>
+        {isUs ? (
+          <span>
+            <span className="font-bold text-brand-accent">US pool:</span>{" "}
+            prices in $ · no fundamental score yet ·{" "}
+            <span className="font-bold text-brand-accent">% ↓ ATH rule:</span> &gt;30 ·{" "}
+            <b className="text-teal-700">✓</b> clears it · 📊 opens TradingView
+          </span>
+        ) : (
+          <>
+            <span className="font-bold text-brand-accent">Score:</span>
+            <span><b className="text-teal-700">8–11</b> strong</span>
+            <span><b className="text-amber-700">6–7</b> moderate</span>
+            <span><b className="text-rose-600">0–5</b> weak</span>
+            <span>– = not scored yet</span>
+            <span className="border-l border-brand-border pl-3">
+              <span className="font-bold text-brand-accent">% ↓ ATH rule:</span>{" "}
+              <b>LRG</b> &gt;20 · <b>MID</b> &gt;30 · <b>SML/MCR</b> &gt;40 ·{" "}
+              <b className="text-teal-700">✓</b> clears it
+            </span>
+          </>
+        )}
         {isRally && (
           <span className="border-l border-brand-border pl-3">
             <b className="text-teal-700">% To Next Buy ≤ 0</b> = at/below re-entry ·{" "}

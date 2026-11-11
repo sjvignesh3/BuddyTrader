@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 from plutus.adapters import supabase_client as sb
 from plutus.adapters import yf_client as yf
 from plutus.adapters.result import Result
+from plutus.markets import IN, get_market
 from plutus.metrics.pipeline import SnapshotInputs, compute_snapshot
 from plutus.registry.fields import fields_for
 from plutus.sync.history_builder import (
@@ -30,6 +31,7 @@ from plutus.sync.history_builder import (
     extract_meta,
     merge_quote_bar,
     quote_bar,
+    valuation_from_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -192,10 +194,25 @@ class DailySyncWorker:
     upsert: Callable[..., Any] = sb.bulk_upsert
     load_screener_ratios: Callable[..., Dict[str, Dict[str, Any]]] = _default_load_screener_ratios
     job_type: str = DEFAULT_JOB_TYPE
+    # 'IN' | 'US' (plutus.markets). Decides the session calendar (IST vs New
+    # York) and the valuation source (Screener ratios vs Yahoo). A US worker
+    # must also be given the US job_type — see `for_market`.
+    market: str = IN
     # Stamped into sync_jobs.payload_json["context"] — trigger/pool/symbols.
     run_context: Optional[Dict[str, Any]] = None
     # Populated once per run_all from the screener_ratios table.
     _ratios_by_symbol: Optional[Dict[str, Dict[str, Any]]] = None
+
+    @classmethod
+    def for_market(cls, market: str, **kwargs: Any) -> "DailySyncWorker":
+        """Worker wired for one market: its own job_type (so the US run never
+        overwrites the Indian run's sync_jobs row) and calendar."""
+        m = get_market(market)
+        kwargs.setdefault("job_type", m.daily_job_type)
+        return cls(market=m.code, **kwargs)
+
+    def _uses_screener(self) -> bool:
+        return get_market(self.market).uses_screener
 
     # ---- Single symbol ----------------------------------------------------
     def run_symbol(
@@ -235,23 +252,30 @@ class DailySyncWorker:
             # back NaN and is dropped above) while the quote already carries
             # that close — stand the quote in so the row describes the LAST
             # session rather than the one before it.
-            qbar = quote_bar(info_res.value or {})
+            tz = get_market(self.market).tz
+            qbar = quote_bar(info_res.value or {}, tz=tz)
             if qbar is not None and qbar.d > as_of:
                 qbar = None  # backfill run: the quote describes a later session
             bars, synthesized = merge_quote_bar(bars, qbar)
 
-            meta = extract_meta(info_res.value or {})
-            if self._ratios_by_symbol is None:
-                # run_symbol called directly (not via run_all) — load once.
-                self._ratios_by_symbol = self.load_screener_ratios(
-                    client=self.supabase_client)
+            meta = extract_meta(info_res.value or {}, tz)
+            if not self._uses_screener():
+                # No Screener.in coverage: valuation rides on the Yahoo quote.
+                ratios = valuation_from_info(info_res.value or {})
+            else:
+                if self._ratios_by_symbol is None:
+                    # run_symbol called directly (not via run_all) — load once.
+                    self._ratios_by_symbol = self.load_screener_ratios(
+                        client=self.supabase_client)
+                ratios = self._ratios_by_symbol.get(symbol)
             inputs = SnapshotInputs(
                 symbol=symbol,
                 snapshot_date=as_of,
                 bars=bars,
                 info=info_res.value or {},
                 meta=meta,
-                screener_ratios=self._ratios_by_symbol.get(symbol),
+                screener_ratios=ratios,
+                market=self.market,
             )
             snap = compute_snapshot(inputs)
             rep.warnings = list(snap.get("errors") or [])
@@ -285,8 +309,8 @@ class DailySyncWorker:
         symbols_failed = 0
 
         # One SELECT for the whole run: latest weekly Screener PE/PB/MCap.
-        self._ratios_by_symbol = self.load_screener_ratios(
-            client=self.supabase_client)
+        self._ratios_by_symbol = (self.load_screener_ratios(
+            client=self.supabase_client) if self._uses_screener() else {})
 
         for sym in symbols:
             rep, row = self.run_symbol(sym, as_of, dry_run=dry_run)
@@ -335,7 +359,8 @@ class DailySyncWorker:
                   expected_session_date=expected.isoformat(),
                   session_date=session_date.isoformat(),
                   hint="market holiday, or Yahoo has not published the "
-                       "last session yet — re-run after ~16:00 IST")
+                       "last session yet — re-run after "
+                       + get_market(self.market).settle_hint)
         if stale:
             _warn("sync.stale_symbols", count=len(stale),
                   session_date=session_date.isoformat() if session_date else None,

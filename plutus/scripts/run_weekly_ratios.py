@@ -20,6 +20,7 @@ from typing import Any, List, Optional, Sequence
 from plutus.alerts.sync_hook import maybe_alert_on_run_report
 from plutus.sync.context import build_run_context
 from plutus.sync.weekly_ratios import WeeklyRatiosWorker
+from plutus.markets import IN, market_of
 
 logger = logging.getLogger("plutus.run_weekly_ratios")
 
@@ -33,7 +34,8 @@ def _load_symbols_from_db(*, pool, limit, supabase_client=None) -> List[str]:
     for r in rows:
         if pool and pool not in (r.get("pools") or []):
             continue
-        if r.get("symbol"):
+        # Screener.in covers Indian companies only — US tickers are skipped.
+        if r.get("symbol") and market_of(r["symbol"]) == IN:
             symbols.append(r["symbol"])
     return symbols[:limit] if limit is not None else symbols
 

@@ -334,6 +334,60 @@ class ScanEngine:
             return raw
         return date.fromisoformat(str(raw)[:10])
 
+    def resolve_pool_snapshot_date(self, pool_code: str,
+                                   on_or_before: date) -> Optional[date]:
+        """
+        Newest session on or before `on_or_before` that THIS POOL has rows for.
+
+        India and the US sync at different times and keep different holidays,
+        so the table-wide newest date can be a day only the other market
+        traded — scanning a pool on it would find nothing. None when the pool
+        is empty or has no snapshot that old.
+        """
+        cli = self.supabase_client or sb.get_client()
+        stocks_res = (cli.table("stocks").select("symbol,pools,active")
+                      .eq("active", True).execute())
+        symbols = [r["symbol"] for r in (getattr(stocks_res, "data", None) or [])
+                   if pool_code in (r.get("pools") or [])]
+        if not symbols:
+            return None
+        res = (
+            cli.table("daily_snapshots")
+               .select("snapshot_date")
+               .in_("symbol", symbols)
+               .lte("snapshot_date", on_or_before.isoformat())
+               .order("snapshot_date", desc=True)
+               .limit(1)
+               .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        if not rows:
+            return None
+        raw = rows[0].get("snapshot_date")
+        if isinstance(raw, date):
+            return raw
+        return date.fromisoformat(str(raw)[:10])
+
+    def pool_market_code(self, pool_code: str) -> str:
+        """'IN' | 'US' for a pool; IN when the pool or its column is unknown."""
+        from plutus.markets import IN, pool_market
+        cli = self.supabase_client or sb.get_client()
+        try:
+            res = cli.table("pools").select("*").eq("code", pool_code).limit(1).execute()
+            rows = getattr(res, "data", None) or []
+            return pool_market(rows[0]) if rows else IN
+        except Exception:  # noqa: BLE001 — never block a scan on a lookup
+            return IN
+
+    def list_pool_codes(self, market: str) -> List[str]:
+        """Pool codes of one market, in display order. A `pools` table without
+        the `market` column (migration 026 not applied) is all-IN."""
+        from plutus.markets import pool_market
+        cli = self.supabase_client or sb.get_client()
+        res = cli.table("pools").select("*").order("display_order").execute()
+        return [r["code"] for r in (getattr(res, "data", None) or [])
+                if r.get("code") and pool_market(r) == market]
+
     def _default_fetch_fundamentals(
         self, symbols: Sequence[str]
     ) -> Dict[str, Dict[str, Any]]:

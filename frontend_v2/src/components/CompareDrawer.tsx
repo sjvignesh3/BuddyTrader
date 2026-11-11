@@ -4,6 +4,7 @@
 // is marked, so "which is the better opportunity" answers itself.
 // -----------------------------------------------------------------------------
 import type { StockRow } from "../lib/rows";
+import { fmtMarketCap, marketOf } from "../lib/market";
 import ScoreRing from "./ScoreRing";
 import SignalBadge from "./SignalBadge";
 
@@ -55,6 +56,26 @@ const METRICS: MetricRow[] = [
   { label: "MCap ₹Cr", better: null, value: (r) => r.marketCapCr,
     fmt: (v) => (v === null ? "—" : Math.round(v).toLocaleString("en-IN")) },
 ];
+
+// US rows have no Screener.in data — these rows would be a column of dashes.
+const IN_ONLY = new Set([
+  "PE vs 5yr avg", "ROCE %", "ROE %", "Net D/E", "ROA %", "Gross NPA %",
+  "Net NPA %", "Pledging %",
+]);
+const nUs = (v: number | null) =>
+  v === null ? "—" : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function metricsFor(rows: StockRow[]): MetricRow[] {
+  if (!rows.length || rows.some((r) => marketOf(r.symbol) !== "US")) return METRICS;
+  return METRICS.filter((m) => !IN_ONLY.has(m.label)).map((m) => {
+    if (m.label === "Close ₹") return { ...m, label: "Close $", fmt: nUs };
+    if (m.label === "MCap ₹Cr") {
+      return { ...m, label: "MCap $", value: (r: StockRow) => r.marketCap,
+               fmt: (v: number | null) => fmtMarketCap(v, "US") };
+    }
+    return m;
+  });
+}
 
 export default function CompareDrawer({
   rows,
@@ -116,7 +137,7 @@ export default function CompareDrawer({
                                 className="text-brand-mute hover:text-rose-600 text-[11px]">✕</button>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <ScoreRing points={r.score} size={30} />
+                        {marketOf(r.symbol) !== "US" && <ScoreRing points={r.score} size={30} />}
                         <SignalBadge status={r.bestStatus} />
                       </div>
                     </div>
@@ -125,7 +146,7 @@ export default function CompareDrawer({
               </tr>
             </thead>
             <tbody className="tabular-nums">
-              {METRICS.map((m) => {
+              {metricsFor(rows).map((m) => {
                 const best = bestIdx(m);
                 return (
                   <tr key={m.label} className="border-t border-brand-border/60">

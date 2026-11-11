@@ -36,7 +36,22 @@ import StockNotes from "../components/StockNotes";
 import StockOpportunities from "../components/StockOpportunities";
 import StockPositions from "../components/StockPositions";
 import TradingViewChart from "../components/TradingViewChart";
-import { fmtCr, fmtDate, fmtMoney, fmtPct } from "../lib/money";
+import { fmtDate, fmtMoney as fmtInr, fmtPct } from "../lib/money";
+import {
+  currencySymbol, fmtMarketCap, fmtPrice, marketOf, tvChartUrl, tvSymbol as tvSymbolOf,
+} from "../lib/market";
+
+// Prices on this page follow the stock's market: ₹ with Indian digit grouping
+// for NSE / BSE, $ with US grouping for a US ticker. `cur` is the sign and
+// `fmtMoney` the number; both are picked once per render from the symbol.
+type Money = (v: number | string | null | undefined) => string;
+function moneyFor(symbol: string): { cur: string; fmtMoney: Money } {
+  const market = marketOf(symbol);
+  return {
+    cur: currencySymbol(market),
+    fmtMoney: market === "US" ? (v) => fmtPrice(v, "US") : (v) => fmtInr(v),
+  };
+}
 
 const STRATEGY_ORDER = [
   "envelope_200dma", "week52_high_low", "rally_20_percent", "fundamental_screener",
@@ -109,9 +124,10 @@ function KV({ k, v }: { k: string; v: React.ReactNode }) {
 }
 
 /** 52-week low→high band with a marker at the current close. */
-function RangeBar({ low, high, close }: {
-  low: number | null; high: number | null; close: number | null;
+function RangeBar({ low, high, close, symbol }: {
+  low: number | null; high: number | null; close: number | null; symbol: string;
 }) {
+  const { cur, fmtMoney } = moneyFor(symbol);
   if (low === null || high === null || close === null || high <= low) return null;
   const frac = Math.max(0, Math.min(1, (close - low) / (high - low)));
   return (
@@ -120,12 +136,12 @@ function RangeBar({ low, high, close }: {
         <span
           className="absolute -top-[3px] w-3.5 h-3.5 rounded-full bg-white ring-2 ring-teal-700 shadow"
           style={{ left: `calc(${(frac * 100).toFixed(1)}% - 7px)` }}
-          title={`Close ₹${fmtMoney(close)}`}
+          title={`Close ${cur}${fmtMoney(close)}`}
         />
       </div>
       <div className="flex justify-between text-[10px] text-brand-mute font-mono tabular-nums mt-1.5">
-        <span>₹{fmtMoney(low)}</span>
-        <span>₹{fmtMoney(high)}</span>
+        <span>{cur}{fmtMoney(low)}</span>
+        <span>{cur}{fmtMoney(high)}</span>
       </div>
     </div>
   );
@@ -138,6 +154,7 @@ function RangeBar({ low, high, close }: {
  *   turns the zones into actual ₹ entry levels with distance from CMP.
  */
 function DmaEnvelope({ row }: { row: StockRow }) {
+  const { cur, fmtMoney } = moneyFor(row.symbol);
   const dma = row.dma200;
   const below = row.belowDmaPct;
   const close = row.close;
@@ -189,13 +206,13 @@ function DmaEnvelope({ row }: { row: StockRow }) {
       </div>
 
       {/* ₹ entry ladder */}
-      <KV k="200 DMA" v={`₹${fmtMoney(dma)}`} />
-      <KV k="Opportunity ≤ ₹" v={
+      <KV k="200 DMA" v={`${cur}${fmtMoney(dma)}`} />
+      <KV k={`Opportunity ≤ ${cur}`} v={
         <span className={below >= 9 ? "text-amber-700" : ""}>
           {fmtMoney(oppLevel)}
           <span className="text-[9px] text-brand-mute font-sans"> ({away(oppLevel) >= 0 ? "+" : ""}{away(oppLevel).toFixed(1)}%)</span>
         </span>} />
-      <KV k="Buy zone ≤ ₹" v={
+      <KV k={`Buy zone ≤ ${cur}`} v={
         <span className={below >= 14 ? "text-teal-700" : ""}>
           {fmtMoney(buyLevel)}
           <span className="text-[9px] text-brand-mute font-sans"> ({away(buyLevel) >= 0 ? "+" : ""}{away(buyLevel).toFixed(1)}%)</span>
@@ -210,6 +227,8 @@ export default function StockDetailPage() {
   const { symbol = "" } = useParams();
   const navigate = useNavigate();
   const plain = symbol.replace(/\.(NS|BO)$/i, "");
+  const isUs = marketOf(symbol) === "US";
+  const { cur, fmtMoney } = moneyFor(symbol);
 
   useEffect(() => {
     document.title = `${plain} · Plutus`;
@@ -226,7 +245,8 @@ export default function StockDetailPage() {
     staleTime: 60_000,
     retry: 1, // journal may be absent in prod builds — degrade silently
   });
-  const isHeld = (positionsQ.data?.positions ?? []).some((p) => p.symbol === plain);
+  // The Trading Journal is Indian-only for now: a US ticker never matches it.
+  const isHeld = !isUs && (positionsQ.data?.positions ?? []).some((p) => p.symbol === plain);
 
   const row: StockRow | null = useMemo(() => {
     const snapshots = snapsQ.data?.snapshots ?? [];
@@ -268,8 +288,9 @@ export default function StockDetailPage() {
   // Full-site links use NSE; the EMBED uses BSE because NSE licensing blocks
   // its data inside third-party TradingView widgets ("only available on
   // TradingView"), while BSE quotes render fine and tickers share codes.
-  const tvSymbol = `${/\.BO$/i.test(row.symbol) ? "BSE" : "NSE"}:${plain}`;
-  const tvEmbedSymbol = `BSE:${plain}`;
+  // US: one exchange-qualified symbol ("NASDAQ:SNDK") serves both.
+  const tvSymbol = tvSymbolOf(row.symbol, stock?.exchange);
+  const tvEmbedSymbol = isUs ? tvSymbol : `BSE:${plain}`;
   const fromHigh = num(s.distance_from_52w_high_pct);
 
   return (
@@ -290,14 +311,32 @@ export default function StockDetailPage() {
               💼 Holding
             </span>
           )}
-          <a
-            href={`https://www.screener.in/company/${plain}/consolidated/`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-brand-panel ring-1 ring-brand-border text-brand-accent hover:bg-teal-50 hover:ring-teal-300 transition-colors"
-          >
-            screener.in <span className="text-[10px]">↗</span>
-          </a>
+          {isUs && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-brand-soft text-brand-mute ring-1 ring-brand-border"
+                  title="US-listed — prices in US dollars">
+              {stock?.exchange && stock.exchange !== "NSE" ? stock.exchange : "US"}
+            </span>
+          )}
+          {isUs ? (
+            <a
+              href={tvChartUrl(row.symbol, stock?.exchange)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-brand-panel ring-1 ring-brand-border text-brand-accent hover:bg-teal-50 hover:ring-teal-300 transition-colors"
+              title="Open the full chart on TradingView"
+            >
+              📊 {tvSymbol} <span className="text-[10px]">↗</span>
+            </a>
+          ) : (
+            <a
+              href={`https://www.screener.in/company/${plain}/consolidated/`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-brand-panel ring-1 ring-brand-border text-brand-accent hover:bg-teal-50 hover:ring-teal-300 transition-colors"
+            >
+              screener.in <span className="text-[10px]">↗</span>
+            </a>
+          )}
         </div>
         <div className="text-[11px] text-brand-mute mt-0.5">
           {stock?.name ?? "—"} · {row.sector ?? "—"}
@@ -312,7 +351,7 @@ export default function StockDetailPage() {
           <div>
             <div className="text-[10px] uppercase tracking-wider text-brand-mute">Close</div>
             <div className="font-mono tabular-nums text-3xl font-bold">
-              ₹{fmtMoney(row.close)}
+              {cur}{fmtMoney(row.close)}
             </div>
             {row.trendPct !== null && (
               <div className={`text-xs font-semibold mt-0.5 ${
@@ -327,17 +366,19 @@ export default function StockDetailPage() {
               <SignalBadge status={row.bestStatus} />
               <div className="text-[9px] uppercase tracking-wider text-brand-mute mt-1.5">Signal</div>
             </div>
-            <div className="text-center">
-              <ScoreRing points={notScored ? null : row.score} size={44} />
-              <div className="text-[9px] uppercase tracking-wider text-brand-mute mt-1">Funda /11</div>
-            </div>
+            {!isUs && (
+              <div className="text-center">
+                <ScoreRing points={notScored ? null : row.score} size={44} />
+                <div className="text-[9px] uppercase tracking-wider text-brand-mute mt-1">Funda /11</div>
+              </div>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-3.5 pt-3.5 border-t border-brand-border/60">
           <Chip label="Open" value={fmtMoney(s.open)} />
           <Chip label="High" value={fmtMoney(s.high)} />
           <Chip label="Low" value={fmtMoney(s.low)} />
-          <Chip label="MCap" value={fmtCr(s.market_cap as string)} />
+          <Chip label="MCap" value={fmtMarketCap(s.market_cap as string, isUs ? "US" : "IN")} />
           <Chip label="PE" value={row.pe?.toFixed(1) ?? "—"} />
           <Chip label="PB" value={row.pb?.toFixed(2) ?? "—"} />
         </div>
@@ -348,7 +389,7 @@ export default function StockDetailPage() {
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <SectionTitle>Price chart</SectionTitle>
           <a
-            href={`https://in.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}`}
+            href={tvChartUrl(row.symbol, stock?.exchange)}
             target="_blank"
             rel="noopener noreferrer"
             className="ml-auto -mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md bg-brand-soft ring-1 ring-brand-border text-brand-accent hover:bg-teal-50 hover:ring-teal-300 transition-colors"
@@ -360,13 +401,13 @@ export default function StockDetailPage() {
         <TradingViewChart tvSymbol={tvEmbedSymbol} />
         {row.dma200 !== null && (
           <div className="mt-2 text-[10px] text-brand-mute">
-            Key levels — 200 DMA <b className="font-mono text-brand-text">₹{fmtMoney(row.dma200)}</b>
-            {" "}· DMA buy zone <b className="font-mono text-sky-800">≤ ₹{fmtMoney(row.dma200 * (1 - 0.14))}</b>
+            Key levels — 200 DMA <b className="font-mono text-brand-text">{cur}{fmtMoney(row.dma200)}</b>
+            {" "}· DMA buy zone <b className="font-mono text-sky-800">≤ {cur}{fmtMoney(row.dma200 * (1 - 0.14))}</b>
             {row.hasRally && row.rallyLow !== null && (
-              <> · rally re-entry <b className="font-mono text-teal-800">₹{fmtMoney(row.rallyLow)}</b></>
+              <> · rally re-entry <b className="font-mono text-teal-800">{cur}{fmtMoney(row.rallyLow)}</b></>
             )}
             {row.hasRally && row.rallyHigh !== null && (
-              <> · rally exit <b className="font-mono text-rose-700">₹{fmtMoney(row.rallyHigh)}</b></>
+              <> · rally exit <b className="font-mono text-rose-700">{cur}{fmtMoney(row.rallyHigh)}</b></>
             )}
           </div>
         )}
@@ -385,7 +426,7 @@ export default function StockDetailPage() {
               <span className={row.fromLowPct !== null && row.fromLowPct <= 5
                 ? "text-teal-700" : ""}>{fmtPct(row.fromLowPct, 1)}</span>} />
             <KV k="From high" v={fmtPct(fromHigh, 1)} />
-            <RangeBar low={row.low52w} high={row.high52w} close={row.close} />
+            <RangeBar low={row.low52w} high={row.high52w} close={row.close} symbol={row.symbol} />
           </TechCard>
 
           <TechCard title="All-time high">
@@ -395,25 +436,28 @@ export default function StockDetailPage() {
               const v = row.downFromAthPct;
               return (
                 <>
-                  <KV k="ATH (adjusted)" v={`₹${fmtMoney(row.ath)}`} />
+                  <KV k="ATH (adjusted)" v={`${cur}${fmtMoney(row.ath)}`} />
                   <KV k="Down from ATH" v={
                     <span className={pass ? "text-teal-700"
                       : v !== null && v >= t - 10 ? "text-amber-700" : ""}>
                       {fmtPct(v, 1)}
                     </span>} />
-                  <KV k={`Rule (${row.cap ?? "Mid"} cap)`} v={`> ${t}%`} />
+                  <KV k={isUs ? "Rule" : `Rule (${row.cap ?? "Mid"} cap)`} v={`> ${t}%`} />
                   {pass !== null && (
                     <div className={`mt-2 text-[10px] font-bold px-2 py-1 rounded-md ring-1 inline-block ${
                       pass
                         ? "bg-teal-50 text-teal-800 ring-teal-200"
                         : "bg-brand-soft text-brand-mute ring-brand-border"}`}>
                       {pass
-                        ? "✓ Deep-value zone — clears its cap's fall rule"
+                        ? (isUs ? "✓ Deep-value zone — clears the fall rule"
+                                : "✓ Deep-value zone — clears its cap's fall rule")
                         : `${(t - (v ?? 0)).toFixed(1)}% more fall to clear the rule`}
                     </div>
                   )}
                   <div className="text-[10px] text-brand-mute mt-2">
-                    Fall-from-ATH rule: Large &gt;20% · Mid &gt;30% · Small/Micro &gt;40%
+                    {isUs
+                      ? <>Fall-from-ATH rule for US stocks: &gt;30% (no cap buckets yet)</>
+                      : <>Fall-from-ATH rule: Large &gt;20% · Mid &gt;30% · Small/Micro &gt;40%</>}
                   </div>
                 </>
               );
@@ -433,10 +477,10 @@ export default function StockDetailPage() {
                     </span> : "—"} />
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   <span className="text-[10px] font-mono font-bold px-2 py-1 rounded-md bg-teal-50 text-teal-800 ring-1 ring-teal-200">
-                    📥 Buy ₹{fmtMoney(row.rallyLow)}
+                    📥 Buy {cur}{fmtMoney(row.rallyLow)}
                   </span>
                   <span className="text-[10px] font-mono font-bold px-2 py-1 rounded-md bg-rose-50 text-rose-700 ring-1 ring-rose-200">
-                    📤 Sell ₹{fmtMoney(row.rallyHigh)}
+                    📤 Sell {cur}{fmtMoney(row.rallyHigh)}
                   </span>
                 </div>
               </>
@@ -480,8 +524,8 @@ export default function StockDetailPage() {
         </div>
       </div>
 
-      {/* ── Fundamental panel ── */}
-      <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
+      {/* ── Fundamental panel (Screener.in data — Indian stocks only) ── */}
+      {!isUs && <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
         <div className="flex items-center gap-3 mb-2.5">
           <ScoreRing points={notScored ? null : funda?.points ?? null} size={40} />
           <div className="flex-1">
@@ -596,23 +640,29 @@ export default function StockDetailPage() {
             </div>
           </>
         )}
-      </div>
+      </div>}
 
       {/* ── My notes (dated views — quarters/months/years) ── */}
       <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
         <StockNotes symbol={plain} />
       </div>
 
-      {/* ── My opportunities (Trading Journal plans for this stock) ── */}
-      <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
-        <StockOpportunities symbol={plain} row={row} />
-      </div>
+      {/* The Trading Journal works in rupees — US plans and positions arrive
+          with the US journal (phase 2). */}
+      {!isUs && (
+        <>
+          {/* ── My opportunities (Trading Journal plans for this stock) ── */}
+          <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
+            <StockOpportunities symbol={plain} row={row} />
+          </div>
 
-      {/* ── My positions ── */}
-      <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
-        <SectionTitle>My positions {isHeld ? "💼" : ""}</SectionTitle>
-        <StockPositions symbol={row.symbol} cmp={row.close} snapshot={row.snapshot} />
-      </div>
+          {/* ── My positions ── */}
+          <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
+            <SectionTitle>My positions {isHeld ? "💼" : ""}</SectionTitle>
+            <StockPositions symbol={row.symbol} cmp={row.close} snapshot={row.snapshot} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

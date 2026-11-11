@@ -1,0 +1,119 @@
+# Plutus — Daily OHLCV + snapshot sync + scan, US market.
+#
+# The Indian run lives in plutus-daily-sync.yml and is untouched by this file.
+# Runs 23:00 UTC Mon–Fri = 04:30 IST the next morning. The US cash session
+# closes at 16:00 New York, which is 20:00 UTC in summer and 21:00 UTC in
+# winter — so 23:00 UTC is at least two hours after the close all year round.
+# `run_daily_sync --market US` dates the run on New York's calendar, so the
+# rows are labelled with the US session they describe (not the IST date).
+#
+# What differs from the Indian workflow:
+#   * No Screener.in step or secrets — Screener covers Indian companies only.
+#     PE / PB / market cap come from the Yahoo quote; there is no fundamental
+#     score for US stocks yet.
+#   * The scan runs the three price strategies only (--market US).
+#   * No canary step — the canary fixtures are Indian symbols and are already
+#     verified by the Indian workflow each day.
+#
+# Money-safety guarantees (same as the Indian workflow):
+#   * `pip install` is version-pinned via `plutus/requirements.txt`.
+#   * The sync writes its own `sync_jobs` row (job_type `daily_sync_us`), so
+#     it can never overwrite the Indian run's record for the same date.
+#   * The scan step runs with `if: success()` — never let a partial sync
+#     feed a scan.
+#
+name: plutus-daily-sync-us
+
+on:
+  schedule:
+    - cron: "0 23 * * 1-5"    # 23:00 UTC weekdays (04:30 IST Tue–Sat)
+  workflow_dispatch:           # manual "Run workflow" button / app Sync tab
+    inputs:
+      pool:
+        description: "US pool code (blank or ALL = every US pool)"
+        required: false
+        default: ""
+      symbols:
+        description: "Comma-separated US tickers (e.g. NVDA,CAT) — overrides pool for the sync step"
+        required: false
+        default: ""
+      limit:
+        description: "Symbol cap for smoke runs"
+        required: false
+        default: ""
+      dry_run:
+        description: "Compute but do not write"
+        required: false
+        default: "false"
+
+concurrency:
+  group: plutus-daily-sync-us
+  cancel-in-progress: false     # never cancel a mid-sync run
+
+jobs:
+  sync-and-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLUTUS_SUPABASE_URL: ${{ secrets.PLUTUS_SUPABASE_URL }}
+      PLUTUS_SUPABASE_SERVICE_KEY: ${{ secrets.PLUTUS_SUPABASE_SERVICE_KEY }}
+      # Optional — leaving blank silently disables alerting.
+      PLUTUS_ALERT_WEBHOOK: ${{ secrets.PLUTUS_ALERT_WEBHOOK }}
+      PLUTUS_ENV: prod
+      PLUTUS_LOG_LEVEL: INFO
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: plutus/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r plutus/requirements.txt
+
+      - name: Run daily sync (US)
+        # Inputs come in via env (not inline ${{ }} interpolation) so a
+        # crafted dispatch value can never be parsed as shell syntax.
+        env:
+          POOL: ${{ github.event.inputs.pool }}
+          SYMBOLS: ${{ github.event.inputs.symbols }}
+          LIMIT: ${{ github.event.inputs.limit }}
+          DRY: ${{ github.event.inputs.dry_run }}
+        run: |
+          ARGS="--market US"
+          if [ "$POOL" = "ALL" ]; then POOL=""; fi
+          if [ -n "$SYMBOLS" ]; then ARGS="$ARGS --symbols $SYMBOLS"
+          elif [ -n "$POOL" ]; then ARGS="$ARGS --pool $POOL"; fi
+          if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
+          if [ "$DRY" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          python -m plutus.scripts.run_daily_sync $ARGS
+
+      - name: Run scan (only if sync succeeded)
+        # A dry-run writes no snapshots, so scanning after it would score
+        # stale data — skip. No --as-of: run_scan defaults to today (New
+        # York) and scans each pool's newest session on or before it.
+        if: success() && github.event.inputs.dry_run != 'true'
+        env:
+          POOL: ${{ github.event.inputs.pool }}
+        run: |
+          if [ "$POOL" = "ALL" ]; then POOL=""; fi
+          POOL="${POOL:-ALL}"
+          python -m plutus.scripts.run_scan \
+            --market US \
+            --pool "$POOL" \
+            --triggered-by cron
+
+      - name: Notify on workflow failure
+        # Backstop: if the sync CLI crashed hard (exit != 0/1), the
+        # in-process alerter never ran. This step covers that gap.
+        if: failure() && env.PLUTUS_ALERT_WEBHOOK != ''
+        env:
+          PAYLOAD: |
+            {"text":"🚨 *Plutus US daily sync workflow failed*\nrun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+        run: |
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            --data "$PAYLOAD" "$PLUTUS_ALERT_WEBHOOK" || true

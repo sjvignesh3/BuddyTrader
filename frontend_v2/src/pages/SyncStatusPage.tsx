@@ -20,6 +20,11 @@ const JOB_META: Record<string, { name: string; icon: string; what: string }> = {
     name: "Price sync", icon: "📈",
     what: "OHLCV + snapshots (technical)",
   },
+  // US market — its own job type, so it never overwrites the Indian row.
+  daily_sync_us: {
+    name: "US price sync", icon: "🗽",
+    what: "OHLCV + snapshots, US pools (Yahoo; dated in New York time)",
+  },
   quarterly_sync: {
     name: "Quarterly fundamentals", icon: "🧾",
     what: "Screener.in results & holdings (fundamental)",
@@ -154,7 +159,7 @@ function JobCard({ job }: { job: SyncJob }) {
                tone={job.symbols_ok ? "text-teal-700" : ""} />
         <Count label="Failed" value={job.symbols_failed}
                tone={job.symbols_failed ? "text-rose-600" : "text-brand-mute"} />
-        <Count label={job.job_type === "daily_sync" ? "Snapshots" : "Rows"}
+        <Count label={job.job_type.startsWith("daily_sync") ? "Snapshots" : "Rows"}
                value={job.snapshots_written} />
         {failedEntries.length > 0 && (
           <button

@@ -20,7 +20,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from plutus.adapters.result import Result
-from plutus.adapters.validators import sanity_check_symbol
+from plutus.adapters.validators import sanity_check_market_symbol
 from plutus.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ def fetch_info(symbol: str) -> Result[Dict[str, Any]]:
     Returns Result[dict]. Never raises.
     """
     try:
-        sym = sanity_check_symbol(symbol)
+        sym = sanity_check_market_symbol(symbol)
     except ValueError as exc:
         return Result.failure(str(exc), symbol=symbol, attempts=0)
 
@@ -126,7 +126,7 @@ def fetch_history(symbol: str, *, period: str = "5y",
     Returns Result[DataFrame]. Never raises.
     """
     try:
-        sym = sanity_check_symbol(symbol)
+        sym = sanity_check_market_symbol(symbol)
     except ValueError as exc:
         return Result.failure(str(exc), symbol=symbol, attempts=0)
 

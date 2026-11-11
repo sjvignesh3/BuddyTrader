@@ -14,7 +14,7 @@ last session's daily bar while Yahoo's chart feed still lags overnight.
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -133,7 +133,7 @@ def _first_positive(info: Dict[str, Any], keys) -> Optional[Decimal]:
     return None
 
 
-def extract_meta(info: Dict[str, Any]) -> Dict[str, Any]:
+def extract_meta(info: Dict[str, Any], tz: Optional[tzinfo] = None) -> Dict[str, Any]:
     """
     Build the tiny 'meta' dict the metrics pipeline expects.
 
@@ -142,7 +142,8 @@ def extract_meta(info: Dict[str, Any]) -> Dict[str, Any]:
       - fiftyTwoWeekHigh
       - fiftyTwoWeekLow
       - marketState        (Yahoo's "REGULAR" / "CLOSED" / "PRE" / ...)
-      - quoteSessionDate   (IST date of regularMarketTime)
+      - quoteSessionDate   (date of regularMarketTime on the market's own
+                            calendar — `tz`, IST when omitted)
     """
     if not info:
         return {}
@@ -159,10 +160,27 @@ def extract_meta(info: Dict[str, Any]) -> Dict[str, Any]:
     state = info.get("marketState")
     if state:
         out["marketState"] = str(state)
-    qd = quote_session_date(info)
+    qd = quote_session_date(info, tz or IST)
     if qd is not None:
         out["quoteSessionDate"] = qd
     return out
+
+
+def valuation_from_info(info: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    PE / PB / market cap straight from yfinance `.info` — the valuation source
+    for markets Screener.in does not cover (US). Same keys as a
+    `screener_ratios` row: pe, pb, market_cap (ABSOLUTE, in the listing
+    currency). A missing, NaN or non-positive value stays None.
+    """
+    if not info:
+        return {}
+    out = {
+        "market_cap": _first_positive(info, ("marketCap",)),
+        "pe": _first_positive(info, ("trailingPE",)),
+        "pb": _first_positive(info, ("priceToBook",)),
+    }
+    return out if any(v is not None for v in out.values()) else {}
 
 
 # -----------------------------------------------------------------------------
@@ -186,8 +204,9 @@ _LIVE_MARKET_STATES = frozenset({"REGULAR"})
 _PRE_MARKET_STATES = frozenset({"PRE", "PREPRE"})
 
 
-def quote_session_date(info: Dict[str, Any], tz: timezone = IST) -> Optional[date]:
-    """IST calendar date of the quote's `regularMarketTime` (epoch seconds)."""
+def quote_session_date(info: Dict[str, Any], tz: tzinfo = IST) -> Optional[date]:
+    """Calendar date of the quote's `regularMarketTime` (epoch seconds) in
+    `tz` — the exchange's own zone (IST for India, New York for the US)."""
     ts = info.get("regularMarketTime") if info else None
     if ts is None or _is_nan(ts):
         return None
@@ -198,7 +217,7 @@ def quote_session_date(info: Dict[str, Any], tz: timezone = IST) -> Optional[dat
 
 
 def quote_bar(info: Dict[str, Any], *, today: Optional[date] = None,
-              tz: timezone = IST) -> Optional[OHLCVBar]:
+              tz: tzinfo = IST) -> Optional[OHLCVBar]:
     """
     The latest session as an `OHLCVBar` built from the quote fields of `.info`.
 

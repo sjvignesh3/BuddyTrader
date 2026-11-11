@@ -37,12 +37,18 @@ logger = logging.getLogger(__name__)
 # Workflow key → workflow file under .github/workflows/.
 WORKFLOWS: Dict[str, str] = {
     "daily": "plutus-daily-sync.yml",         # OHLCV + snapshot + scan
+    "daily_us": "plutus-daily-sync-us.yml",   # same, US market (Yahoo only)
     "quarterly": "plutus-quarterly-sync.yml",  # Screener fundamentals
     "ratios": "plutus-weekly-ratios.yml",      # Screener PE / PB / MCap
 }
 
 POOLS = {"F40", "E40", "S200", "PlayArea"}
 _SYMBOL_RE = re.compile(r"^[A-Z0-9&\-]{1,20}\.(NS|BO)$")
+# US pools are created by the owner, so they are checked by shape, not by an
+# allow-list; US tickers are the plain Yahoo form (NVDA, BRK-B).
+US_WORKFLOWS = {"daily_us"}
+_US_POOL_RE = re.compile(r"^[A-Za-z0-9_]{1,20}$")
+_US_SYMBOL_RE = re.compile(r"^[A-Z]{1,5}(?:-[A-Z]{1,2})?$")
 MAX_SYMBOLS = 50
 
 _GH_API = "https://api.github.com"
@@ -111,12 +117,17 @@ def validate_trigger_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             f"unknown workflow {workflow!r} — expected one of "
             f"{sorted(WORKFLOWS)}")
 
+    us = workflow in US_WORKFLOWS
     pool = str(payload.get("pool") or "").strip()
     if pool.upper() == "ALL":
         pool = ""          # blank means ALL in every sync CLI
-    if pool and pool not in POOLS:
+    if us:
+        if pool and (pool in POOLS or not _US_POOL_RE.match(pool)):
+            raise ValueError(f"{pool!r} is not a US pool code")
+    elif pool and pool not in POOLS:
         raise ValueError(
             f"unknown pool {pool!r} — expected one of {sorted(POOLS)} or ALL")
+    symbol_re = _US_SYMBOL_RE if us else _SYMBOL_RE
 
     raw_symbols = payload.get("symbols") or []
     if not isinstance(raw_symbols, list):
@@ -127,13 +138,14 @@ def validate_trigger_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         t = str(s).strip().upper()
         if not t:
             continue
-        if _SYMBOL_RE.match(t):
+        if symbol_re.match(t):
             if t not in symbols:
                 symbols.append(t)
         else:
             bad.append(str(s))
     if bad:
-        raise ValueError(f"invalid symbols (want e.g. TCS.NS): {bad[:5]}")
+        raise ValueError(
+            f"invalid symbols (want e.g. {'NVDA' if us else 'TCS.NS'}): {bad[:5]}")
     if len(symbols) > MAX_SYMBOLS:
         raise ValueError(f"too many symbols ({len(symbols)} > {MAX_SYMBOLS})")
 
