@@ -30,6 +30,7 @@ FILES = {
     "019_universe.sql": ["universe_syncs"],
     "020_watchlists.sql": ["watchlists"],
     "024_ipo_journal.sql": ["ipo_applications", "ipo_sells"],
+    "025_notebook.sql": ["notebook_items"],
 }
 
 
@@ -128,7 +129,7 @@ class TestPersonalMigrations:
     def test_readme_lists_new_migrations(self):
         readme = (MIGRATIONS / "README.md").read_text(encoding="utf-8")
         for name in ("015_expenses.sql", "016_sizing_plans.sql", "017_net_worth.sql",
-                     "024_ipo_journal.sql"):
+                     "024_ipo_journal.sql", "025_notebook.sql"):
             assert name in readme, f"migrations/README.md must list {name}"
 
     def test_017_evolves_the_asset_class_constraint_idempotently(self, sqls):

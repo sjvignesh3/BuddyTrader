@@ -55,6 +55,7 @@ Or one-by-one:
 022_day_change.sql       -- daily_snapshots.price_change_1d_pct (Journal "Day %" = previous-session move)
 023_reset_sequences.sql  -- plutus_reset_sequences() RPC used after restore_personal (service_role only)
 024_ipo_journal.sql      -- IPO applications (per account) + sell legs (Journal → IPOs tab)
+025_notebook.sql         -- notebook_items: tasks, targets/limits, watch ideas, notes (Notes page)
 ```
 
 Row-Level Security policies live in `010_rls.sql` and `011_canary_checks.sql`

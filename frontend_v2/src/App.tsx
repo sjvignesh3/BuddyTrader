@@ -8,6 +8,7 @@ import ExpensesPage from "./pages/ExpensesPage";
 import GoldRoundupPage from "./pages/GoldRoundupPage";
 import PositionSizerPage from "./pages/PositionSizerPage";
 import NetWorthPage from "./pages/NetWorthPage";
+import NotesPage from "./pages/NotesPage";
 import PoolsPage from "./pages/PoolsPage";
 import PoolDetailPage from "./pages/PoolDetailPage";
 import StockDetailPage from "./pages/StockDetailPage";
@@ -51,6 +52,7 @@ export default function App() {
           <Route element={<ProtectedLayout />}>
             <Route path="/journal" element={<JournalPage />} />
             <Route path="/expenses" element={<ExpensesPage />} />
+            <Route path="/notes" element={<NotesPage />} />
             <Route path="/position-sizer" element={<PositionSizerPage />} />
             <Route path="/net-worth" element={<NetWorthPage />} />
             <Route path="/pools" element={<PoolsPage />} />

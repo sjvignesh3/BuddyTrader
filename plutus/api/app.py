@@ -298,6 +298,10 @@ def create_app(*, supabase_client: Optional[Any] = None,
     from plutus.api.ipo import register_ipo_routes
     register_ipo_routes(app, cli, fetch_daily=app.state.fetch_daily)
 
+    # -- Notes page (writable; tasks, targets, watch ideas, notes) ------------
+    from plutus.api.notebook import register_notebook_routes
+    register_notebook_routes(app, cli)
+
     # -- Expense Tracker (writable; personal tool) ----------------------------
     from plutus.api.expenses import register_expense_routes
     register_expense_routes(app, cli)

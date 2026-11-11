@@ -8,6 +8,7 @@ const NAV = [
   { to: "/", label: "Home", end: true },
   { to: "/journal", label: "Journal" },
   { to: "/expenses", label: "Expenses" },
+  { to: "/notes", label: "Notes" },
   // Access control — nothing a view-only session can act on.
   { to: "/console", label: "Console", ownerOnly: true },
 ];

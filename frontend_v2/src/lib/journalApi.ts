@@ -163,6 +163,31 @@ export interface IpoListing {
   ltp_date: string;
 }
 
+// ---- Notes page (migration 025) — one flat list, `kind` separates the items ----
+export type NotebookKind = "TASK" | "TARGET" | "WATCH" | "NOTE" | "PLUTUS";
+export type NotebookMarket = "IN" | "US";
+
+export interface NotebookItem {
+  id: number;
+  kind: NotebookKind;
+  title: string;
+  body: string | null;
+  market: NotebookMarket | null;
+  /** Plain NSE symbol for IN, a US ticker for US. Free text — never priced. */
+  symbol: string | null;
+  due_date: string | null;
+  done: boolean;
+  pinned: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+/** '' clears an optional field on the server. */
+export type NotebookDraft = Partial<{
+  kind: NotebookKind; title: string; body: string | null;
+  market: NotebookMarket | "" | null; symbol: string | null;
+  due_date: string | null; done: boolean; pinned: boolean;
+}>;
+
 /** Editable payloads (id/status timestamps excluded). */
 export type OpportunityDraft = Partial<Omit<Opportunity, "id" | "created_at" | "updated_at">>;
 export type TradeDraft = Partial<Omit<Trade, "id" | "created_at" | "updated_at">>;
@@ -218,6 +243,15 @@ export const journalApi = {
     send<{ note: StockNote }>("PUT", `/api/journal/notes/${id}`, draft),
   deleteNote: (id: number) =>
     send<{ deleted: number }>("DELETE", `/api/journal/notes/${id}`),
+
+  notebook: () =>
+    send<{ items: NotebookItem[]; count: number }>("GET", "/api/journal/notebook"),
+  createNotebookItem: (draft: NotebookDraft) =>
+    send<{ item: NotebookItem }>("POST", "/api/journal/notebook", draft),
+  updateNotebookItem: (id: number, draft: NotebookDraft) =>
+    send<{ item: NotebookItem }>("PUT", `/api/journal/notebook/${id}`, draft),
+  deleteNotebookItem: (id: number) =>
+    send<{ deleted: number }>("DELETE", `/api/journal/notebook/${id}`),
 
   ipos: () => send<{ ipos: Ipo[]; count: number }>("GET", "/api/journal/ipos"),
   createIpo: (draft: IpoDraft) => send<{ ipo: Ipo }>("POST", "/api/journal/ipos", draft),

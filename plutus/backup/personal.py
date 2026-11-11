@@ -71,6 +71,7 @@ TABLES: Tuple[TableSpec, ...] = (
     TableSpec("sizing_plans", "journal"),                # -> opportunities
     TableSpec("ipo_applications", "journal"),
     TableSpec("ipo_sells", "journal"),                   # -> ipo_applications
+    TableSpec("notebook_items", "journal"),
     # expenses
     TableSpec("expense_categories", "expenses", self_ref_col="parent_id"),
     TableSpec("expense_recurring", "expenses"),          # -> categories

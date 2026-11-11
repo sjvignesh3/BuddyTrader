@@ -27,6 +27,13 @@ const TOOLS: Tool[] = [
     accent: "from-amber-700 to-amber-500",
   },
   {
+    icon: "🗒️",
+    name: "Notes",
+    desc: "Tasks, targets and limits, watch ideas, free notes and Plutus changes — one list, tagged by market (IN / US).",
+    to: "/notes",
+    accent: "from-indigo-700 to-indigo-500",
+  },
+  {
     icon: "🪙",
     name: "Expense Tracker",
     desc: "Manual-first expense intelligence — two-keystroke capture, monthly insights, needs vs wants, recurring visibility.",
