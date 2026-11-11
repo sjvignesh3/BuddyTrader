@@ -4,6 +4,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCanEdit } from "../AuthGate";
+import { useMoney } from "../../lib/moneyContext";
 import type { Snapshot } from "../../lib/api";
 import type { AllocState } from "../../lib/journal";
 import { CAP_LIMITS, stockPath } from "../../lib/journal";
@@ -24,12 +25,14 @@ export const ROW_LINK_CLS = "cursor-pointer";
 
 export function useOpenStock() {
   const navigate = useNavigate();
-  return (symbol: string, snap?: Snapshot) => navigate(stockPath(symbol, snap));
+  const { market } = useMoney();
+  return (symbol: string, snap?: Snapshot) => navigate(stockPath(symbol, snap, market));
 }
 
 export function StockLink({ symbol, snap }: { symbol: string; snap?: Snapshot }) {
+  const { market } = useMoney();
   return (
-    <Link to={stockPath(symbol, snap)} onClick={(e) => e.stopPropagation()}
+    <Link to={stockPath(symbol, snap, market)} onClick={(e) => e.stopPropagation()}
           title={`Open ${symbol} — stock view`}
           className="hover:underline underline-offset-2 hover:text-brand-accent
                      focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/50
@@ -307,9 +310,10 @@ export function AllocMarker({ state, cap, totalPct }: {
 export function Pnl({ value, suffix = "", digits = 2 }: {
   value: number | null; suffix?: string; digits?: number;
 }) {
+  const { locale } = useMoney();
   if (value === null) return <span className="text-brand-mute">—</span>;
   const cls = value > 0 ? "text-teal-700" : value < 0 ? "text-rose-700" : "text-brand-mute";
-  const s = value.toLocaleString("en-IN", {
+  const s = value.toLocaleString(locale, {
     minimumFractionDigits: digits, maximumFractionDigits: digits,
   });
   return <span className={`${cls} tabular-nums`}>{value > 0 ? "+" : ""}{s}{suffix}</span>;

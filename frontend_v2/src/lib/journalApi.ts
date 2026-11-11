@@ -5,6 +5,13 @@
 // -----------------------------------------------------------------------------
 
 import { authHeaders, handleUnauthorized } from "./auth";
+import type { Market } from "./market";
+
+/** "?market=US" / "&market=US" for a US request; nothing for India, so the
+ *  Indian calls are byte-for-byte what they always were. */
+function mq(market: Market | undefined, first: boolean): string {
+  return market === "US" ? `${first ? "?" : "&"}market=US` : "";
+}
 
 const BASE = import.meta.env.VITE_PLUTUS_API_URL ?? "";
 
@@ -41,12 +48,17 @@ export type TradeStatus = "OPEN" | "CLOSED";
 
 export interface JournalSettings {
   id: number;
+  /** Indian capital, ₹. */
   capital: string;
+  /** US capital, $ — null / absent until set (migration 027). */
+  capital_usd?: string | null;
   updated_at?: string;
 }
 
 export interface Opportunity {
   id: number;
+  /** "IN" | "US" (migration 027). Absent = IN. Prices are in that market's currency. */
+  market?: Market;
   opp_date: string | null;
   symbol: string;
   cap_bucket: CapBucket | null;
@@ -66,6 +78,8 @@ export interface Opportunity {
 
 export interface Trade {
   id: number;
+  /** "IN" | "US" (migration 027). Absent = IN. US qty may be fractional. */
+  market?: Market;
   opportunity_id: number | null;
   order_type: "GTT" | "Instant" | null;
   cap_bucket: CapBucket | null;
@@ -90,6 +104,7 @@ export interface Trade {
 /** One dated research note on a stock — the "my views over time" trail. */
 export interface StockNote {
   id: number;
+  market?: Market;
   symbol: string;
   note_date: string;
   content: string;
@@ -197,12 +212,16 @@ export type StockNoteDraft = Partial<Omit<StockNote, "id" | "created_at" | "upda
 
 export const journalApi = {
   settings: () => send<{ settings: JournalSettings }>("GET", "/api/journal/settings"),
-  setCapital: (capital: string | number) =>
-    send<{ settings: JournalSettings }>("PUT", "/api/journal/settings", { capital }),
+  /** Sets the Indian capital, or the US one when `market` is "US". */
+  setCapital: (capital: string | number, market?: Market) =>
+    send<{ settings: JournalSettings }>("PUT", "/api/journal/settings",
+      market === "US" ? { capital, market } : { capital }),
 
-  opportunities: (status?: string) =>
+  // Every list below returns ONE market's rows (India unless `market` is "US").
+  // To create a US row, put `market: "US"` in the draft.
+  opportunities: (status?: string, market?: Market) =>
     send<{ opportunities: Opportunity[]; count: number }>(
-      "GET", `/api/journal/opportunities${status ? `?status=${status}` : ""}`),
+      "GET", `/api/journal/opportunities${status ? `?status=${status}` : ""}${mq(market, !status)}`),
   createOpportunity: (draft: OpportunityDraft) =>
     send<{ opportunity: Opportunity }>("POST", "/api/journal/opportunities", draft),
   updateOpportunity: (id: number, draft: OpportunityDraft) =>
@@ -212,13 +231,13 @@ export const journalApi = {
   convertOpportunity: (id: number, overrides: TradeDraft) =>
     send<{ trade: Trade }>("POST", `/api/journal/opportunities/${id}/convert`, overrides),
 
-  trades: (status?: TradeStatus) =>
+  trades: (status?: TradeStatus, market?: Market) =>
     send<{ trades: Trade[]; count: number }>(
-      "GET", `/api/journal/trades${status ? `?status=${status}` : ""}`),
-  /** All lots (open + closed) of one stock — plain NSE symbol. */
-  tradesBySymbol: (symbol: string) =>
+      "GET", `/api/journal/trades${status ? `?status=${status}` : ""}${mq(market, !status)}`),
+  /** All lots (open + closed) of one stock — plain symbol ("TCS", "NVDA"). */
+  tradesBySymbol: (symbol: string, market?: Market) =>
     send<{ trades: Trade[]; count: number }>(
-      "GET", `/api/journal/trades?symbol=${encodeURIComponent(symbol)}`),
+      "GET", `/api/journal/trades?symbol=${encodeURIComponent(symbol)}${mq(market, false)}`),
   createTrade: (draft: TradeDraft) =>
     send<{ trade: Trade }>("POST", "/api/journal/trades", draft),
   updateTrade: (id: number, draft: TradeDraft) =>
@@ -230,13 +249,13 @@ export const journalApi = {
     send<{ closed: Trade; remainder: Trade | null }>(
       "POST", `/api/journal/trades/${id}/close`, p),
 
-  positions: () => send<{ positions: Position[]; count: number }>(
-    "GET", "/api/journal/positions"),
+  positions: (market?: Market) => send<{ positions: Position[]; count: number }>(
+    "GET", `/api/journal/positions${mq(market, true)}`),
 
-  /** Dated stock notes — pass a plain NSE symbol to scope to one stock. */
-  notes: (symbol?: string) =>
+  /** Dated stock notes — pass a plain symbol to scope to one stock. */
+  notes: (symbol?: string, market?: Market) =>
     send<{ notes: StockNote[]; count: number }>(
-      "GET", `/api/journal/notes${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`),
+      "GET", `/api/journal/notes${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}${mq(market, !symbol)}`),
   createNote: (draft: StockNoteDraft) =>
     send<{ note: StockNote }>("POST", "/api/journal/notes", draft),
   updateNote: (id: number, draft: StockNoteDraft) =>
@@ -272,7 +291,8 @@ export const journalApi = {
     send<{ quotes: Record<string, { ltp: string; date: string }>; errors: Record<string, string> }>(
       "GET", `/api/journal/ipos/quotes?symbols=${encodeURIComponent(symbols.join(","))}`),
 
-  bulkImport: (payload: { opportunities?: OpportunityDraft[]; trades?: TradeDraft[] }) =>
+  bulkImport: (payload: { opportunities?: OpportunityDraft[]; trades?: TradeDraft[];
+                          market?: Market }) =>
     send<{ imported: { opportunities: number; trades: number } }>(
       "POST", "/api/journal/import", payload),
 };

@@ -9,7 +9,8 @@ import type { JournalCtx } from "../../lib/journal";
 import {
   buildAbcdSignals, buildPortfolio, deriveClosedTrade, deriveOpenTrade, targetZone,
 } from "../../lib/journal";
-import { fmtMoney, fmtPct } from "../../lib/money";
+import { fmtPct } from "../../lib/money";
+import { useMoney } from "../../lib/moneyContext";
 import { Pnl } from "./ui";
 
 export default function JournalInsights({ openTrades, closedTrades, ctx, onJumpToOpen }: {
@@ -17,6 +18,7 @@ export default function JournalInsights({ openTrades, closedTrades, ctx, onJumpT
   /** Clicking a radar card jumps to the Open Trades tab with that chip on. */
   onJumpToOpen: (focus: "near" | "avg") => void;
 }) {
+  const { cur, fmtMoney } = useMoney();
   const s = useMemo(() => {
     const { totals } = buildPortfolio(openTrades, ctx);
     const open = openTrades.map((t) => ({ t, d: deriveOpenTrade(t, ctx) }));
@@ -61,7 +63,7 @@ export default function JournalInsights({ openTrades, closedTrades, ctx, onJumpT
       <Card label="Capital deployed"
             sub={s.totals.deployedPct !== null
               ? `${fmtPct(s.totals.deployedPct)} of capital` : undefined}>
-        ₹{fmtMoney(s.totals.invested, 0)}
+        {cur}{fmtMoney(s.totals.invested, 0)}
         <div className="mt-1.5 h-1.5 rounded-full bg-brand-soft overflow-hidden">
           <div className="h-full rounded-full bg-teal-600 transition-[width] duration-500"
                style={{ width: `${Math.min(100, Math.max(0, s.totals.deployedPct ?? 0))}%` }} />

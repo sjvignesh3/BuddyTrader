@@ -40,6 +40,7 @@ import { fmtDate, fmtMoney as fmtInr, fmtPct } from "../lib/money";
 import {
   currencySymbol, fmtMarketCap, fmtPrice, marketOf, tvChartUrl, tvSymbol as tvSymbolOf,
 } from "../lib/market";
+import { MoneyProvider, jkey } from "../lib/moneyContext";
 
 // Prices on this page follow the stock's market: ₹ with Indian digit grouping
 // for NSE / BSE, $ with US grouping for a US ticker. `cur` is the sign and
@@ -240,13 +241,13 @@ export default function StockDetailPage() {
   const stockQ = useStock(symbol);
 
   const positionsQ = useQuery({
-    queryKey: ["journal", "positions"],
-    queryFn: journalApi.positions,
+    queryKey: jkey(isUs ? "US" : "IN", "positions"),
+    queryFn: () => journalApi.positions(isUs ? "US" : "IN"),
     staleTime: 60_000,
     retry: 1, // journal may be absent in prod builds — degrade silently
   });
-  // The Trading Journal is Indian-only for now: a US ticker never matches it.
-  const isHeld = !isUs && (positionsQ.data?.positions ?? []).some((p) => p.symbol === plain);
+  // Positions come from this stock's own market, so the plain symbol is unambiguous.
+  const isHeld = (positionsQ.data?.positions ?? []).some((p) => p.symbol === plain);
 
   const row: StockRow | null = useMemo(() => {
     const snapshots = snapsQ.data?.snapshots ?? [];
@@ -644,12 +645,12 @@ export default function StockDetailPage() {
 
       {/* ── My notes (dated views — quarters/months/years) ── */}
       <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
-        <StockNotes symbol={plain} />
+        <StockNotes symbol={plain} market={isUs ? "US" : "IN"} />
       </div>
 
-      {/* The Trading Journal works in rupees — US plans and positions arrive
-          with the US journal (phase 2). */}
-      {!isUs && (
+      {/* Plans and positions come from this stock's own journal (IN or US):
+          the provider gives the shared journal pieces its currency. */}
+      <MoneyProvider market={isUs ? "US" : "IN"}>
         <>
           {/* ── My opportunities (Trading Journal plans for this stock) ── */}
           <div className="rounded-2xl ring-1 ring-brand-border bg-brand-panel shadow-card px-4 py-3.5">
@@ -662,7 +663,7 @@ export default function StockDetailPage() {
             <StockPositions symbol={row.symbol} cmp={row.close} snapshot={row.snapshot} />
           </div>
         </>
-      )}
+      </MoneyProvider>
     </div>
   );
 }

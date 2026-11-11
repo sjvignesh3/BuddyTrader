@@ -2,6 +2,7 @@
 // The members table for one pool (or the whole universe). Sortable, searchable,
 // with per-row edit / remove for owners. Rows open the stock page.
 // -----------------------------------------------------------------------------
+import { marketOf } from "../../lib/market";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { JournalRef, UniverseStock } from "../../lib/universeApi";
@@ -94,7 +95,8 @@ export default function UniverseTable({ stocks, pool, journalRefs, search, onEdi
         <tbody>
           {apply(filtered).map((st) => {
             const plain = plainSymbol(st.symbol);
-            const ref = journalRefs[plain];
+            // US rows are keyed "US:<ticker>" so they never share an Indian symbol's count.
+            const ref = journalRefs[marketOf(st.symbol) === "US" ? `US:${plain}` : plain];
             const others = (st.pools ?? []).filter((p) => p !== pool);
             return (
               <tr key={st.symbol} onClick={() => navigate(`/stocks/${encodeURIComponent(st.symbol)}`)}

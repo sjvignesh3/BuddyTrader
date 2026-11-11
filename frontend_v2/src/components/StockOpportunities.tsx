@@ -13,14 +13,15 @@ import type {
 } from "../lib/journalApi";
 import { journalApi } from "../lib/journalApi";
 import {
-  buildOpenInvested, deriveOpportunity, normalizeCap, num,
+  buildOpenInvested, journalSnaps, deriveOpportunity, normalizeCap, num,
   type JournalCtx, type OppDerived,
 } from "../lib/journal";
 import type { StockRow } from "../lib/rows";
 import { ConvertModal, OpportunityModal } from "./journal/modals";
 import { AllocMarker, CapChip, ConfirmDialog, Pnl, RowBtn } from "./journal/ui";
 import { OwnerOnly } from "./AuthGate";
-import { fmtDate, fmtMoney, fmtPct } from "../lib/money";
+import { fmtDate, fmtPct } from "../lib/money";
+import { jkey, useMoney } from "../lib/moneyContext";
 
 const STATUS_STYLE: Record<string, string> = {
   ACTIVE: "bg-teal-50 text-teal-800 ring-teal-300",
@@ -47,6 +48,7 @@ function OppCard({ o, d, onEdit, onConvert, onDelete }: {
   o: Opportunity; d: OppDerived;
   onEdit: () => void; onConvert: () => void; onDelete: () => void;
 }) {
+  const { cur, fmtMoney } = useMoney();
   const active = o.status === "ACTIVE";
   return (
     <div className={`rounded-xl ring-1 bg-brand-panel shadow-card px-3.5 py-3 ${
@@ -81,23 +83,23 @@ function OppCard({ o, d, onEdit, onConvert, onDelete }: {
 
       {/* the plan */}
       <div className="grid grid-cols-4 sm:grid-cols-8 gap-x-3 gap-y-2 mt-2.5 pt-2.5 border-t border-brand-border/60">
-        <Cell label="Buy ₹">{fmtMoney(o.buy_price)}</Cell>
-        <Cell label="Limit ₹">{fmtMoney(o.limit_price)}</Cell>
+        <Cell label={`Buy ${cur}`}>{fmtMoney(o.buy_price)}</Cell>
+        <Cell label={`Limit ${cur}`}>{fmtMoney(o.limit_price)}</Cell>
         <Cell label="Qty">{o.qty ?? "—"}</Cell>
-        <Cell label="Target ₹">{fmtMoney(o.target_price)}</Cell>
+        <Cell label={`Target ${cur}`}>{fmtMoney(o.target_price)}</Cell>
         <Cell label="LTP">{fmtMoney(d.ltp)}</Cell>
         <Cell label="To trigger">
           <span className={d.toTrigPct !== null && d.toTrigPct <= 0
             ? "text-teal-700" : ""}>{fmtPct(d.toTrigPct)}</span>
         </Cell>
         <Cell label="Potential"><Pnl value={d.potentialPct} suffix="%" /></Cell>
-        <Cell label="Gain ₹">{fmtMoney(d.potentialGain, 0)}</Cell>
+        <Cell label={`Gain ${cur}`}>{fmtMoney(d.potentialGain, 0)}</Cell>
       </div>
 
       {/* allocation + notes */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-brand-mute">
         <span>
-          Needs <b className="text-brand-text font-mono">₹{fmtMoney(d.capitalNeeded, 0)}</b>
+          Needs <b className="text-brand-text font-mono">{cur}{fmtMoney(d.capitalNeeded, 0)}</b>
           {d.additionPct !== null && <> · adds {fmtPct(d.additionPct)}</>}
           {d.totalPct !== null && (
             <>
@@ -119,6 +121,7 @@ export default function StockOpportunities({ symbol, row }: {
   symbol: string;
   row: StockRow;
 }) {
+  const { market } = useMoney();     // set by the stock page from the symbol
   const qc = useQueryClient();
   const [modal, setModal] = useState<"add" | Opportunity | null>(null);
   const [convertOpp, setConvertOpp] = useState<Opportunity | null>(null);
@@ -126,8 +129,8 @@ export default function StockOpportunities({ symbol, row }: {
 
   // All statuses — the stock page tells the full story, converted/dropped included.
   const oppsQ = useQuery({
-    queryKey: ["journal", "opportunities", "all"],
-    queryFn: () => journalApi.opportunities(),
+    queryKey: jkey(market, "opportunities", "all"),
+    queryFn: () => journalApi.opportunities(undefined, market),
     staleTime: 30_000,
     retry: 1,
   });
@@ -138,8 +141,8 @@ export default function StockOpportunities({ symbol, row }: {
     retry: 1,
   });
   const tradesQ = useQuery({
-    queryKey: ["journal", "trades", "symbol", symbol],
-    queryFn: () => journalApi.tradesBySymbol(symbol),
+    queryKey: jkey(market, "trades", "symbol", symbol),
+    queryFn: () => journalApi.tradesBySymbol(symbol, market),
     staleTime: 30_000,
     retry: 1,
   });
@@ -154,21 +157,26 @@ export default function StockOpportunities({ symbol, row }: {
 
   // Mini journal context — this stock's snapshot + its open lots only.
   const ctx: JournalCtx = useMemo(() => {
-    const snaps = new Map<string, Snapshot>([[symbol, row.snapshot]]);
+    // US snapshots carry no cap bucket — journalSnaps tags the US rule cap.
+    const snaps = market === "US"
+      ? journalSnaps([row.snapshot], "US")
+      : new Map<string, Snapshot>([[symbol, row.snapshot]]);
     const open = (tradesQ.data?.trades ?? []).filter((t) => t.status === "OPEN");
+    const settings = settingsQ.data?.settings;
     return {
-      capital: num(settingsQ.data?.settings.capital) ?? 0,
+      capital: num(market === "US" ? settings?.capital_usd : settings?.capital) ?? 0,
       snaps,
       openInvested: buildOpenInvested(open),
+      market,
     };
-  }, [symbol, row.snapshot, settingsQ.data, tradesQ.data]);
+  }, [symbol, row.snapshot, settingsQ.data, tradesQ.data, market]);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["journal"] });
 
   const mSave = useMutation({
     mutationFn: (p: { id?: number; draft: OpportunityDraft }) =>
       p.id ? journalApi.updateOpportunity(p.id, p.draft)
-           : journalApi.createOpportunity(p.draft),
+           : journalApi.createOpportunity(market === "US" ? { ...p.draft, market } : p.draft),
     onSuccess: () => { refresh(); setModal(null); },
   });
   const mConvert = useMutation({

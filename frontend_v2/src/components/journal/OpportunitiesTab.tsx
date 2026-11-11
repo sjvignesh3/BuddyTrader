@@ -6,7 +6,8 @@ import { useMemo, useState } from "react";
 import type { Opportunity } from "../../lib/journalApi";
 import type { JournalCtx, OppDerived } from "../../lib/journal";
 import { deriveOpportunity, num } from "../../lib/journal";
-import { fmtDate, fmtMoney, fmtPct } from "../../lib/money";
+import { fmtDate, fmtPct } from "../../lib/money";
+import { useMoney } from "../../lib/moneyContext";
 import FilterBar, { CapFilter, FilterChip } from "./FilterBar";
 import {
   AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, ROW_LINK_CLS, RowActions, RowBtn,
@@ -59,6 +60,7 @@ export default function OpportunitiesTab({ rows, ctx, onEdit, onConvert, onDelet
   onConvert: (o: Opportunity) => void;
   onDelete: (o: Opportunity) => void;
 }) {
+  const { cur, fmtMoney } = useMoney();
   const { sort, toggle, apply } = useSort<Item>(ACCESSORS);
   const openStock = useOpenStock();
   const [search, setSearch] = useState("");
@@ -117,17 +119,17 @@ export default function OpportunitiesTab({ rows, ctx, onEdit, onConvert, onDelet
           <Th sortKey="date" {...s}>Date</Th>
           <Th sortKey="symbol" {...s}>Script</Th>
           <Th sortKey="cap" {...s}>Cap</Th>
-          <Th right sortKey="buy" {...s}>Buy ₹</Th>
-          <Th right sortKey="limit" {...s}>Limit ₹</Th>
+          <Th right sortKey="buy" {...s}>Buy {cur}</Th>
+          <Th right sortKey="limit" {...s}>Limit {cur}</Th>
           <Th right sortKey="qty" {...s}>Qty</Th>
           <Th sortKey="strategy" {...s}>Strategy</Th>
-          <Th right sortKey="target" {...s}>Target ₹</Th>
+          <Th right sortKey="target" {...s}>Target {cur}</Th>
           <Th sortKey="action" {...s}>Action</Th>
           <Th right sortKey="ltp" {...s}>LTP</Th>
           <Th right sortKey="day" {...s}>Day %</Th>
           <Th right sortKey="ath" {...s}>ATH ↓</Th>
           <Th right sortKey="potential" {...s}>Potential</Th>
-          <Th right sortKey="gain" {...s}>Gain ₹</Th>
+          <Th right sortKey="gain" {...s}>Gain {cur}</Th>
           <Th right sortKey="trig" {...s}>To Trig</Th>
           <Th right sortKey="curr" {...s}>Curr %</Th>
           <Th right sortKey="add" {...s}>Add %</Th>

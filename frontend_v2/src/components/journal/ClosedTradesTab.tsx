@@ -4,7 +4,8 @@
 import { useMemo, useState } from "react";
 import type { Trade } from "../../lib/journalApi";
 import { deriveClosedTrade, num, type ClosedDerived } from "../../lib/journal";
-import { fmtDate, fmtMoney } from "../../lib/money";
+import { fmtDate } from "../../lib/money";
+import { fmtQty, useMoney } from "../../lib/moneyContext";
 import FilterBar, { CapFilter, FilterChip } from "./FilterBar";
 import {
   EmptyState, GhostBtn, Pnl, ROW_LINK_CLS, RowActions, RowBtn, StockLink, TableShell, Td, Th,
@@ -39,6 +40,7 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
   onEdit: (t: Trade) => void;
   onDelete: (t: Trade) => void;
 }) {
+  const { cur, fmtMoney } = useMoney();
   const { sort, toggle, apply } = useSort<Item>(ACCESSORS);
   const openStock = useOpenStock();
   const [search, setSearch] = useState("");
@@ -108,15 +110,15 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
             <Th sortKey="type" sort={sort} onSort={toggle}>Type</Th>
             <Th sortKey="date" sort={sort} onSort={toggle}>Buy date</Th>
             <Th sortKey="symbol" sort={sort} onSort={toggle}>Stock</Th>
-            <Th right sortKey="buy" sort={sort} onSort={toggle}>Buy ₹</Th>
+            <Th right sortKey="buy" sort={sort} onSort={toggle}>Buy {cur}</Th>
             <Th right sortKey="qty" sort={sort} onSort={toggle}>Qty</Th>
             <Th sortKey="strategy" sort={sort} onSort={toggle}>Strategy</Th>
-            <Th right sortKey="target" sort={sort} onSort={toggle}>Target ₹</Th>
+            <Th right sortKey="target" sort={sort} onSort={toggle}>Target {cur}</Th>
             <Th sortKey="sellDate" sort={sort} onSort={toggle}>Sell date</Th>
-            <Th right sortKey="sell" sort={sort} onSort={toggle}>Sell ₹</Th>
+            <Th right sortKey="sell" sort={sort} onSort={toggle}>Sell {cur}</Th>
             <Th right sortKey="buyValue" sort={sort} onSort={toggle}>Buy value</Th>
             <Th right sortKey="sellValue" sort={sort} onSort={toggle}>Sell value</Th>
-            <Th right sortKey="gain" sort={sort} onSort={toggle}>Gain ₹</Th>
+            <Th right sortKey="gain" sort={sort} onSort={toggle}>Gain {cur}</Th>
             <Th right sortKey="days" sort={sort} onSort={toggle}>Days</Th>
             <Th right sortKey="gainPct" sort={sort} onSort={toggle}>Gain %</Th>
             <Th right sortKey="annual" sort={sort} onSort={toggle}>Annual %</Th>
@@ -137,7 +139,7 @@ export default function ClosedTradesTab({ rows, onEdit, onDelete }: {
               <Td>{fmtDate(t.buy_date)}</Td>
               <Td className="font-semibold"><StockLink symbol={t.symbol} /></Td>
               <Td right>{fmtMoney(t.buy_price)}</Td>
-              <Td right>{t.qty}</Td>
+              <Td right>{fmtQty(t.qty)}</Td>
               <Td>{t.strategy ?? "—"}</Td>
               <Td right>{fmtMoney(t.target_price)}</Td>
               <Td>{fmtDate(t.sell_date)}</Td>

@@ -12,7 +12,11 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type Snapshot } from "../lib/api";
 import { journalApi, type Trade } from "../lib/journalApi";
-import { buildOpenInvested, num, type JournalCtx } from "../lib/journal";
+import {
+  buildOpenInvested, journalSnaps, num, snapshotSymbols, type JournalCtx,
+} from "../lib/journal";
+import type { Market } from "../lib/market";
+import { jkey } from "../lib/moneyContext";
 
 /** yfinance stores "TCS.NS"; the journal uses plain "TCS". */
 export const plainSymbol = (s: string): string => s.replace(/\.(NS|BO)$/i, "");
@@ -21,7 +25,7 @@ export const plainSymbol = (s: string): string => s.replace(/\.(NS|BO)$/i, "");
 export const bothSpellings = (symbols: string[]): string[] =>
   symbols.flatMap((s) => (s.includes(".") ? [s] : [s, `${s}.NS`]));
 
-export function useJournalCtx(extraSymbols: string[] = []) {
+export function useJournalCtx(extraSymbols: string[] = [], market: Market = "IN") {
   // Callers pass literals; key on the joined string so identity churn
   // doesn't re-run the memo (and re-fire the snapshot query) every render.
   const extraKey = extraSymbols.map((x) => plainSymbol(x.toUpperCase())).filter(Boolean).join(",");
@@ -30,8 +34,8 @@ export function useJournalCtx(extraSymbols: string[] = []) {
     queryFn: journalApi.settings,
   });
   const tradesQ = useQuery({
-    queryKey: ["journal", "trades"] as const,
-    queryFn: () => journalApi.trades(),
+    queryKey: jkey(market, "trades"),
+    queryFn: () => journalApi.trades(undefined, market),
   });
 
   const trades: Trade[] = useMemo(() => tradesQ.data?.trades ?? [], [tradesQ.data]);
@@ -46,21 +50,31 @@ export function useJournalCtx(extraSymbols: string[] = []) {
   }, [openTrades, extraKey]);
 
   const snapsQ = useQuery({
-    queryKey: ["journal", "snapshots", symbols.join(",")] as const,
-    queryFn: () => api.latestSnapshotsForSymbols(bothSpellings(symbols)),
+    queryKey: jkey(market, "snapshots", symbols.join(",")),
+    queryFn: () => api.latestSnapshotsForSymbols(
+      market === "US" ? snapshotSymbols(symbols, "US") : bothSpellings(symbols)),
     enabled: symbols.length > 0,
     staleTime: 60_000,
   });
 
   const ctx: JournalCtx = useMemo(() => {
-    const snaps = new Map<string, Snapshot>();
-    (snapsQ.data?.snapshots ?? []).forEach((s) => snaps.set(plainSymbol(s.symbol), s));
+    // Each journal sees ITS market's snapshots only — a plain symbol must
+    // never resolve to the other market's ticker of the same spelling. US
+    // rows are also tagged with the US rule cap.
+    let snaps: Map<string, Snapshot>;
+    if (market === "US") {
+      snaps = journalSnaps(snapsQ.data?.snapshots ?? [], "US");
+    } else {
+      snaps = journalSnaps(snapsQ.data?.snapshots ?? [], "IN");
+    }
+    const settings = settingsQ.data?.settings;
     return {
-      capital: num(settingsQ.data?.settings.capital) ?? 0,
+      capital: num(market === "US" ? settings?.capital_usd : settings?.capital) ?? 0,
       snaps,
       openInvested: buildOpenInvested(openTrades),
+      market,
     };
-  }, [settingsQ.data, snapsQ.data, openTrades]);
+  }, [settingsQ.data, snapsQ.data, openTrades, market]);
 
   return {
     ctx,

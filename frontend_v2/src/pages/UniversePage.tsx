@@ -6,7 +6,7 @@
 // -----------------------------------------------------------------------------
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { poolMarket } from "../lib/market";
+import { marketOf, poolMarket } from "../lib/market";
 import LoadError from "../components/LoadError";
 import { OwnerOnly } from "../components/AuthGate";
 import ImportModal from "../components/universe/ImportModal";
@@ -221,7 +221,8 @@ export default function UniversePage() {
           message={
             (removing.pools ?? []).filter((p) => p !== pool).length
               ? `It stays in ${(removing.pools ?? []).filter((p) => p !== pool).join(", ")}.`
-              : data.journal_refs[plainSymbol(removing.symbol)]
+              : data.journal_refs[marketOf(removing.symbol) === "US"
+                  ? `US:${plainSymbol(removing.symbol)}` : plainSymbol(removing.symbol)]
                 ? `This is its last pool, but the Trading Journal still holds it, so it stays active and its price keeps syncing.`
                 : `This is its last pool. The stock is retired (kept, not deleted) and stops syncing until it is added again.`
           } />

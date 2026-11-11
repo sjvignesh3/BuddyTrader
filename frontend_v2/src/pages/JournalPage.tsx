@@ -2,19 +2,27 @@
 // Trading Journal — Opportunities / Open / Closed / Portfolio.
 // Manual rows live in the journal tables; market columns (LTP, ATH, day %)
 // join in live from daily_snapshots; every % derives from the capital.
+//
+// Two journals, one page: an IN / US switch (shown once a US pool exists)
+// picks which market's rows, capital and currency the tabs below work on.
+// The two are never mixed — rupees and dollars are not added together. The
+// IPOs tab is Indian-only.
 // -----------------------------------------------------------------------------
 import { useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, Snapshot } from "../lib/api";
+import { usePools } from "../hooks/usePlutus";
+import { poolMarket, type Market } from "../lib/market";
+import { MoneyProvider, fmtQty, jkey, useMoney } from "../lib/moneyContext";
 import {
   journalApi, Opportunity, OpportunityDraft, Trade, TradeDraft,
 } from "../lib/journalApi";
-import { buildOpenInvested, num, JournalCtx } from "../lib/journal";
+import { buildOpenInvested, journalSnaps, num, JournalCtx } from "../lib/journal";
 import {
   exportClosedTrades, exportOpenTrades, exportOpportunities,
   downloadCsv, locateSheet, mapSheet, parseCsv,
 } from "../lib/journalCsv";
-import { fmtMoney } from "../lib/money";
 import LoadError from "../components/LoadError";
 import JournalInsights from "../components/journal/JournalInsights";
 import OpportunitiesTab from "../components/journal/OpportunitiesTab";
@@ -38,22 +46,66 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "ipos", label: "IPOs", icon: "🎯" },
 ];
 
+/** The IPOs tab tracks NSE mainboard listings — it has no US side. */
+const tabsFor = (market: Market) =>
+  market === "US" ? TABS.filter((t) => t.key !== "ipos") : TABS;
+
 /** Restore the tab from the URL hash so a refresh doesn't reset the view. */
-const initialTab = (): TabKey => {
+const initialTab = (market: Market): TabKey => {
   const h = window.location.hash.replace("#", "");
-  return TABS.some((t) => t.key === h) ? (h as TabKey) : "opportunities";
+  return tabsFor(market).some((t) => t.key === h) ? (h as TabKey) : "opportunities";
 };
 
-const jqk = {
-  settings: ["journal", "settings"] as const,
-  opportunities: ["journal", "opportunities"] as const,
-  trades: ["journal", "trades"] as const,
-};
-
+/**
+ * Journal shell: reads the market from the URL (?m=US), shows the IN / US
+ * switch when the universe has a US pool, and mounts one JournalView per
+ * market (keyed, so switching resets tab, filters and open dialogs).
+ */
 export default function JournalPage() {
+  const [params, setParams] = useSearchParams();
+  const hasUs = (usePools().data?.pools ?? []).some((p) => poolMarket(p) === "US");
+  const market: Market = params.get("m") === "US" ? "US" : "IN";
+  const pick = (m: Market) => {
+    if (m === market) return;
+    setParams(m === "US" ? { m: "US" } : {}, { replace: true });
+  };
+  const switcher = hasUs || market === "US" ? (
+    <div role="radiogroup" aria-label="Market"
+         className="inline-flex rounded-xl ring-1 ring-brand-border bg-brand-panel shadow-card p-1 gap-0.5">
+      {(["IN", "US"] as const).map((m) => (
+        <button key={m} type="button" role="radio" aria-checked={market === m}
+                title={m === "IN" ? "Indian journal — rupees" : "US journal — dollars"}
+                onClick={() => pick(m)}
+                className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                  market === m
+                    ? "bg-teal-700 text-white shadow-card"
+                    : "text-brand-mute hover:text-brand-text hover:bg-brand-soft"}`}>
+          {m}
+        </button>
+      ))}
+    </div>
+  ) : null;
+  return (
+    <MoneyProvider market={market}>
+      <JournalView key={market} market={market} switcher={switcher} />
+    </MoneyProvider>
+  );
+}
+
+function JournalView({ market, switcher }: { market: Market; switcher: React.ReactNode }) {
   const qc = useQueryClient();
   const canEdit = useCanEdit();
-  const [tab, setTabState] = useState<TabKey>(initialTab);
+  const isUs = market === "US";
+  const { cur, fmtMoney } = useMoney();
+  const tabs = tabsFor(market);
+  /** Tag a draft about to be CREATED; Indian drafts are sent untouched. */
+  const mk = <T extends object>(d: T): T => (isUs ? { ...d, market } : d);
+  const jqk = {
+    settings: ["journal", "settings"] as const,
+    opportunities: jkey(market, "opportunities"),
+    trades: jkey(market, "trades"),
+  };
+  const [tab, setTabState] = useState<TabKey>(() => initialTab(market));
   const setTab = (k: TabKey) => {
     setTabState(k);
     window.history.replaceState(null, "", `#${k}`);
@@ -64,11 +116,13 @@ export default function JournalPage() {
   const settingsQ = useQuery({ queryKey: jqk.settings, queryFn: journalApi.settings });
   const oppsQ = useQuery({
     queryKey: jqk.opportunities,
-    queryFn: () => journalApi.opportunities("ACTIVE"),
+    queryFn: () => journalApi.opportunities("ACTIVE", market),
   });
-  const tradesQ = useQuery({ queryKey: jqk.trades, queryFn: () => journalApi.trades() });
+  const tradesQ = useQuery({
+    queryKey: jqk.trades, queryFn: () => journalApi.trades(undefined, market),
+  });
   // Shared with IpoTab (same key) — here only for the tab's count.
-  const iposQ = useQuery({ queryKey: IPO_QUERY_KEY, queryFn: journalApi.ipos });
+  const iposQ = useQuery({ queryKey: IPO_QUERY_KEY, queryFn: journalApi.ipos, enabled: !isUs });
 
   const opportunities = oppsQ.data?.opportunities ?? [];
   const trades = tradesQ.data?.trades ?? [];
@@ -84,24 +138,33 @@ export default function JournalPage() {
 
   // The DB stores yfinance symbols ("TCS.NS"); the journal uses plain NSE
   // symbols ("TCS"). Query both spellings and normalise the map keys.
+  // US tickers ARE the stored symbol, so they are asked for as-is.
   const snapsQ = useQuery({
-    queryKey: ["journal", "snapshots", symbols.join(",")],
-    queryFn: () => api.latestSnapshotsForSymbols(
-      symbols.flatMap((s) => (s.includes(".") ? [s] : [s, `${s}.NS`]))),
+    queryKey: jkey(market, "snapshots", symbols.join(",")),
+    queryFn: () => api.latestSnapshotsForSymbols(isUs ? symbols
+      : symbols.flatMap((s) => (s.includes(".") ? [s] : [s, `${s}.NS`]))),
     enabled: symbols.length > 0,
     staleTime: 60_000,
   });
 
   const ctx: JournalCtx = useMemo(() => {
-    const snaps = new Map<string, Snapshot>();
-    (snapsQ.data?.snapshots ?? []).forEach((s) =>
-      snaps.set(s.symbol.replace(/\.(NS|BO)$/i, ""), s));
+    let snaps: Map<string, Snapshot>;
+    if (isUs) {
+      // US rows only, tagged with the US rule cap (5% limit, large-cap ladder).
+      snaps = journalSnaps(snapsQ.data?.snapshots ?? [], "US");
+    } else {
+      // Indian rows only: the plain spelling asked for above must never
+      // resolve to a US ticker of the same name.
+      snaps = journalSnaps(snapsQ.data?.snapshots ?? [], "IN");
+    }
+    const settings = settingsQ.data?.settings;
     return {
-      capital: num(settingsQ.data?.settings.capital) ?? 0,
+      capital: num(isUs ? settings?.capital_usd : settings?.capital) ?? 0,
       snaps,
       openInvested: buildOpenInvested(openTrades),
+      market,
     };
-  }, [settingsQ.data, snapsQ.data, openTrades]);
+  }, [settingsQ.data, snapsQ.data, openTrades, isUs, market]);
 
   const missingData = symbols.filter((s) => !ctx.snaps.has(s));
 
@@ -118,13 +181,13 @@ export default function JournalPage() {
   const mSaveOpp = useMutation({
     mutationFn: (p: { id?: number; draft: OpportunityDraft }) =>
       p.id ? journalApi.updateOpportunity(p.id, p.draft)
-           : journalApi.createOpportunity(p.draft),
+           : journalApi.createOpportunity(mk(p.draft)),
     onSuccess: () => { refresh(); setOppModal(null); },
     onError: onErr,
   });
   const mSaveTrade = useMutation({
     mutationFn: (p: { id?: number; draft: TradeDraft }) =>
-      p.id ? journalApi.updateTrade(p.id, p.draft) : journalApi.createTrade(p.draft),
+      p.id ? journalApi.updateTrade(p.id, p.draft) : journalApi.createTrade(mk(p.draft)),
     onSuccess: () => { refresh(); setTradeModal(null); },
     onError: onErr,
   });
@@ -147,7 +210,7 @@ export default function JournalPage() {
     onError: onErr,
   });
   const mCapital = useMutation({
-    mutationFn: (capital: string) => journalApi.setCapital(capital),
+    mutationFn: (capital: string) => journalApi.setCapital(capital, market),
     onSuccess: () => { refresh(); setEditingCapital(false); },
     onError: onErr,
   });
@@ -189,7 +252,7 @@ export default function JournalPage() {
       flash("⚠ Could not recognise this CSV — expected an Opportunities / Open Trades / Closed Trades export.");
       return;
     }
-    const mapped = mapSheet(rows, loc);
+    const mapped = mapSheet(rows, loc, isUs);   // US lots may be fractional
     const n = mapped.opportunities.length + mapped.trades.length;
     const label = { opportunities: "Opportunities", open: "Open Trades", closed: "Closed Trades" }[mapped.kind];
     if (!n) { flash("⚠ No importable rows found."); return; }
@@ -197,20 +260,20 @@ export default function JournalPage() {
       `Import ${label}?`,
       `Detected a "${label}" sheet with ${n} importable rows` +
       (mapped.skipped ? ` (${mapped.skipped} incomplete rows will be skipped)` : "") +
-      `.\n\nRows are ADDED — existing entries are not touched.`,
+      `.\n\nRows are ADDED to the ${isUs ? "US" : "Indian"} journal — existing entries are not touched.`,
       `Import ${n} rows`, false,
-      () => mImport.mutate({ opportunities: mapped.opportunities, trades: mapped.trades }),
+      () => mImport.mutate(mk({ opportunities: mapped.opportunities, trades: mapped.trades })),
     );
   };
 
   const handleExport = () => {
     const stamp = new Date().toISOString().slice(0, 10);
     if (tab === "opportunities") {
-      downloadCsv(`plutus-opportunities-${stamp}.csv`, exportOpportunities(opportunities));
+      downloadCsv(`plutus-${isUs ? "us-" : ""}opportunities-${stamp}.csv`, exportOpportunities(opportunities));
     } else if (tab === "open") {
-      downloadCsv(`plutus-open-trades-${stamp}.csv`, exportOpenTrades(openTrades));
+      downloadCsv(`plutus-${isUs ? "us-" : ""}open-trades-${stamp}.csv`, exportOpenTrades(openTrades));
     } else {
-      downloadCsv(`plutus-closed-trades-${stamp}.csv`, exportClosedTrades(closedTrades));
+      downloadCsv(`plutus-${isUs ? "us-" : ""}closed-trades-${stamp}.csv`, exportClosedTrades(closedTrades));
     }
   };
 
@@ -230,13 +293,18 @@ export default function JournalPage() {
       {/* Page header */}
       <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
         <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Trading Journal</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">
+            Trading Journal{isUs && <span className="text-brand-mute font-normal"> · US</span>}
+          </h1>
           <p className="text-sm text-brand-mute">
-            Plans, positions and bookings — every percentage runs off your capital.
+            {isUs
+              ? "US plans, positions and bookings in dollars — every percentage runs off your US capital."
+              : "Plans, positions and bookings — every percentage runs off your capital."}
           </p>
         </div>
-        {/* Capital chip */}
+        {/* Market switch + capital chip */}
         <div className="flex items-center gap-2">
+          {switcher}
           {editingCapital ? (
             <span className="inline-flex items-center gap-1.5">
               <input
@@ -263,15 +331,18 @@ export default function JournalPage() {
                 setEditingCapital(true);
               }}
               disabled={!canEdit}
-              title={canEdit ? "Click to change capital — every % recalculates" : "Capital"}
+              title={canEdit
+                ? (isUs ? "Click to set your US capital in dollars — every % recalculates"
+                        : "Click to change capital — every % recalculates")
+                : "Capital"}
               className="px-3.5 py-2 rounded-xl bg-brand-panel ring-1 ring-brand-border
                          shadow-card enabled:hover:shadow-pop transition-shadow text-left
                          disabled:cursor-default">
               <span className="block text-[10px] font-bold uppercase tracking-wider text-brand-mute">
-                Capital
+                {isUs ? "US capital" : "Capital"}
               </span>
               <span className="text-base font-display font-semibold tabular-nums">
-                ₹{fmtMoney(capital, 0)}
+                {capital > 0 || !isUs ? <>{cur}{fmtMoney(capital, 0)}</> : "Set capital"}
                 {canEdit && <span className="text-brand-mute text-xs"> ✎</span>}
               </span>
             </button>
@@ -295,7 +366,7 @@ export default function JournalPage() {
         <div role="tablist" aria-label="Journal sections"
              className="inline-flex max-w-full overflow-x-auto no-scrollbar rounded-2xl
                         ring-1 ring-brand-border bg-brand-panel shadow-card p-1.5 gap-1">
-          {TABS.map((t) => {
+          {tabs.map((t) => {
             const active = tab === t.key;
             const count = t.key === "opportunities" ? opportunities.length
               : t.key === "open" ? openTrades.length
@@ -375,7 +446,9 @@ export default function JournalPage() {
           <div className="mt-1.5 leading-relaxed">
             <b>{missingData.join(", ")}</b>
             <div className="mt-1 text-amber-800/80">
-              Run a sync (Play Area → fetch, or the nightly job) to fill them.
+              {isUs
+                ? "Run the US sync (Sync page → Run US price sync + scan) to fill them. US journal stocks must be in a US pool."
+                : "Run a sync (Play Area → fetch, or the nightly job) to fill them."}
             </div>
           </div>
         </details>
@@ -399,7 +472,7 @@ export default function JournalPage() {
           onAddLeg={(draft) => setTradeModal({ initial: null, closed: false, prefill: draft })}
           onBook={setBookTrade}
           onDelete={(t) => askConfirm(`Delete ${t.symbol}?`,
-            `This removes the open trade ${t.symbol} (${t.qty} qty @ ₹${t.buy_price}) permanently.\nTo sell it instead, use Book 💰.`,
+            `This removes the open trade ${t.symbol} (${fmtQty(t.qty)} qty @ ${cur}${t.buy_price}) permanently.\nTo sell it instead, use Book 💰.`,
             "Delete", true, () => mDelete.mutate({ kind: "trade", id: t.id }))}
         />
       )}
@@ -408,14 +481,14 @@ export default function JournalPage() {
           rows={closedTrades}
           onEdit={(t) => setTradeModal({ initial: t, closed: true })}
           onDelete={(t) => askConfirm(`Delete ${t.symbol}?`,
-            `This removes the closed trade ${t.symbol} (${t.qty} qty) permanently.`,
+            `This removes the closed trade ${t.symbol} (${fmtQty(t.qty)} qty) permanently.`,
             "Delete", true, () => mDelete.mutate({ kind: "trade", id: t.id }))}
         />
       )}
       {tab === "portfolio" && (
         <PortfolioTab openTrades={openTrades} closedTrades={closedTrades} ctx={ctx} />
       )}
-      {tab === "ipos" && <IpoTab />}
+      {tab === "ipos" && !isUs && <IpoTab />}
 
       {/* Modals */}
       {oppModal && (

@@ -5,7 +5,8 @@ import { useMemo, useState } from "react";
 import type { Trade } from "../../lib/journalApi";
 import type { HoldingRow, JournalCtx } from "../../lib/journal";
 import { buildPortfolio, deriveClosedTrade, CAP_LIMITS } from "../../lib/journal";
-import { fmtMoney, fmtPct } from "../../lib/money";
+import { fmtPct } from "../../lib/money";
+import { fmtQty, useMoney } from "../../lib/moneyContext";
 import FilterBar, { CapFilter } from "./FilterBar";
 import {
   AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, ROW_LINK_CLS, StockLink, TableShell, Td, Th,
@@ -29,6 +30,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
   closedTrades: Trade[];
   ctx: JournalCtx;
 }) {
+  const { cur, fmtMoney } = useMoney();
   const { holdings, capSummary, totals } = buildPortfolio(openTrades, ctx);
   const { sort, toggle, apply } = useSort<HoldingRow>(ACCESSORS);
   const openStock = useOpenStock();
@@ -55,10 +57,10 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
     <div className="space-y-4">
       {/* Headline stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Big label="Capital" value={`₹${fmtMoney(ctx.capital, 0)}`} />
-        <Big label="Invested" value={`₹${fmtMoney(totals.invested, 0)}`}
+        <Big label="Capital" value={`${cur}${fmtMoney(ctx.capital, 0)}`} />
+        <Big label="Invested" value={`${cur}${fmtMoney(totals.invested, 0)}`}
              sub={`${fmtPct(totals.deployedPct)} deployed`} />
-        <Big label="Current value" value={`₹${fmtMoney(totals.currentValue, 0)}`} />
+        <Big label="Current value" value={`${cur}${fmtMoney(totals.currentValue, 0)}`} />
         <Big label="Unrealized P&L" value={<Pnl value={totals.pnl} digits={0} />}
              sub={<Pnl value={totals.invested ? (totals.pnl / totals.invested) * 100 : null}
                        suffix="%" />} />
@@ -81,7 +83,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
               )}
             </div>
             <div className="mt-1.5 text-lg font-display font-semibold tabular-nums">
-              ₹{fmtMoney(c.invested, 0)}
+              {cur}{fmtMoney(c.invested, 0)}
             </div>
             <div className="text-[11px] text-brand-mute">
               {c.stocks} stock{c.stocks === 1 ? "" : "s"} · {fmtPct(c.pctOfCapital)} of capital
@@ -109,7 +111,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
             <Th right sortKey="alloc" sort={sort} onSort={toggle}>Alloc %</Th>
             <Th right>Limit</Th>
             <Th right sortKey="curValue" sort={sort} onSort={toggle}>Cur. value</Th>
-            <Th right sortKey="pnl" sort={sort} onSort={toggle}>P&L ₹</Th>
+            <Th right sortKey="pnl" sort={sort} onSort={toggle}>P&L {cur}</Th>
             <Th right sortKey="pnlPct" sort={sort} onSort={toggle}>P&L %</Th>
           </tr>
         </thead>
@@ -121,7 +123,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
                 <StockLink symbol={h.symbol} snap={ctx.snaps.get(h.symbol)} />
               </Td>
               <Td><CapChip cap={h.cap} /></Td>
-              <Td right>{h.qty}</Td>
+              <Td right>{fmtQty(h.qty)}</Td>
               <Td right className="text-brand-mute">{h.lots}</Td>
               <Td right>{fmtMoney(h.invested, 0)}</Td>
               <Td right>

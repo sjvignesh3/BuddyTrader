@@ -13,7 +13,8 @@ import type { AbcdSignal, JournalCtx, OpenDerived } from "../../lib/journal";
 import {
   abcdLegDraft, buildAbcdSignals, deriveOpenTrade, legLabel, num, targetZone,
 } from "../../lib/journal";
-import { fmtDate, fmtMoney, fmtPct } from "../../lib/money";
+import { fmtDate, fmtPct } from "../../lib/money";
+import { fmtQty, useMoney } from "../../lib/moneyContext";
 import FilterBar, { CapFilter, FilterChip } from "./FilterBar";
 import {
   AllocMarker, CapChip, EmptyState, GhostBtn, Pnl, ROW_LINK_CLS, RowActions, RowBtn,
@@ -65,6 +66,7 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
   /** Set by the insights cards to land on the tab with a chip switched on. */
   focus?: OpenFocus;
 }) {
+  const { cur, fmtMoney } = useMoney();
   const { sort, toggle, apply } = useSort<Item>(ACCESSORS);
   const openStock = useOpenStock();
   const [search, setSearch] = useState("");
@@ -153,16 +155,16 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
               <Th sortKey="cap" {...s}>Cap</Th>
               <Th sortKey="date" {...s}>Buy date</Th>
               <Th sortKey="symbol" {...s}>Stock</Th>
-              <Th right sortKey="buy" {...s}>Buy ₹</Th>
+              <Th right sortKey="buy" {...s}>Buy {cur}</Th>
               <Th right sortKey="qty" {...s}>Qty</Th>
               <Th sortKey="strategy" {...s}>Strategy</Th>
-              <Th right sortKey="target" {...s}>Target ₹</Th>
+              <Th right sortKey="target" {...s}>Target {cur}</Th>
               <Th right sortKey="buyValue" {...s}>Buy value</Th>
               <Th right sortKey="alloc" {...s}>Alloc %</Th>
               <Th right sortKey="stockAlloc" {...s}>Stock %</Th>
               <Th right sortKey="cmp" {...s}>CMP</Th>
               <Th right sortKey="curValue" {...s}>Cur. value</Th>
-              <Th right sortKey="gainAmt" {...s}>Gain ₹</Th>
+              <Th right sortKey="gainAmt" {...s}>Gain {cur}</Th>
               <Th right sortKey="gainPct" {...s}>Gain %</Th>
               <Th right sortKey="day" {...s}>Day %</Th>
               <Th right sortKey="toTarget" {...s}>To target</Th>
@@ -204,7 +206,7 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
                     </span>
                   </Td>
                   <Td right>{fmtMoney(t.buy_price)}</Td>
-                  <Td right>{t.qty}</Td>
+                  <Td right>{fmtQty(t.qty)}</Td>
                   <Td>{t.strategy ?? "—"}</Td>
                   <Td right>{fmtMoney(t.target_price)}</Td>
                   <Td right>{fmtMoney(d.buyValue, 0)}</Td>
@@ -223,7 +225,7 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
                   <Td right>
                     {zone ? (
                       <span title={zone === "hit"
-                              ? `Target ₹${fmtMoney(t.target_price)} reached — consider booking`
+                              ? `Target ${cur}${fmtMoney(t.target_price)} reached — consider booking`
                               : `Within 10% of target — ${fmtPct(d.remainingPct)} to go`}
                             className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full
                                         text-[11px] font-semibold ring-1 ${
@@ -248,7 +250,7 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
                   <Td>
                     <RowActions>
                       {abcd?.zone === "due" && onAddLeg && (
-                        <RowBtn title={`Add averaging leg ${abcd.nextLeg} — form prefilled, target ₹${fmtMoney(abcd.targetPrice)}`}
+                        <RowBtn title={`Add averaging leg ${abcd.nextLeg} — form prefilled, target ${cur}${fmtMoney(abcd.targetPrice)}`}
                                 onClick={() => onAddLeg(abcdLegDraft(abcd))}>🪜</RowBtn>
                       )}
                       <RowBtn title="Book (sell fully or partially)" onClick={() => onBook(t)}>💰</RowBtn>
@@ -275,6 +277,7 @@ export default function OpenTradesTab({ rows, ctx, onEdit, onBook, onDelete, onA
 function NextLegCell({ sig, leg, isRef, legs }: {
   sig: AbcdSignal | null; leg: string | null; isRef: boolean; legs: number;
 }) {
+  const { cur, fmtMoney } = useMoney();
   if (!sig) return <span className="text-brand-mute">—</span>;
   if (!isRef) {
     return (
@@ -287,24 +290,24 @@ function NextLegCell({ sig, leg, isRef, legs }: {
   if (sig.triggerPrice === null || sig.thresholdPct === null) {
     return <span className="text-brand-mute" title="No cap bucket — set one to get the ABCD trigger">—</span>;
   }
-  const base = `Leg ${sig.nextLeg} triggers at ₹${fmtMoney(sig.triggerPrice)} — `
-    + `${sig.thresholdPct}% below leg ${sig.refLeg} entry ₹${fmtMoney(sig.refEntry)} (${sig.cap} cap). `
-    + `Target for leg ${sig.nextLeg}: ₹${fmtMoney(sig.targetPrice)} (leg ${sig.refLeg} entry).`;
+  const base = `Leg ${sig.nextLeg} triggers at ${cur}${fmtMoney(sig.triggerPrice)} — `
+    + `${sig.thresholdPct}% below leg ${sig.refLeg} entry ${cur}${fmtMoney(sig.refEntry)} (${sig.cap} cap). `
+    + `Target for leg ${sig.nextLeg}: ${cur}${fmtMoney(sig.targetPrice)} (leg ${sig.refLeg} entry).`;
   if (sig.zone === "due") {
     const room = sig.maxQty === null
       ? "Set capital to see the room under the cap limit."
       : `Room for ${sig.maxQty} share${sig.maxQty === 1 ? "" : "s"} under the ${sig.cap}-cap limit.`;
     return (
-      <span title={`ELIGIBLE — CMP ₹${fmtMoney(sig.cmp)} is ${fmtPct(sig.fallPct)} below leg ${sig.refLeg}. ${base} ${room}`}
+      <span title={`ELIGIBLE — CMP ${cur}${fmtMoney(sig.cmp)} is ${fmtPct(sig.fallPct)} below leg ${sig.refLeg}. ${base} ${room}`}
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px]
                        font-semibold ring-1 bg-indigo-600 text-white ring-indigo-600">
-        🪜 {sig.nextLeg} ≤ ₹{fmtMoney(sig.triggerPrice, 0)} → ₹{fmtMoney(sig.targetPrice, 0)}
+        🪜 {sig.nextLeg} ≤ {cur}{fmtMoney(sig.triggerPrice, 0)} → {cur}{fmtMoney(sig.targetPrice, 0)}
       </span>
     );
   }
   if (sig.zone === "blocked") {
     return (
-      <span title={`Price triggered (CMP ₹${fmtMoney(sig.cmp)} is ${fmtPct(sig.fallPct)} below leg ${sig.refLeg}) but ${sig.symbol} is already at its ${sig.cap}-cap limit — no room for leg ${sig.nextLeg}. ${base}`}
+      <span title={`Price triggered (CMP ${cur}${fmtMoney(sig.cmp)} is ${fmtPct(sig.fallPct)} below leg ${sig.refLeg}) but ${sig.symbol} is already at its ${sig.cap}-cap limit — no room for leg ${sig.nextLeg}. ${base}`}
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px]
                        font-semibold ring-1 bg-rose-100 text-rose-800 ring-rose-300">
         🪜 {sig.nextLeg} · no room
@@ -316,7 +319,7 @@ function NextLegCell({ sig, leg, isRef, legs }: {
           title={sig.toTriggerPct === null
             ? `${base} No market data yet for the distance to trigger.`
             : `${base} CMP is ${fmtPct(sig.toTriggerPct)} above the trigger.`}>
-      {sig.nextLeg} @ ₹{fmtMoney(sig.triggerPrice, 0)}
+      {sig.nextLeg} @ {cur}{fmtMoney(sig.triggerPrice, 0)}
     </span>
   );
 }

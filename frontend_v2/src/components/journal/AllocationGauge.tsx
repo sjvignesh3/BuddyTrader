@@ -7,7 +7,7 @@
 import type { CapBucket } from "../../lib/journalApi";
 import type { JournalCtx } from "../../lib/journal";
 import { planAllocation } from "../../lib/journal";
-import { fmtMoney } from "../../lib/money";
+import { useMoney } from "../../lib/moneyContext";
 
 /** The limit tick sits here on the track, leaving room to show an overshoot. */
 const LIMIT_POS = 0.72;
@@ -25,6 +25,7 @@ export default function AllocationGauge({
   /** Wired to the qty field — one click sizes the position to the limit. */
   onUseMaxQty?: (q: number) => void;
 }) {
+  const { cur, fmtMoney } = useMoney();
   const a = planAllocation({ symbol, cap, buyPrice, qty, ctx, excludeHeld });
 
   if (!a.capital) {
@@ -63,7 +64,7 @@ export default function AllocationGauge({
         </span>
         <span className="text-[10px] text-brand-mute">
           {cap
-            ? <>{cap} cap · limit <b className="text-brand-text">{a.limitPct}%</b> of ₹{fmtMoney(a.capital, 0)}</>
+            ? <>{cap} cap · limit <b className="text-brand-text">{a.limitPct}%</b> of {cur}{fmtMoney(a.capital, 0)}</>
             : <>no cap bucket — pick one for the limit</>}
         </span>
       </div>
@@ -88,13 +89,13 @@ export default function AllocationGauge({
         <span className="inline-flex items-center gap-1 text-brand-mute">
           <Dot className="bg-teal-700" />
           Held <b className="text-brand-text font-mono">{fmt(a.heldPct)}</b>
-          <span className="font-mono">(₹{fmtMoney(a.heldValue, 0)})</span>
+          <span className="font-mono">({cur}{fmtMoney(a.heldValue, 0)})</span>
         </span>
         {a.addPct !== null && (
           <span className="inline-flex items-center gap-1 text-brand-mute">
             <Dot className="bg-teal-400" />
             This plan <b className="text-brand-text font-mono">+{fmt(a.addPct)}</b>
-            <span className="font-mono">(₹{fmtMoney(a.addValue, 0)})</span>
+            <span className="font-mono">({cur}{fmtMoney(a.addValue, 0)})</span>
           </span>
         )}
         {a.totalPct !== null && (
@@ -125,7 +126,7 @@ export default function AllocationGauge({
                 <> — <b className="font-mono">{a.qtyDelta}</b> more than planned</>
               )}
               {a.roomValue !== null && a.roomValue > 0 && (
-                <> · <span className="font-mono">₹{fmtMoney(a.roomValue, 0)}</span> left under the limit</>
+                <> · <span className="font-mono">{cur}{fmtMoney(a.roomValue, 0)}</span> left under the limit</>
               )}
             </>
           )}

@@ -9,16 +9,20 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useStocks } from "../../hooks/usePlutus";
 import type { Stock } from "../../lib/api";
+import { marketOf } from "../../lib/market";
+import { useMoney } from "../../lib/moneyContext";
 
 const plain = (s: string) => s.replace(/\.(NS|BO)$/i, "").toUpperCase();
 
 /** true when `symbol` is an active universe member (either spelling). */
 export function useUniverseMembership(symbol: string) {
   const q = useStocks();
+  const { market } = useMoney();   // a US journal only knows US tickers, and vice versa
   const key = plain(symbol.trim());
   const stock = useMemo(() =>
-    key ? (q.data?.stocks ?? []).find((s) => plain(s.symbol) === key) ?? null : null,
-    [q.data, key]);
+    key ? (q.data?.stocks ?? []).find(
+      (s) => marketOf(s.symbol) === market && plain(s.symbol) === key) ?? null : null,
+    [q.data, key, market]);
   return { stock, loaded: Boolean(q.data), inUniverse: stock !== null };
 }
 
@@ -31,17 +35,21 @@ export default function SymbolPicker({ value, onChange, onPick, disabled, autoFo
   autoFocus?: boolean;
 }) {
   const q = useStocks();
+  const { market } = useMoney();
   const [open, setOpen] = useState(false);
   const key = plain(value.trim());
+  const stocks = useMemo(
+    () => (q.data?.stocks ?? []).filter((s) => marketOf(s.symbol) === market),
+    [q.data, market]);
   const suggestions = useMemo(() => {
     if (!key) return [];
-    return (q.data?.stocks ?? [])
+    return stocks
       .filter((s) => plain(s.symbol).includes(key) || (s.name ?? "").toUpperCase().includes(key)
         || (s.sector ?? "").toUpperCase().includes(key))
       .sort((a, b) => Number(!plain(a.symbol).startsWith(key)) - Number(!plain(b.symbol).startsWith(key)))
       .slice(0, 8);
-  }, [q.data, key]);
-  const exact = key ? (q.data?.stocks ?? []).find((s) => plain(s.symbol) === key) ?? null : null;
+  }, [stocks, key]);
+  const exact = key ? stocks.find((s) => plain(s.symbol) === key) ?? null : null;
 
   const pick = (s: Stock) => {
     onChange(plain(s.symbol));
@@ -51,7 +59,7 @@ export default function SymbolPicker({ value, onChange, onPick, disabled, autoFo
 
   return (
     <div className="relative">
-      <input value={value} disabled={disabled} autoFocus={autoFocus} placeholder="RELIANCE"
+      <input value={value} disabled={disabled} autoFocus={autoFocus} placeholder={market === "US" ? "NVDA" : "RELIANCE"}
              onChange={(e) => { onChange(e.target.value); setOpen(true); }}
              onFocus={() => setOpen(true)}
              onBlur={() => setTimeout(() => setOpen(false), 150)}

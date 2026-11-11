@@ -55,15 +55,17 @@ export function toCsv(headers: string[], rows: (string | number | null | undefin
 
 function cleanNum(raw: string | undefined): string | null {
   if (!raw) return null;
-  const s = raw.replace(/[",%\s₹]/g, "").replace(/,/g, "");
+  const s = raw.replace(/[",%\s₹$]/g, "").replace(/,/g, "");
   if (s === "" || s === "-") return null;
   return Number.isFinite(Number(s)) ? s : null;
 }
 
-function cleanInt(raw: string | undefined): number | null {
+/** Quantity cell. India: a whole number (rounded, as before). US
+ *  (`fractional`): kept to 4 decimals — "0.5" stays 0.5. */
+function cleanQty(raw: string | undefined, fractional: boolean): number | null {
   const s = cleanNum(raw);
   if (s === null) return null;
-  const n = Math.round(Number(s));
+  const n = fractional ? Math.round(Number(s) * 10_000) / 10_000 : Math.round(Number(s));
   return n > 0 ? n : null;
 }
 
@@ -144,7 +146,8 @@ export interface ImportResult {
   skipped: number;
 }
 
-export function mapSheet(rows: string[][], loc: Located): ImportResult {
+export function mapSheet(rows: string[][], loc: Located,
+                         fractionalQty = false): ImportResult {
   const body = rows.slice(loc.headerIdx + 1);
   const col = indexer(loc.headers);
   const out: ImportResult = { kind: loc.kind, opportunities: [], trades: [], skipped: 0 };
@@ -166,7 +169,7 @@ export function mapSheet(rows: string[][], loc: Located): ImportResult {
         cap_bucket: normalizeCap(cell(r, c.cap)),
         buy_price: cleanNum(cell(r, c.buy)),
         limit_price: cleanNum(cell(r, c.limit)),
-        qty: cleanInt(cell(r, c.qty)),
+        qty: cleanQty(cell(r, c.qty), fractionalQty),
         strategy: cell(r, c.strategy) || null,
         target_price: cleanNum(cell(r, c.target)),
         action_filter: (ACTION_MAP[cell(r, c.action).toLowerCase()] ?? null) as
@@ -191,7 +194,7 @@ export function mapSheet(rows: string[][], loc: Located): ImportResult {
       const symbol = cell(r, c.symbol).toUpperCase();
       const buy_date = parseSheetDate(cell(r, c.date));
       const buy_price = cleanNum(cell(r, c.buy));
-      const qty = cleanInt(cell(r, c.qty));
+      const qty = cleanQty(cell(r, c.qty), fractionalQty);
       if (!symbol || !buy_date || !buy_price || !qty) { out.skipped++; continue; }
       const t = cell(r, c.type);
       out.trades.push({
@@ -220,7 +223,7 @@ export function mapSheet(rows: string[][], loc: Located): ImportResult {
     const symbol = cell(r, c.symbol).toUpperCase();
     const buy_date = parseSheetDate(cell(r, c.date));
     const buy_price = cleanNum(cell(r, c.buy));
-    const qty = cleanInt(cell(r, c.qty));
+    const qty = cleanQty(cell(r, c.qty), fractionalQty);
     const sell_date = parseSheetDate(cell(r, c.sellDate));
     const sell_price = cleanNum(cell(r, c.sellPrice));
     if (!symbol || !buy_date || !buy_price || !qty || !sell_date || !sell_price) {

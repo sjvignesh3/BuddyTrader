@@ -274,7 +274,7 @@ export default function StockTable({
       render: (r: StockRow) => (
         <span className="inline-flex items-center gap-1">
           {c.render(r)}
-          {!isUs && heldSymbols?.has(plain(r.symbol)) && (
+          {heldSymbols?.has(plain(r.symbol)) && (
             <span title="Open position in your Trading Journal"
                   className="text-[10px] leading-none">💼</span>
           )}

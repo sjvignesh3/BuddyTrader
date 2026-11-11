@@ -9,7 +9,7 @@ import type {
   ActionFilter, CapBucket, Opportunity, OpportunityDraft, Trade, TradeDraft,
 } from "../../lib/journalApi";
 import { CAP_LIMITS, effectiveCap, num, type JournalCtx } from "../../lib/journal";
-import { fmtMoney } from "../../lib/money";
+import { badQty, fmtQty, qtyOrNull, useMoney } from "../../lib/moneyContext";
 import AllocationGauge from "./AllocationGauge";
 import SymbolPicker, { useUniverseMembership } from "./SymbolPicker";
 import {
@@ -55,15 +55,6 @@ function numOrNull(s: string): string | null {
 function badNum(s: string): boolean {
   return s.trim() !== "" && numOrNull(s) === null;
 }
-function intOrNull(s: string): number | null {
-  const t = s.trim();
-  if (t === "") return null;
-  const n = Math.round(Number(t));
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-function badInt(s: string): boolean {
-  return s.trim() !== "" && intOrNull(s) === null;
-}
 function toNum(s: string): number | null {
   const v = numOrNull(s);
   return v === null ? null : Number(v);
@@ -76,8 +67,9 @@ function stopAboveEntry(stop: string, entry: string): boolean {
 
 /** Live "the plan at a glance" strip shown inside the form footer. */
 function PlanSummary({ buy, qty, target }: { buy: string; qty: string; target: string }) {
+  const { cur, fmtMoney, market } = useMoney();
   const b = toNum(buy);
-  const q = intOrNull(qty);
+  const q = qtyOrNull(market, qty);
   const t = toNum(target);
   const needs = b !== null && q !== null ? b * q : null;
   const potPct = b !== null && t !== null ? ((t - b) / b) * 100 : null;
@@ -87,12 +79,12 @@ function PlanSummary({ buy, qty, target }: { buy: string; qty: string; target: s
     <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-brand-mute
                     bg-brand-soft rounded-lg px-3 py-2 ring-1 ring-brand-border/60 mt-4">
       {needs !== null && (
-        <span>Needs <b className="text-brand-text font-mono">₹{fmtMoney(needs, 0)}</b></span>
+        <span>Needs <b className="text-brand-text font-mono">{cur}{fmtMoney(needs, 0)}</b></span>
       )}
       {potPct !== null && (
         <span>Potential <b className={`font-mono ${potPct >= 0 ? "text-teal-700" : "text-rose-700"}`}>
           {potPct >= 0 ? "+" : ""}{potPct.toFixed(2)}%</b>
-          {potGain !== null && <> (₹{fmtMoney(potGain, 0)})</>}
+          {potGain !== null && <> ({cur}{fmtMoney(potGain, 0)})</>}
         </span>
       )}
     </div>
@@ -111,6 +103,7 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
   onClose: () => void;
   busy: boolean;
 }) {
+  const { cur, market } = useMoney();
   const [f, setF] = useState({
     opp_date: initial?.opp_date ?? prefill?.opp_date ?? today(),
     symbol: initial?.symbol ?? prefill?.symbol ?? "",
@@ -139,25 +132,26 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
     if (!f.opp_date) return "Date is required";
     if (badNum(f.buy_price)) return "Buy price must be a positive number";
     if (badNum(f.limit_price)) return "Limit price must be a positive number";
-    if (badInt(f.qty)) return "Qty must be a positive whole number";
+    if (badQty(market, f.qty)) return market === "US" ? "Qty must be a positive number (up to 4 decimals)"
+      : "Qty must be a positive whole number";
     if (badNum(f.target_price)) return "Target must be a positive number";
     if (badNum(f.stop_price)) return "Stop must be a positive number";
     if (stopAboveEntry(f.stop_price, f.buy_price || f.limit_price)) {
       return "Stop must be below the buy price";
     }
     return null;
-  }, [f, membership.loaded, membership.inUniverse]);
+  }, [f, membership.loaded, membership.inUniverse, market]);
 
   // Soft completeness — what each still-empty field would unlock. Allocation
   // itself is live in the gauge below, so this only names what's still blank.
   const missing = useMemo(() => {
     const m: string[] = [];
-    if (!numOrNull(f.buy_price) || !intOrNull(f.qty)) {
+    if (!numOrNull(f.buy_price) || !qtyOrNull(market, f.qty)) {
       m.push("buy price + qty size the allocation above");
     }
-    if (!numOrNull(f.target_price)) m.push("a target gives potential % and gain ₹");
+    if (!numOrNull(f.target_price)) m.push(`a target gives potential % and gain ${cur}`);
     return m;
-  }, [f]);
+  }, [f, cur, market]);
 
   const symbolKey = f.symbol.trim().toUpperCase();
   // Buy price is the trigger; fall back to the GTT limit when only that is set.
@@ -169,7 +163,7 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
     cap_bucket: (f.cap_bucket || null) as OpportunityDraft["cap_bucket"],
     buy_price: numOrNull(f.buy_price),
     limit_price: numOrNull(f.limit_price),
-    qty: intOrNull(f.qty),
+    qty: qtyOrNull(market, f.qty),
     strategy: f.strategy.trim() || null,
     target_price: numOrNull(f.target_price),
     stop_price: numOrNull(f.stop_price),
@@ -205,26 +199,26 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
                      onChange={setV("action_filter")} />
         </Field>
         <Field label="Buy price">
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.buy_price} invalid={badNum(f.buy_price)}
                     onChange={set("buy_price")} />
         </Field>
         <Field label="Limit price (GTT)">
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.limit_price} invalid={badNum(f.limit_price)}
                     onChange={set("limit_price")} />
         </Field>
         <Field label="Qty">
           <NumInput inputMode="numeric" placeholder="0"
-                    value={f.qty} invalid={badInt(f.qty)} onChange={set("qty")} />
+                    value={f.qty} invalid={badQty(market, f.qty)} onChange={set("qty")} />
         </Field>
         <Field label="Target">
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.target_price} invalid={badNum(f.target_price)}
                     onChange={set("target_price")} />
         </Field>
         <Field label="Stop loss" span2>
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.stop_price}
                     invalid={badNum(f.stop_price)
                              || stopAboveEntry(f.stop_price, f.buy_price || f.limit_price)}
@@ -248,7 +242,7 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
         symbol={symbolKey}
         cap={effectiveCap((f.cap_bucket || null) as CapBucket | null,
                           ctx.snaps.get(symbolKey))}
-        buyPrice={planPrice} qty={intOrNull(f.qty)} ctx={ctx}
+        buyPrice={planPrice} qty={qtyOrNull(market, f.qty)} ctx={ctx}
         onUseMaxQty={(q) => setF((p) => ({ ...p, qty: String(q) }))}
       />
 
@@ -260,7 +254,7 @@ export function OpportunityModal({ initial, prefill, ctx, onSave, onClose, busy 
 
       <div className="mt-5 flex items-center justify-end gap-3">
         {problem && (f.symbol.trim() || badNum(f.buy_price) || badNum(f.limit_price)
-                     || badInt(f.qty) || badNum(f.target_price)) && (
+                     || badQty(market, f.qty) || badNum(f.target_price)) && (
           <span className="text-[11px] text-rose-600 mr-auto">{problem}</span>
         )}
         <GhostBtn onClick={onClose}>Cancel</GhostBtn>
@@ -286,6 +280,7 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
   onClose: () => void;
   busy: boolean;
 }) {
+  const { cur, market } = useMoney();
   const isClosed = closed || initial?.status === "CLOSED";
   const p = initial ? undefined : prefill;
   const [f, setF] = useState({
@@ -316,7 +311,8 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
     if (membership.loaded && !membership.inUniverse) return "Symbol is not in the universe";
     if (!f.buy_date) return "Buy date is required";
     if (!numOrNull(f.buy_price)) return "Buy price is required";
-    if (!intOrNull(f.qty)) return "Qty is required (positive whole number)";
+    if (!qtyOrNull(market, f.qty)) return market === "US" ? "Qty is required (fractions allowed, up to 4 decimals)"
+      : "Qty is required (positive whole number)";
     if (badNum(f.target_price)) return "Target must be a positive number";
     if (badNum(f.stop_price)) return "Stop must be a positive number";
     if (stopAboveEntry(f.stop_price, f.buy_price)) return "Stop must be below the buy price";
@@ -325,7 +321,7 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
       if (!numOrNull(f.sell_price)) return "Sell price is required";
     }
     return null;
-  }, [f, isClosed, membership.loaded, membership.inUniverse]);
+  }, [f, isClosed, membership.loaded, membership.inUniverse, market]);
 
   const symbolKey = f.symbol.trim().toUpperCase();
   // Editing an open lot: its own value is already in openInvested, so drop it
@@ -340,7 +336,7 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
       symbol: f.symbol.trim().toUpperCase(),
       buy_date: f.buy_date,
       buy_price: numOrNull(f.buy_price)!,
-      qty: intOrNull(f.qty)!,
+      qty: qtyOrNull(market, f.qty)!,
       strategy: f.strategy.trim() || null,
       target_price: numOrNull(f.target_price),
       stop_price: numOrNull(f.stop_price),
@@ -385,21 +381,21 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
         </Field>
         <Field label="Buy date *"><TextInput type="date" value={f.buy_date} onChange={set("buy_date")} /></Field>
         <Field label="Buy price *">
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.buy_price} invalid={badNum(f.buy_price)}
                     onChange={set("buy_price")} />
         </Field>
         <Field label="Qty *">
           <NumInput inputMode="numeric" placeholder="0"
-                    value={f.qty} invalid={badInt(f.qty)} onChange={set("qty")} />
+                    value={f.qty} invalid={badQty(market, f.qty)} onChange={set("qty")} />
         </Field>
         <Field label="Target">
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.target_price} invalid={badNum(f.target_price)}
                     onChange={set("target_price")} />
         </Field>
         <Field label="Stop loss" span2>
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.stop_price}
                     invalid={badNum(f.stop_price) || stopAboveEntry(f.stop_price, f.buy_price)}
                     onChange={set("stop_price")} />
@@ -417,7 +413,7 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
           <>
             <Field label="Sell date *"><TextInput type="date" value={f.sell_date} onChange={set("sell_date")} /></Field>
             <Field label="Sell price *">
-              <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+              <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                         value={f.sell_price} invalid={badNum(f.sell_price)}
                         onChange={set("sell_price")} />
             </Field>
@@ -440,7 +436,7 @@ export function TradeModal({ initial, prefill, closed = false, ctx, onSave, onCl
           symbol={symbolKey}
           cap={effectiveCap((f.cap_bucket || null) as CapBucket | null,
                             ctx.snaps.get(symbolKey))}
-          buyPrice={toNum(f.buy_price)} qty={intOrNull(f.qty)} ctx={ctx}
+          buyPrice={toNum(f.buy_price)} qty={qtyOrNull(market, f.qty)} ctx={ctx}
           excludeHeld={ownHeld}
           onUseMaxQty={(q) => setF((p) => ({ ...p, qty: String(q) }))}
         />
@@ -469,6 +465,7 @@ export function ConvertModal({ opp, ctx, onConvert, onClose, busy }: {
   onClose: () => void;
   busy: boolean;
 }) {
+  const { cur, market } = useMoney();
   const [f, setF] = useState({
     buy_date: today(),
     buy_price: opp.limit_price ?? opp.buy_price ?? "",
@@ -479,7 +476,7 @@ export function ConvertModal({ opp, ctx, onConvert, onClose, busy }: {
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setF((p) => ({ ...p, [k]: e.target.value }));
   const setV = (k: keyof typeof f) => (v: string) => setF((p) => ({ ...p, [k]: v }));
-  const valid = f.buy_date && numOrNull(f.buy_price) && intOrNull(f.qty);
+  const valid = f.buy_date && numOrNull(f.buy_price) && qtyOrNull(market, f.qty);
   return (
     <Modal title={`Take position — ${opp.symbol}`} onClose={onClose}>
       <p className="text-xs text-brand-mute mb-3">
@@ -498,20 +495,20 @@ export function ConvertModal({ opp, ctx, onConvert, onClose, busy }: {
                      onChange={setV("order_type")} />
         </Field>
         <Field label="Buy price *">
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.buy_price} invalid={badNum(f.buy_price)}
                     onChange={set("buy_price")} />
         </Field>
         <Field label="Qty *">
           <NumInput inputMode="numeric" placeholder="0"
-                    value={f.qty} invalid={badInt(f.qty)} onChange={set("qty")} />
+                    value={f.qty} invalid={badQty(market, f.qty)} onChange={set("qty")} />
         </Field>
       </div>
       <PlanSummary buy={f.buy_price} qty={f.qty} target={opp.target_price ?? ""} />
       <AllocationGauge
         symbol={opp.symbol}
         cap={effectiveCap(opp.cap_bucket, ctx.snaps.get(opp.symbol))}
-        buyPrice={toNum(f.buy_price)} qty={intOrNull(f.qty)} ctx={ctx}
+        buyPrice={toNum(f.buy_price)} qty={qtyOrNull(market, f.qty)} ctx={ctx}
         onUseMaxQty={(q) => setF((p) => ({ ...p, qty: String(q) }))}
       />
       <div className="mt-5 flex justify-end gap-2">
@@ -519,7 +516,7 @@ export function ConvertModal({ opp, ctx, onConvert, onClose, busy }: {
         <PrimaryBtn disabled={busy || !valid} onClick={() => onConvert({
           buy_date: f.buy_date,
           buy_price: numOrNull(f.buy_price)!,
-          qty: intOrNull(f.qty)!,
+          qty: qtyOrNull(market, f.qty)!,
           order_type: f.order_type as TradeDraft["order_type"],
         })}>
           {busy ? "Converting…" : "Open trade"}
@@ -537,6 +534,7 @@ export function CloseTradeModal({ trade, onCloseTrade, onClose, busy }: {
   onClose: () => void;
   busy: boolean;
 }) {
+  const { cur, market } = useMoney();
   const [f, setF] = useState({
     sell_date: today(),
     sell_price: trade.target_price ?? "",
@@ -544,7 +542,7 @@ export function CloseTradeModal({ trade, onCloseTrade, onClose, busy }: {
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setF((p) => ({ ...p, [k]: e.target.value }));
-  const qty = intOrNull(f.qty);
+  const qty = qtyOrNull(market, f.qty);
   const valid = f.sell_date && numOrNull(f.sell_price) && qty && qty <= trade.qty;
   const partial = qty !== null && qty < trade.qty;
   return (
@@ -552,19 +550,19 @@ export function CloseTradeModal({ trade, onCloseTrade, onClose, busy }: {
       <div className="grid sm:grid-cols-2 gap-3">
         <Field label="Sell date *"><TextInput type="date" value={f.sell_date} onChange={set("sell_date")} /></Field>
         <Field label="Sell price *">
-          <NumInput prefix="₹" inputMode="decimal" placeholder="0.00"
+          <NumInput prefix={cur} inputMode="decimal" placeholder="0.00"
                     value={f.sell_price} invalid={badNum(f.sell_price)}
                     onChange={set("sell_price")} />
         </Field>
-        <Field label={`Qty (open: ${trade.qty})`}>
+        <Field label={`Qty (open: ${fmtQty(trade.qty)})`}>
           <NumInput inputMode="numeric" value={f.qty}
-                    invalid={badInt(f.qty) || (qty !== null && qty > trade.qty)}
+                    invalid={badQty(market, f.qty) || (qty !== null && qty > trade.qty)}
                     onChange={set("qty")} />
         </Field>
       </div>
       {partial && (
         <p className="mt-3 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 ring-1 ring-amber-200">
-          Partial booking — {qty} sold as a closed trade, {trade.qty - qty!} stays open.
+          Partial booking — {fmtQty(qty)} sold as a closed trade, {fmtQty(trade.qty - qty!)} stays open.
         </p>
       )}
       <div className="mt-5 flex justify-end gap-2">

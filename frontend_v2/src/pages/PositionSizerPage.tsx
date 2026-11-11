@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ScanResult, Stock } from "../lib/api";
+import { marketOf } from "../lib/market";
 import { useScanResultsForSymbols, useStocks } from "../hooks/usePlutus";
 import { bothSpellings, plainSymbol, useJournalCtx } from "../hooks/useJournalCtx";
 import { journalApi, type OpportunityDraft } from "../lib/journalApi";
@@ -63,7 +64,11 @@ export default function PositionSizerPage() {
   const resultsQ = useScanResultsForSymbols(symbol ? bothSpellings([symbol]) : []);
   const plansQ = useQuery({ queryKey: sqk.plans, queryFn: () => sizingApi.plans() });
 
-  const stocks = useMemo(() => stocksQ.data?.stocks ?? [], [stocksQ.data]);
+  // The sizer works in rupees against the Indian capital, so it offers
+  // Indian stocks only — a US ticker would be sized in the wrong currency.
+  const stocks = useMemo(
+    () => (stocksQ.data?.stocks ?? []).filter((s) => marketOf(s.symbol) === "IN"),
+    [stocksQ.data]);
   const snap = symbol ? j.ctx.snaps.get(symbol) : undefined;
 
   // Capital defaults to the journal's once it arrives (a later edit sticks).

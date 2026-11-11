@@ -8,6 +8,7 @@
 // -----------------------------------------------------------------------------
 
 import type { Snapshot } from "./api";
+import { marketOf, plainSymbol, type Market } from "./market";
 import type { CapBucket, Opportunity, Trade, TradeDraft } from "./journalApi";
 
 export const CAP_LIMITS: Record<CapBucket, number> = {
@@ -66,11 +67,40 @@ export function daysBetween(fromIso: string | null | undefined, toIso?: string |
 // ---- Shared fetched-data context ----------------------------------------------
 
 export interface JournalCtx {
+  /** This market's capital — ₹ for India, $ for the US. */
   capital: number;
   /** latest snapshot per symbol */
   snaps: Map<string, Snapshot>;
-  /** OPEN invested ₹ per symbol (sum of buy_price*qty) */
+  /** OPEN invested (₹ or $) per symbol (sum of buy_price*qty) */
   openInvested: Map<string, number>;
+  /** Which journal this is. Absent = India. */
+  market?: Market;
+}
+
+/**
+ * US stocks have no cap bucket (the Large / Mid / Small cut-offs are ₹-crore
+ * thresholds), so every US snapshot is treated as LARGE cap for the journal's
+ * rules: a 5% per-stock limit and the large-cap averaging ladder. Tagging the
+ * snapshot here means the existing cap logic applies with no US special-case.
+ */
+export const US_RULE_CAP: CapBucket = "Large";
+
+/** Journal snapshot map keyed by PLAIN symbol, for one market only — a US
+ *  ticker never resolves to an NSE symbol of the same spelling, or back. */
+export function journalSnaps(snapshots: Snapshot[], market: Market): Map<string, Snapshot> {
+  const snaps = new Map<string, Snapshot>();
+  for (const s of snapshots) {
+    if (marketOf(s.symbol) !== market) continue;
+    snaps.set(plainSymbol(s.symbol),
+      market === "US" && !s.cap_bucket ? { ...s, cap_bucket: US_RULE_CAP } : s);
+  }
+  return snaps;
+}
+
+/** Stored spellings to ask the snapshot API for, given plain journal symbols. */
+export function snapshotSymbols(symbols: string[], market: Market): string[] {
+  if (market === "US") return symbols;
+  return symbols.flatMap((s) => (s.includes(".") ? [s] : [`${s}.NS`]));
 }
 
 export function buildOpenInvested(openTrades: Trade[]): Map<string, number> {
@@ -509,7 +539,8 @@ export function abcdLegDraft(sig: AbcdSignal): TradeDraft {
 /** Route to a stock's page. The DB keys snapshots by yfinance symbol
  * ("TCS.NS") while the journal stores plain NSE symbols ("TCS"); prefer the
  * snapshot's spelling when we have it, else assume NSE. */
-export function stockPath(symbol: string, snap?: Snapshot): string {
-  const full = snap?.symbol ?? (symbol.includes(".") ? symbol : `${symbol}.NS`);
+export function stockPath(symbol: string, snap?: Snapshot, market?: Market): string {
+  const full = snap?.symbol
+    ?? (market === "US" || symbol.includes(".") ? symbol : `${symbol}.NS`);
   return `/stocks/${encodeURIComponent(full)}`;
 }

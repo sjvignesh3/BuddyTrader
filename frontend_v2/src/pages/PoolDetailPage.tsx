@@ -33,6 +33,7 @@ import PoolTabs from "../components/PoolTabs";
 import StockTable, { RALLY_POOLS } from "../components/StockTable";
 import { fmtDate } from "../lib/money";
 import { dailyJobType, exchangeMap, plainSymbol, poolMarket } from "../lib/market";
+import { jkey } from "../lib/moneyContext";
 
 const CAP_BUCKETS = ["Large", "Mid", "Small", "Micro"] as const;
 const POOL_TITLES: Record<string, string> = {
@@ -124,17 +125,17 @@ export default function PoolDetailPage() {
 
   // ---- Journal positions (💼 indicator + holding filter) -------------------------
   const positionsQ = useQuery({
-    queryKey: ["journal", "positions"],
-    queryFn: journalApi.positions,
+    queryKey: jkey(market, "positions"),
+    queryFn: () => journalApi.positions(market),
     staleTime: 60_000,
     retry: 1, // journal may be absent in prod builds — degrade silently
   });
   const heldSymbols = useMemo(
     () => new Set((positionsQ.data?.positions ?? []).map((p) => p.symbol)),
     [positionsQ.data]);
-  // The Trading Journal is Indian-only for now, so a US row is never "held"
-  // (a US ticker must not match an NSE symbol of the same name).
-  const isHeld = (r: StockRow) => !isUs && heldSymbols.has(plainSymbol(r.symbol));
+  // Positions are fetched for THIS pool's market, so a US ticker can never
+  // match an NSE symbol of the same name (or the other way round).
+  const isHeld = (r: StockRow) => heldSymbols.has(plainSymbol(r.symbol));
   const exchanges = useMemo(() => exchangeMap(stocksQ.data?.stocks), [stocksQ.data]);
 
   // ---- Filters ----------------------------------------------------------------
@@ -253,7 +254,7 @@ export default function PoolDetailPage() {
       {/* ── Opportunity radar ── */}
       <OpportunityRadar
         rows={radarRows}
-        heldSymbols={isUs ? undefined : heldSymbols}
+        heldSymbols={heldSymbols}
         compared={compared}
         onToggleCompare={toggleCompare}
         onOpen={(symbol) => navigate(`/stocks/${encodeURIComponent(symbol)}`)}
@@ -280,7 +281,7 @@ export default function PoolDetailPage() {
                     { value: "BUY_ZONE", label: "🟢 Buy zone" },
                     { value: "OPPORTUNITY", label: "🟡 Opportunity" },
                     { value: "VALID", label: "🔵 Valid" }]} />
-        {!isUs && <Dropdown value={holdFilter} onChange={setFilter("hold")} placeholder="Held + not held"
+        {<Dropdown value={holdFilter} onChange={setFilter("hold")} placeholder="Held + not held"
                   title="Filter by your Trading Journal's open positions — applies to the radar too"
                   options={[
                     { value: "", label: "Held + not held" },

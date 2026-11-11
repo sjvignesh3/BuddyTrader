@@ -12,10 +12,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Snapshot } from "../lib/api";
 import { journalApi, type TradeDraft } from "../lib/journalApi";
 import {
-  abcdLegDraft, buildOpenInvested, deriveAbcd, deriveClosedTrade, legLabel, num,
+  abcdLegDraft, buildOpenInvested, journalSnaps, deriveAbcd, deriveClosedTrade, legLabel, num,
   type AbcdSignal, type JournalCtx,
 } from "../lib/journal";
-import { fmtDate, fmtMoney, fmtPct } from "../lib/money";
+import { fmtDate, fmtPct } from "../lib/money";
+import { fmtQty, jkey, useMoney } from "../lib/moneyContext";
 import { TradeModal } from "./journal/modals";
 import { OwnerOnly } from "./AuthGate";
 
@@ -26,11 +27,12 @@ function plainSymbol(symbol: string): string {
 function PnlText({ v, suffix = "", digits = 2 }: {
   v: number | null; suffix?: string; digits?: number;
 }) {
+  const { locale } = useMoney();
   if (v === null) return <span className="text-brand-mute">—</span>;
   const cls = v > 0 ? "text-teal-700" : v < 0 ? "text-rose-600" : "text-brand-mute";
   return (
     <span className={`${cls} font-semibold tabular-nums`}>
-      {v > 0 ? "+" : ""}{v.toLocaleString("en-IN", {
+      {v > 0 ? "+" : ""}{v.toLocaleString(locale, {
         minimumFractionDigits: digits, maximumFractionDigits: digits })}{suffix}
     </span>
   );
@@ -48,11 +50,13 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
   /** The stock's latest snapshot — feeds the ABCD cap bucket + CMP. */
   snapshot?: Snapshot;
 }) {
+  const { cur, fmtMoney } = useMoney();
   const plain = plainSymbol(symbol);
+  const { market } = useMoney();     // set by the stock page from the symbol
   const qc = useQueryClient();
   const q = useQuery({
-    queryKey: ["journal", "trades", "symbol", plain],
-    queryFn: () => journalApi.tradesBySymbol(plain),
+    queryKey: jkey(market, "trades", "symbol", plain),
+    queryFn: () => journalApi.tradesBySymbol(plain, market),
     staleTime: 30_000,
   });
   const settingsQ = useQuery({
@@ -63,7 +67,8 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
   });
   const [legDraft, setLegDraft] = useState<TradeDraft | null>(null);
   const mAddLeg = useMutation({
-    mutationFn: (draft: TradeDraft) => journalApi.createTrade(draft),
+    mutationFn: (draft: TradeDraft) =>
+      journalApi.createTrade(market === "US" ? { ...draft, market } : draft),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["journal"] });
       setLegDraft(null);
@@ -75,11 +80,19 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
   const closed = trades.filter((t) => t.status === "CLOSED");
 
   // Mini journal context — this stock's snapshot + its open lots only.
-  const ctx: JournalCtx = useMemo(() => ({
-    capital: num(settingsQ.data?.settings.capital) ?? 0,
-    snaps: new Map(snapshot ? [[plain, snapshot]] : []),
-    openInvested: buildOpenInvested(open),
-  }), [plain, snapshot, settingsQ.data, open]);
+  // US: its own capital, and the snapshot tagged with the US rule cap so the
+  // averaging ladder and the 5% limit apply (US rows carry no cap bucket).
+  const ctx: JournalCtx = useMemo(() => {
+    const settings = settingsQ.data?.settings;
+    return {
+      capital: num(market === "US" ? settings?.capital_usd : settings?.capital) ?? 0,
+      snaps: market === "US"
+        ? journalSnaps(snapshot ? [snapshot] : [], "US")
+        : new Map(snapshot ? [[plain, snapshot]] : []),
+      openInvested: buildOpenInvested(open),
+      market,
+    };
+  }, [plain, snapshot, settingsQ.data, open, market]);
   const abcd = useMemo(() => deriveAbcd(open, ctx), [open, ctx]);
 
   if (q.isLoading) {
@@ -100,7 +113,7 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
         <p className="text-xs text-brand-mute mb-3">
           No journal entries for {plain} — you don't hold it and never have.
         </p>
-        <Link to="/journal"
+        <Link to={market === "US" ? "/journal?m=US" : "/journal"}
               className="text-[11px] font-semibold text-brand-accent hover:underline">
           Open Trading Journal →
         </Link>
@@ -120,9 +133,9 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
       {/* Summary strip */}
       <div className="flex flex-wrap gap-2">
         {[
-          ["Open qty", <span key="q" className="tabular-nums font-bold">{qty}</span>],
-          ["Invested", <span key="i" className="tabular-nums font-bold">₹{fmtMoney(invested, 0)}</span>],
-          ["Cur. value", <span key="c" className="tabular-nums font-bold">{curValue !== null ? `₹${fmtMoney(curValue, 0)}` : "—"}</span>],
+          ["Open qty", <span key="q" className="tabular-nums font-bold">{fmtQty(qty)}</span>],
+          ["Invested", <span key="i" className="tabular-nums font-bold">{cur}{fmtMoney(invested, 0)}</span>],
+          ["Cur. value", <span key="c" className="tabular-nums font-bold">{curValue !== null ? `${cur}${fmtMoney(curValue, 0)}` : "—"}</span>],
           ["Unrealized", <PnlText key="u" v={unrealized} digits={0} />],
           ["Realized", <PnlText key="r" v={closed.length ? realized : null} digits={0} />],
         ].map(([label, node]) => (
@@ -132,7 +145,7 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
             <div className="text-xs mt-0.5">{node}</div>
           </div>
         ))}
-        <Link to="/journal#open"
+        <Link to={market === "US" ? "/journal?m=US#open" : "/journal#open"}
               className="ml-auto self-center text-[11px] font-semibold px-3 py-1.5 rounded-lg
                          bg-brand-soft ring-1 ring-brand-border text-brand-accent
                          hover:bg-teal-50 hover:ring-teal-300 transition-colors"
@@ -160,9 +173,9 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
           <table className="min-w-full">
             <thead><tr>
               <th className={th}>Leg</th>
-              <th className={th}>Buy date</th><th className={thR}>Buy ₹</th>
+              <th className={th}>Buy date</th><th className={thR}>Buy {cur}</th>
               <th className={thR}>Qty</th><th className={th}>Strategy</th>
-              <th className={thR}>Target ₹</th><th className={thR}>Invested</th>
+              <th className={thR}>Target {cur}</th><th className={thR}>Invested</th>
               <th className={thR}>Gain</th><th className={thR}>To target</th>
             </tr></thead>
             <tbody>
@@ -181,7 +194,7 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
                     </td>
                     <td className={td}>{fmtDate(t.buy_date)}</td>
                     <td className={tdR}>{fmtMoney(t.buy_price)}</td>
-                    <td className={tdR}>{t.qty}</td>
+                    <td className={tdR}>{fmtQty(t.qty)}</td>
                     <td className={td}>{t.strategy ?? "—"}</td>
                     <td className={tdR}>{fmtMoney(t.target_price)}</td>
                     <td className={tdR}>{fmtMoney(buy * t.qty, 0)}</td>
@@ -203,9 +216,9 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
           </div>
           <table className="min-w-full">
             <thead><tr>
-              <th className={th}>Buy date</th><th className={thR}>Buy ₹</th>
+              <th className={th}>Buy date</th><th className={thR}>Buy {cur}</th>
               <th className={thR}>Qty</th><th className={th}>Sell date</th>
-              <th className={thR}>Sell ₹</th><th className={thR}>Gain ₹</th>
+              <th className={thR}>Sell {cur}</th><th className={thR}>Gain {cur}</th>
               <th className={thR}>Gain %</th><th className={thR}>Days</th>
             </tr></thead>
             <tbody>
@@ -215,7 +228,7 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
                   <tr key={t.id} className="border-t border-brand-border/60">
                     <td className={td}>{fmtDate(t.buy_date)}</td>
                     <td className={tdR}>{fmtMoney(t.buy_price)}</td>
-                    <td className={tdR}>{t.qty}</td>
+                    <td className={tdR}>{fmtQty(t.qty)}</td>
                     <td className={td}>{fmtDate(t.sell_date)}</td>
                     <td className={tdR}>{fmtMoney(t.sell_price)}</td>
                     <td className={tdR}><PnlText v={d.gain} digits={0} /></td>
@@ -242,6 +255,7 @@ export default function StockPositions({ symbol, cmp, snapshot }: {
 
 /** The ABCD line for this position: eligible / blocked / waiting. */
 function AbcdPanel({ sig, onAddLeg }: { sig: AbcdSignal; onAddLeg: () => void }) {
+  const { cur, fmtMoney } = useMoney();
   if (sig.triggerPrice === null || sig.thresholdPct === null) {
     return (
       <div className="text-[11px] text-brand-mute px-1">
@@ -249,14 +263,14 @@ function AbcdPanel({ sig, onAddLeg }: { sig: AbcdSignal; onAddLeg: () => void })
       </div>
     );
   }
-  const prev = `leg ${sig.refLeg} entry ₹${fmtMoney(sig.refEntry)}`;
+  const prev = `leg ${sig.refLeg} entry ${cur}${fmtMoney(sig.refEntry)}`;
   if (sig.zone === "due") {
     return (
       <div className="rounded-xl bg-indigo-50 ring-1 ring-indigo-200 px-3.5 py-2.5 text-[11.5px] text-indigo-950">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-bold">🪜 Leg {sig.nextLeg} eligible</span>
           <span className="text-indigo-900/80">
-            CMP ₹{fmtMoney(sig.cmp)} is <b>{fmtPct(sig.fallPct)}</b> below {prev}
+            CMP {cur}{fmtMoney(sig.cmp)} is <b>{fmtPct(sig.fallPct)}</b> below {prev}
             {" "}(threshold {sig.thresholdPct}% · {sig.cap} cap).
           </span>
           <OwnerOnly>
@@ -268,8 +282,8 @@ function AbcdPanel({ sig, onAddLeg }: { sig: AbcdSignal; onAddLeg: () => void })
           </OwnerOnly>
         </div>
         <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-indigo-900/80">
-          <span>Trigger <b className="font-mono">≤ ₹{fmtMoney(sig.triggerPrice)}</b></span>
-          <span>Target <b className="font-mono">₹{fmtMoney(sig.targetPrice)}</b> ({prev.split(" entry")[0]} entry)</span>
+          <span>Trigger <b className="font-mono">≤ {cur}{fmtMoney(sig.triggerPrice)}</b></span>
+          <span>Target <b className="font-mono">{cur}{fmtMoney(sig.targetPrice)}</b> ({prev.split(" entry")[0]} entry)</span>
           <span>
             Room {sig.maxQty === null
               ? "unknown — set capital in the journal"
@@ -287,18 +301,18 @@ function AbcdPanel({ sig, onAddLeg }: { sig: AbcdSignal; onAddLeg: () => void })
       <div className="rounded-xl bg-rose-50 ring-1 ring-rose-200 px-3.5 py-2.5 text-[11.5px] text-rose-900">
         <span className="font-bold">🪜 Leg {sig.nextLeg} triggered, no room</span>{" "}
         <span className="text-rose-900/80">
-          CMP ₹{fmtMoney(sig.cmp)} is {fmtPct(sig.fallPct)} below {prev}, but {sig.symbol} is already
-          at its {sig.cap}-cap allocation limit. Trigger ≤ ₹{fmtMoney(sig.triggerPrice)} · target ₹{fmtMoney(sig.targetPrice)}.
+          CMP {cur}{fmtMoney(sig.cmp)} is {fmtPct(sig.fallPct)} below {prev}, but {sig.symbol} is already
+          at its {sig.cap}-cap allocation limit. Trigger ≤ {cur}{fmtMoney(sig.triggerPrice)} · target {cur}{fmtMoney(sig.targetPrice)}.
         </span>
       </div>
     );
   }
   return (
     <div className="text-[11px] text-brand-mute px-1">
-      🪜 ABCD: leg <b>{sig.nextLeg}</b> triggers at <b className="font-mono">₹{fmtMoney(sig.triggerPrice)}</b>
+      🪜 ABCD: leg <b>{sig.nextLeg}</b> triggers at <b className="font-mono">{cur}{fmtMoney(sig.triggerPrice)}</b>
       {" "}({sig.thresholdPct}% below {prev})
       {sig.toTriggerPct !== null && <> — CMP is {fmtPct(sig.toTriggerPct)} above</>}
-      {" "}· target ₹{fmtMoney(sig.targetPrice)}.
+      {" "}· target {cur}{fmtMoney(sig.targetPrice)}.
     </div>
   );
 }

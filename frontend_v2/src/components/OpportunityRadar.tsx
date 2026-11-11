@@ -37,7 +37,9 @@ export default function OpportunityRadar({
       <div className="flex items-baseline gap-2 mb-2">
         <h2 className="font-display text-lg font-semibold">Opportunity radar</h2>
         <span className="text-[11px] text-brand-mute">
-          strongest signal → best fundamentals → deepest value
+          {rows.length > 0 && rows.every((r) => marketOf(r.symbol) === "US")
+            ? "strongest signal → deepest value"
+            : "strongest signal → best fundamentals → deepest value"}
         </span>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

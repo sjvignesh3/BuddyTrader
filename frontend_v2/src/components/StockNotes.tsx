@@ -8,6 +8,8 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StockNote, StockNoteDraft } from "../lib/journalApi";
 import { journalApi } from "../lib/journalApi";
+import type { Market } from "../lib/market";
+import { jkey } from "../lib/moneyContext";
 import { ConfirmDialog, RowBtn } from "./journal/ui";
 import { OwnerOnly } from "./AuthGate";
 import { fmtDate } from "../lib/money";
@@ -76,9 +78,11 @@ function NoteEditor({ initial, busy, onSave, onCancel }: {
   );
 }
 
-export default function StockNotes({ symbol }: {
+export default function StockNotes({ symbol, market = "IN" }: {
   /** plain NSE symbol (journal convention) */
   symbol: string;
+  /** which journal the notes belong to (default India) */
+  market?: Market;
 }) {
   const qc = useQueryClient();
   const [composing, setComposing] = useState(false);
@@ -87,8 +91,8 @@ export default function StockNotes({ symbol }: {
   const [newestFirst, setNewestFirst] = useState(true);
 
   const notesQ = useQuery({
-    queryKey: ["journal", "notes", symbol],
-    queryFn: () => journalApi.notes(symbol),
+    queryKey: jkey(market, "notes", symbol),
+    queryFn: () => journalApi.notes(symbol, market),
     staleTime: 30_000,
     retry: 1,
   });
@@ -99,12 +103,12 @@ export default function StockNotes({ symbol }: {
     return newestFirst ? rows : rows.reverse();
   }, [notesQ.data, newestFirst]);
 
-  const refresh = () => qc.invalidateQueries({ queryKey: ["journal", "notes", symbol] });
+  const refresh = () => qc.invalidateQueries({ queryKey: jkey(market, "notes", symbol) });
 
   const mSave = useMutation({
     mutationFn: (p: { id?: number; draft: StockNoteDraft }) =>
       p.id ? journalApi.updateNote(p.id, p.draft)
-           : journalApi.createNote({ ...p.draft, symbol }),
+           : journalApi.createNote(market === "US" ? { ...p.draft, symbol, market } : { ...p.draft, symbol }),
     onSuccess: () => { refresh(); setComposing(false); setEditing(null); },
   });
   const mDelete = useMutation({

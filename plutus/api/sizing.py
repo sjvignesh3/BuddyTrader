@@ -154,15 +154,23 @@ def register_sizing_routes(app: Any, cli: Any) -> None:
     @app.get("/api/sizing/plans")
     @guard
     def list_plans(
-        symbol: Optional[str] = Query(None, description="Plain NSE symbol, e.g. TCS"),
+        symbol: Optional[str] = Query(None, description="Plain symbol, e.g. TCS or NVDA"),
         limit: int = Query(200, ge=1, le=1000),
+        market: Optional[str] = Query(None, description="IN (default) or US"),
     ) -> dict:
+        from plutus.api.journal import of_market
+        from plutus.markets import normalize_market
+        try:
+            mkt = normalize_market(market)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         q = client().table("sizing_plans").select("*")
         if symbol:
             q = q.eq("symbol", symbol.strip().upper())
-        rows = _rows(q.order("created_at", desc=True).order("id", desc=True)
-                     .limit(limit).execute())
-        return {"plans": serialize_rows(rows), "count": len(rows)}
+        # Filtered here, not in SQL: works before migration 027 is applied.
+        rows = of_market(_rows(q.order("created_at", desc=True).order("id", desc=True)
+                               .limit(limit).execute()), mkt)
+        return {"plans": serialize_rows(rows), "count": len(rows), "market": mkt}
 
     @app.post("/api/sizing/plans")
     @guard
@@ -173,6 +181,12 @@ def register_sizing_routes(app: Any, cli: Any) -> None:
         problem = validate_plan(row)
         if problem:
             raise HTTPException(status_code=400, detail=problem)
+        from plutus.api.journal import stamp_market
+        from plutus.markets import normalize_market
+        try:   # a plan is sized against one market's capital (₹ or $)
+            stamp_market(row, normalize_market(payload.get("market")))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         rows = _rows(client().table("sizing_plans").insert(row).execute())
         return {"plan": to_wire(rows[0] if rows else row)}
 

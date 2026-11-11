@@ -494,18 +494,25 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
         return rows[0] if rows else None
 
     def _journal_refs() -> Dict[str, Dict[str, int]]:
-        """plain symbol -> {open_trades, active_opps}. Read-only."""
+        """Journal references, read-only. Indian rows are keyed by plain
+        symbol ('TCS') as they always were; US rows by 'US:<ticker>' so a US
+        ticker can never be mistaken for an NSE symbol of the same spelling."""
         refs: Dict[str, Dict[str, int]] = {}
+
+        def key(row: Dict[str, Any]) -> str:
+            plain = plain_symbol(row["symbol"])
+            return f"US:{plain}" if row.get("market") == US else plain
+
         try:
-            trades = _rows(client().table("journal_trades").select("symbol,status")
+            trades = _rows(client().table("journal_trades").select("*")
                            .eq("status", "OPEN").limit(5000).execute())
             for t in trades:
-                slot = refs.setdefault(plain_symbol(t["symbol"]), {"open_trades": 0, "active_opps": 0})
+                slot = refs.setdefault(key(t), {"open_trades": 0, "active_opps": 0})
                 slot["open_trades"] += 1
-            opps = _rows(client().table("journal_opportunities").select("symbol,status")
+            opps = _rows(client().table("journal_opportunities").select("*")
                          .eq("status", "ACTIVE").limit(5000).execute())
             for o in opps:
-                slot = refs.setdefault(plain_symbol(o["symbol"]), {"open_trades": 0, "active_opps": 0})
+                slot = refs.setdefault(key(o), {"open_trades": 0, "active_opps": 0})
                 slot["active_opps"] += 1
         except Exception as exc:  # noqa: BLE001 — journal tables may be absent on a bare DB
             logger.warning("journal reference lookup failed: %s", exc)
@@ -513,7 +520,8 @@ def register_universe_routes(app: Any, cli: Any, *, fetch_info: Any = None) -> N
 
     def _journal_holds(symbol: str, refs: Optional[Dict[str, Dict[str, int]]] = None) -> bool:
         refs = refs if refs is not None else _journal_refs()
-        slot = refs.get(plain_symbol(symbol))
+        plain = plain_symbol(symbol)
+        slot = refs.get(f"US:{plain}" if market_of(symbol) == US else plain)
         return bool(slot and (slot["open_trades"] or slot["active_opps"]))
 
     def _membership_meta(existing: Dict[str, Any], pool: str, source: str) -> Dict[str, Any]:
