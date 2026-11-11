@@ -30,7 +30,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
   closedTrades: Trade[];
   ctx: JournalCtx;
 }) {
-  const { cur, fmtMoney } = useMoney();
+  const { cur, fmtMoney, fmtWhole } = useMoney();
   const { holdings, capSummary, totals } = buildPortfolio(openTrades, ctx);
   const { sort, toggle, apply } = useSort<HoldingRow>(ACCESSORS);
   const openStock = useOpenStock();
@@ -57,7 +57,7 @@ export default function PortfolioTab({ openTrades, closedTrades, ctx }: {
     <div className="space-y-4">
       {/* Headline stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Big label="Capital" value={`${cur}${fmtMoney(ctx.capital, 0)}`} />
+        <Big label="Capital" value={`${cur}${fmtWhole(ctx.capital)}`} />
         <Big label="Invested" value={`${cur}${fmtMoney(totals.invested, 0)}`}
              sub={`${fmtPct(totals.deployedPct)} deployed`} />
         <Big label="Current value" value={`${cur}${fmtMoney(totals.currentValue, 0)}`} />

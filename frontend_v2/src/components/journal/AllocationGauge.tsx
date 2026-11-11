@@ -25,7 +25,7 @@ export default function AllocationGauge({
   /** Wired to the qty field — one click sizes the position to the limit. */
   onUseMaxQty?: (q: number) => void;
 }) {
-  const { cur, fmtMoney } = useMoney();
+  const { cur, fmtMoney, fmtWhole } = useMoney();
   const a = planAllocation({ symbol, cap, buyPrice, qty, ctx, excludeHeld });
 
   if (!a.capital) {
@@ -64,7 +64,7 @@ export default function AllocationGauge({
         </span>
         <span className="text-[10px] text-brand-mute">
           {cap
-            ? <>{cap} cap · limit <b className="text-brand-text">{a.limitPct}%</b> of {cur}{fmtMoney(a.capital, 0)}</>
+            ? <>{cap} cap · limit <b className="text-brand-text">{a.limitPct}%</b> of {cur}{fmtWhole(a.capital)}</>
             : <>no cap bucket — pick one for the limit</>}
         </span>
       </div>

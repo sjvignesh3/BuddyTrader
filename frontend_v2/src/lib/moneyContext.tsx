@@ -24,6 +24,14 @@ export interface Money {
   locale: string;
   /** US shares may be fractional (4 decimals); Indian ones are whole. */
   fractionalQty: boolean;
+  /**
+   * Fewest decimals an AMOUNT is shown with. India 0: totals and gains read
+   * in whole rupees. US 2: a small dollar account moves in cents, so "+0"
+   * would hide a real +$0.46 — every US amount shows cents.
+   */
+  minDigits: number;
+  /** A round figure the owner typed (capital) — never padded with ".00". */
+  fmtWhole: (value: string | number | null | undefined) => string;
 }
 
 /** Quantity for display: "10", "2.5", "0.3333" — never trailing zeros. */
@@ -53,9 +61,14 @@ export function badQty(market: Market, s: string): boolean {
 export function moneyFor(market: Market): Money {
   return market === "US"
     ? { market, cur: currencySymbol("US"), locale: "en-US", fractionalQty: true,
-        fmtMoney: (v, digits = 2) => fmtPrice(v, "US", digits) }
+        minDigits: 2,
+        fmtMoney: (v, digits = 2) => fmtPrice(v, "US", Math.max(digits, 2)),
+        // Whole dollars when the figure is round, cents when it is not.
+        fmtWhole: (v) => fmtPrice(v, "US", Number.isInteger(Number(v)) ? 0 : 2) }
     : { market: "IN", cur: currencySymbol("IN"), locale: "en-IN", fractionalQty: false,
-        fmtMoney: (v, digits = 2) => fmtInr(v, digits) };
+        minDigits: 0,
+        fmtMoney: (v, digits = 2) => fmtInr(v, digits),
+        fmtWhole: (v) => fmtInr(v, 0) };
 }
 
 const IN_MONEY = moneyFor("IN");

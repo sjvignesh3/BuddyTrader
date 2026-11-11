@@ -96,7 +96,7 @@ function JournalView({ market, switcher }: { market: Market; switcher: React.Rea
   const qc = useQueryClient();
   const canEdit = useCanEdit();
   const isUs = market === "US";
-  const { cur, fmtMoney } = useMoney();
+  const { cur, fmtWhole } = useMoney();
   const tabs = tabsFor(market);
   /** Tag a draft about to be CREATED; Indian drafts are sent untouched. */
   const mk = <T extends object>(d: T): T => (isUs ? { ...d, market } : d);
@@ -342,7 +342,7 @@ function JournalView({ market, switcher }: { market: Market; switcher: React.Rea
                 {isUs ? "US capital" : "Capital"}
               </span>
               <span className="text-base font-display font-semibold tabular-nums">
-                {capital > 0 || !isUs ? <>{cur}{fmtMoney(capital, 0)}</> : "Set capital"}
+                {capital > 0 || !isUs ? <>{cur}{fmtWhole(capital)}</> : "Set capital"}
                 {canEdit && <span className="text-brand-mute text-xs"> ✎</span>}
               </span>
             </button>

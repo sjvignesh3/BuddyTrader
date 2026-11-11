@@ -27,13 +27,15 @@ function plainSymbol(symbol: string): string {
 function PnlText({ v, suffix = "", digits = 2 }: {
   v: number | null; suffix?: string; digits?: number;
 }) {
-  const { locale } = useMoney();
+  const { locale, minDigits } = useMoney();
+  // An amount (no suffix) shows cents in the US journal; a % keeps its own digits.
+  const nd = suffix === "" ? Math.max(digits, minDigits) : digits;
   if (v === null) return <span className="text-brand-mute">—</span>;
   const cls = v > 0 ? "text-teal-700" : v < 0 ? "text-rose-600" : "text-brand-mute";
   return (
     <span className={`${cls} font-semibold tabular-nums`}>
       {v > 0 ? "+" : ""}{v.toLocaleString(locale, {
-        minimumFractionDigits: digits, maximumFractionDigits: digits })}{suffix}
+        minimumFractionDigits: nd, maximumFractionDigits: nd })}{suffix}
     </span>
   );
 }

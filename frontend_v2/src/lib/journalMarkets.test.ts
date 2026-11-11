@@ -59,7 +59,19 @@ describe("money per market", () => {
     expect(india.cur).toBe("₹");
     expect(us.fmtMoney(1234567.891)).toBe("1,234,567.89");
     expect(india.fmtMoney(1234567.891)).toBe("12,34,567.89");
-    expect(us.fmtMoney(8000, 0)).toBe("8,000");
+    // US amounts always show cents — "+0" would hide a real +$0.46.
+    expect(us.fmtMoney(8000, 0)).toBe("8,000.00");
+    expect(us.fmtMoney(47.97, 0)).toBe("47.97");
+    expect(us.fmtMoney(0.4589, 0)).toBe("0.46");
+    expect(us.minDigits).toBe(2);
+    // India is unchanged: whole rupees where the journal asked for them.
+    expect(india.fmtMoney(17562.5, 0)).toBe("17,563");
+    expect(india.minDigits).toBe(0);
+    // Capital is a round figure the owner typed — never padded.
+    expect(us.fmtWhole(1000)).toBe("1,000");
+    expect(us.fmtWhole("1000")).toBe("1,000");
+    expect(us.fmtWhole(1250.5)).toBe("1,250.50");
+    expect(india.fmtWhole(500000)).toBe("5,00,000");
     expect(us.fractionalQty && !india.fractionalQty).toBe(true);
   });
   it("query keys: India keeps the historic key, US gets its own", () => {

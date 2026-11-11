@@ -310,11 +310,13 @@ export function AllocMarker({ state, cap, totalPct }: {
 export function Pnl({ value, suffix = "", digits = 2 }: {
   value: number | null; suffix?: string; digits?: number;
 }) {
-  const { locale } = useMoney();
+  const { locale, minDigits } = useMoney();
   if (value === null) return <span className="text-brand-mute">—</span>;
   const cls = value > 0 ? "text-teal-700" : value < 0 ? "text-rose-700" : "text-brand-mute";
+  // An amount (no suffix) shows cents in the US journal; a % keeps its own digits.
+  const nd = suffix === "" ? Math.max(digits, minDigits) : digits;
   const s = value.toLocaleString(locale, {
-    minimumFractionDigits: digits, maximumFractionDigits: digits,
+    minimumFractionDigits: nd, maximumFractionDigits: nd,
   });
   return <span className={`${cls} tabular-nums`}>{value > 0 ? "+" : ""}{s}{suffix}</span>;
 }
