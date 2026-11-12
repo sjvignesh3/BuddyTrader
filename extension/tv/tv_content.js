@@ -97,6 +97,10 @@
         U.send({ type: 'positions' }).catch(() => ({ positions: [] })),
         U.send({ type: 'trades.open' }).catch(() => ({ trades: [] })),
       ]);
+      // US tickers have no suffix: tell the converter which bare tickers are
+      // US and where they list, so the chart opens NASDAQ:NVDA, not NSE:NVDA.
+      S.registerUs(boot.stocks || []);
+      (wl.watchlists || []).forEach((w) => S.registerUs((w.symbols || []).filter((x) => S.isUs(x))));
       st.boot = boot;
       st.stocks = new Map((boot.stocks || []).map((s) => [s.symbol, s]));
       st.watchlists = wl.watchlists || [];

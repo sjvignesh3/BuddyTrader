@@ -127,3 +127,40 @@ test('symbol converters', () => {
   assert.equal(S.toPlutusUrl('http://localhost:5173/', 'INFY'), 'http://localhost:5173/stocks/INFY.NS');
   assert.equal(S.toPlutus('bad symbol!'), null);
 });
+
+test('US tickers go to their own exchange, never NSE', () => {
+  const ctx = { self: {} }; ctx.self = ctx; vm.createContext(ctx);
+  vm.runInContext(read('shared/symbols.js'), ctx);
+  const S = ctx.PlutusSymbols;
+  // Unknown bare ticker is Indian, exactly as before.
+  assert.equal(S.toPlutus('NVDA'), 'NVDA.NS');
+  S.registerUs([{ symbol: 'NVDA', exchange: 'NASDAQ' }, { symbol: 'CAT', exchange: 'NYSE' },
+    { symbol: 'BRK-B', exchange: 'NYSE' }, { symbol: 'WMT' }, { symbol: 'TCS.NS', exchange: 'NSE' }]);
+  assert.equal(S.toPlutus('NVDA'), 'NVDA');
+  assert.equal(S.toPlutus('nasdaq:nvda'), 'NVDA');
+  assert.equal(S.toTradingView('NVDA'), 'NASDAQ:NVDA');
+  assert.equal(S.toTradingView('CAT'), 'NYSE:CAT');
+  assert.equal(S.toTradingView('BRK-B'), 'NYSE:BRK.B');
+  assert.equal(S.toPlutus('BRK.B'), 'BRK-B');
+  assert.equal(S.toTradingView('WMT'), 'WMT');                 // exchange unknown -> bare ticker
+  assert.equal(S.toPlain('NVDA'), 'NVDA');
+  assert.equal(S.toTradingViewUrl('NVDA'), 'https://www.tradingview.com/chart/?symbol=NASDAQ%3ANVDA');
+  assert.equal(S.toScreenerUrl('NVDA'), null);                 // Screener has no US pages
+  assert.equal(S.toPlutusUrl('http://localhost:5173', 'NVDA'), 'http://localhost:5173/stocks/NVDA');
+  // A prefix names the exchange even for a ticker nobody registered.
+  assert.equal(S.toPlutus('NYSE:GE'), 'GE');
+  assert.equal(S.toTradingView('GE'), 'NYSE:GE');
+  // Indian spellings are untouched; an explicit market wins over the registry.
+  assert.equal(S.toTradingView('TCS'), 'NSE:TCS');
+  assert.equal(S.toPlutus('NSE:CAT'), 'CAT.NS');
+  assert.equal(S.toPlutus('CAT', { market: 'IN' }), 'CAT.NS');
+  assert.deepEqual(Array.from(S.parseList('NVDA, TCS NASDAQ:AMAT')), ['NVDA', 'TCS.NS', 'AMAT']);
+});
+
+test('a US chart never drags the Screener tab along', async () => {
+  const w = loadWorker({ tabs: [TV(1), SCR(2, 'RELIANCE')] });
+  w.store.plutus_cache_bootstrap = { fetchedAt: Date.now(), apiUrl: 'http://api.test', data: { stocks: [{ symbol: 'NVDA', exchange: 'NASDAQ' }] } };
+  const res = await w.send({ type: 'link.symbol', from: 'tv', symbol: 'NVDA' }, 1);
+  assert.equal(res.data.linked, false);
+  assert.equal(w.calls.updated.length, 0);
+});

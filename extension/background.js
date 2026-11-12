@@ -82,6 +82,22 @@ async function apiFetch(path, opts = {}) {
 // ---------------------------------------------------------------------------
 // bootstrap cache (universe + snapshots + signals)
 // ---------------------------------------------------------------------------
+// US tickers carry no suffix, so the symbol converter has to be told which
+// bare tickers are US (and on which exchange). The worker is restarted often:
+// re-seed from the cached bootstrap before the first message is handled.
+let usSeeded = false;
+function registerUsFrom(data) {
+  if (data && Array.isArray(data.stocks)) PlutusSymbols.registerUs(data.stocks);
+}
+async function ensureUsRegistry() {
+  if (usSeeded) return;
+  usSeeded = true;
+  try {
+    const { [CACHE_BOOTSTRAP]: cached } = await storageGet([CACHE_BOOTSTRAP]);
+    registerUsFrom(cached && cached.data);
+  } catch (e) { /* ignore — bare tickers fall back to Indian */ }
+}
+
 async function getBootstrap({ force = false } = {}) {
   const settings = await PlutusSettings.get();
   const ttl = Math.max(1, Number(settings.cacheTtlMinutes) || 720) * 60 * 1000;
@@ -96,6 +112,7 @@ async function getBootstrap({ force = false } = {}) {
     try {
       const data = await apiFetch('/api/extension/bootstrap', { timeoutMs: 90000 });
       const fetchedAt = Date.now();
+      registerUsFrom(data);
       await storageSet({ [CACHE_BOOTSTRAP]: { fetchedAt, apiUrl: settings.apiUrl, data } });
       broadcast({ type: 'plutus:bootstrap-updated', snapshot_date: data.snapshot_date, fetchedAt });
       return Object.assign({ _cached: false, _fetchedAt: fetchedAt }, data);
@@ -341,6 +358,7 @@ async function linkSymbol(msg, sender) {
     return { linked: false, reason: 'echo' };
   }
   if (msg.from === 'tv') {
+    if (PlutusSymbols.isUs(PlutusSymbols.toPlutus(msg.symbol))) return { linked: false, reason: 'US stock — not on Screener' };
     const tab = await pickTab(SCR_COMPANY_MATCH, fromTab);
     if (!tab) return { linked: false, reason: 'no Screener company tab' };
     if (screenerTicker(tab.url) === plain) return { linked: false, reason: 'already there' };
@@ -354,7 +372,7 @@ async function linkSymbol(msg, sender) {
     if (!tab) return { linked: false, reason: 'no TradingView chart tab' };
     lastLink = { tabId: tab.id, plain, at: Date.now() };
     try {
-      await chrome.tabs.sendMessage(tab.id, { type: 'plutus:switch-symbol', symbol: PlutusSymbols.toPlutus(plain) });
+      await chrome.tabs.sendMessage(tab.id, { type: 'plutus:switch-symbol', symbol: PlutusSymbols.toPlutus(plain, { market: 'IN' }) });
     } catch (e) {
       return { linked: false, reason: 'chart tab not ready — reload it once' };
     }
@@ -414,7 +432,7 @@ const HANDLERS = {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handler = message && HANDLERS[message.type];
   if (!handler) return false;
-  Promise.resolve()
+  ensureUsRegistry()
     .then(() => handler(message, sender))
     .then((data) => sendResponse({ ok: true, data }))
     .catch((e) => sendResponse({ ok: false, error: (e && e.message) || String(e), status: (e && e.status) || 0 }));

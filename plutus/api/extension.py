@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 
 from plutus.api import repository as repo
 from plutus.api.serializers import to_wire
+from plutus.markets import US, market_of, us_exchange
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +78,18 @@ def plain_symbol(symbol: str) -> str:
     return _SUFFIX_RE.sub("", (symbol or "").strip().upper())
 
 
-def tv_symbol(symbol: str) -> str:
+def tv_symbol(symbol: str, exchange: Optional[str] = None) -> str:
     """yfinance form -> TradingView form. Hyphen / ampersand tickers become
-    underscores the way TradingView spells them ('M&M' -> 'NSE:M_M')."""
+    underscores the way TradingView spells them ('M&M' -> 'NSE:M_M').
+
+    US tickers (no .NS / .BO suffix) take their listing exchange from
+    `stocks.exchange`: 'NASDAQ:NVDA', 'NYSE:BRK.B'. With no known exchange the
+    bare ticker is returned — TradingView resolves it to the primary listing."""
     s = (symbol or "").strip().upper()
+    if s and market_of(s) == US:
+        ticker = s.replace("-", ".")
+        exch_us = us_exchange(exchange)
+        return f"{exch_us}:{ticker}" if exch_us else ticker
     exch = "BSE" if s.endswith(".BO") else "NSE"
     body = plain_symbol(s).replace("-", "_").replace("&", "_")
     return f"{exch}:{body}"
@@ -157,7 +166,9 @@ def stock_entry(stock: Dict[str, Any], snap: Optional[Dict[str, Any]],
     entry: Dict[str, Any] = {
         "symbol": symbol,
         "plain": plain_symbol(symbol),
-        "tv": tv_symbol(symbol),
+        "tv": tv_symbol(symbol, stock.get("exchange")),
+        "market": market_of(symbol),
+        "exchange": stock.get("exchange"),
         "name": stock.get("name"),
         "sector": stock.get("sector"),
         "industry": stock.get("industry"),
@@ -261,12 +272,21 @@ def register_extension_routes(app: Any, cli: Any) -> None:
     @app.get("/api/extension/stock/{symbol}")
     def extension_stock(symbol: str) -> dict:
         """Everything about one stock for the Screener / chart overlays."""
-        from plutus.api.universe import canonical_symbol
-        sym = canonical_symbol(symbol)
+        from plutus.api.universe import canonical_symbol, stored_symbol
+        # Market is read off the symbol: 'TCS.NS' is IN, a bare 'NVDA' is US.
+        # A bare ticker that is not a US stock we hold is an Indian symbol
+        # missing its suffix ('tcs' -> 'TCS.NS'), as before.
+        sym = stored_symbol(symbol)
+        in_sym = canonical_symbol(symbol)
+        if sym is None:
+            sym = in_sym
         if sym is None:
             raise HTTPException(status_code=400, detail=f"invalid symbol: {symbol}")
         try:
             stock = repo.get_stock(sym, client=client())
+            if stock is None and in_sym and in_sym != sym:
+                sym = in_sym
+                stock = repo.get_stock(sym, client=client())
             date = repo.latest_snapshot_date(client=client())
             snaps = repo.snapshots_for_symbols([sym], snapshot_date=date, client=client()) if date else []
             snap = snaps[0] if snaps else None
@@ -281,7 +301,8 @@ def register_extension_routes(app: Any, cli: Any) -> None:
         return to_wire({
             "symbol": sym,
             "plain": plain_symbol(sym),
-            "tv": tv_symbol(sym),
+            "tv": tv_symbol(sym, stock.get("exchange")),
+            "market": market_of(sym),
             "in_universe": bool(stock.get("id")),
             "snapshot_date": date,
             "stock": stock,

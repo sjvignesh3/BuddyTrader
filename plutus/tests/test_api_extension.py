@@ -31,6 +31,15 @@ class TestSymbols:
         assert ext.tv_symbol("BAJAJ-AUTO.NS") == "NSE:BAJAJ_AUTO"
         assert ext.tv_symbol("500325.BO") == "BSE:500325"
 
+    def test_tradingview_form_us(self):
+        assert ext.tv_symbol("NVDA", "NASDAQ") == "NASDAQ:NVDA"
+        assert ext.tv_symbol("CAT", "NYSE") == "NYSE:CAT"
+        assert ext.tv_symbol("BRK-B", "NYQ") == "NYSE:BRK.B"
+        assert ext.tv_symbol("NVDA") == "NVDA"            # exchange unknown
+        assert ext.tv_symbol("NVDA", "NSE") == "NVDA"     # never an Indian prefix
+        e = ext.stock_entry({"symbol": "NVDA", "exchange": "NASDAQ", "pools": ["USMEGA"]}, None, [])
+        assert e["tv"] == "NASDAQ:NVDA" and e["market"] == "US" and e["exchange"] == "NASDAQ"
+
 
 class TestThresholds:
     def test_defaults_come_from_strategy_constants(self):
