@@ -385,6 +385,9 @@ def register_auth_routes(app: Any, cli: Any) -> None:
             raise HTTPException(status_code=403,
                                 detail="owner access required")
 
+    # Other route modules (plutus.api.backup) reuse the same owner check.
+    app.state.require_owner = require_owner
+
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
         if request.method == "OPTIONS":       # CORS preflight carries no header

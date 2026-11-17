@@ -66,6 +66,7 @@ def create_app(*, supabase_client: Optional[Any] = None,
     # CORS headers and shows up as an opaque network error instead of a
     # readable "sign in" / "view-only" message.
     from plutus.api.auth import register_auth_routes
+    from plutus.api.backup import EXPOSED_HEADERS as _BACKUP_EXPOSED_HEADERS
     register_auth_routes(app, cli)
 
     # CORS — frontend v2 lives on a different origin; allow read-only.
@@ -76,6 +77,8 @@ def create_app(*, supabase_client: Optional[Any] = None,
         # Write methods exist ONLY under /api/journal/* (personal journal).
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
+        # Lets the Console read the backup download's filename + counts.
+        expose_headers=list(_BACKUP_EXPOSED_HEADERS),
     )
 
     # Error envelope parity with the Edge Function: {"error": "..."} —
@@ -341,6 +344,10 @@ def create_app(*, supabase_client: Optional[Any] = None,
     # -- Custom watchlists (writable; personal tool; browser extension) --------
     from plutus.api.watchlists import register_watchlist_routes
     register_watchlist_routes(app, cli)
+
+    # -- One-click personal-data backup ZIP (owner only; read-only) ------------
+    from plutus.api.backup import register_backup_routes
+    register_backup_routes(app, cli)
 
     # -- Browser-extension read bundles + strategy thresholds (read-only) -----
     from plutus.api.extension import register_extension_routes

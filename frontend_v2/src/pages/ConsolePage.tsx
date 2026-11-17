@@ -1,5 +1,5 @@
 // -----------------------------------------------------------------------------
-// Console — access control for the toolbench. Owner only.
+// Console — access control and data backup for the toolbench. Owner only.
 //
 // The owner password is an env var on the API host and is deliberately not
 // touchable from here. This page manages the OTHER credential: the view-only
@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { viewerApi } from "../lib/auth";
+import { downloadBackup, type BackupResult } from "../lib/backupApi";
 import { useAuth } from "../components/AuthGate";
 import LoadError from "../components/LoadError";
 import { ConfirmDialog, GhostBtn } from "../components/journal/ui";
@@ -27,6 +28,7 @@ export default function ConsolePage() {
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(false);
   const [error, setError] = useState("");
+  const [backup, setBackup] = useState<BackupResult | null>(null);
 
   const stateQ = useQuery({
     queryKey: QK,
@@ -57,6 +59,15 @@ export default function ConsolePage() {
       setFresh(null);
       setConfirmDisable(false);
       qc.invalidateQueries({ queryKey: QK });
+    },
+    onError: onErr,
+  });
+
+  const mBackup = useMutation({
+    mutationFn: downloadBackup,
+    onSuccess: (r) => {
+      setError("");
+      setBackup(r);
     },
     onError: onErr,
   });
@@ -198,6 +209,50 @@ export default function ConsolePage() {
         <p className="mt-3 text-xs text-brand-mute">
           Rotating or turning this off signs out everyone using the old
           password immediately.
+        </p>
+      </section>
+
+      {/* ---- Personal-data backup ------------------------------------------- */}
+      <section className="mt-4 p-5 sm:p-6 rounded-2xl bg-brand-panel ring-1 ring-brand-border
+                          shadow-card">
+        <h2 className="font-display text-lg font-semibold">Back up your data</h2>
+        <p className="mt-1 text-sm text-brand-mute max-w-lg">
+          Downloads everything you have typed in — journal, IPOs, notes,
+          expenses, net worth, sizing plans, watchlists and the universe —
+          as one ZIP: a CSV per table to open in Excel, plus a restore copy
+          that can rebuild the database. Full history, every time.
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={mBackup.isPending}
+            onClick={() => mBackup.mutate()}
+            className="px-4 py-2 rounded-xl bg-teal-700 text-white text-sm font-semibold
+                       hover:bg-teal-800 shadow-card disabled:opacity-50">
+            {mBackup.isPending ? "Preparing…" : "⬇ Download backup"}
+          </button>
+          {backup && (
+            <span className="text-sm text-brand-mute">
+              Saved <span className="font-mono text-xs">{backup.filename}</span>
+              {" — "}{backup.tables} tables, {backup.rows.toLocaleString()} rows
+              {" "}({Math.max(1, Math.round(backup.bytes / 1024)).toLocaleString()} KB)
+            </span>
+          )}
+        </div>
+
+        {backup && backup.failed.length > 0 && (
+          <div role="alert" className="mt-3 px-3.5 py-2.5 rounded-xl text-sm
+                                       text-amber-900 bg-amber-50 ring-1 ring-amber-200">
+            This backup is incomplete — could not read:{" "}
+            <span className="font-mono text-xs">{backup.failed.join(", ")}</span>.
+            Usually a migration that is not applied on this database yet.
+          </div>
+        )}
+
+        <p className="mt-3 text-xs text-brand-mute">
+          Keep the ZIP somewhere outside Supabase (OneDrive, an external
+          drive). Restore steps are in the README inside it.
         </p>
       </section>
 

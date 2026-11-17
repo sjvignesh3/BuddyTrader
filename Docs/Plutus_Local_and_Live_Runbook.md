@@ -1565,6 +1565,28 @@ calls `plutus_reset_sequences()` (migration 023) so new rows do not collide
 with restored ids. Without `--yes` it only prints the target host and the
 row counts. Re-running is safe (idempotent upserts).
 
+### 10.6 One-click backup from the app (Console → Download backup)
+
+Owner only. **Console → Back up your data → Download backup** calls
+`GET /api/backup/export` and saves `plutus-backup-<UTC stamp>.zip` — the
+full history of every personal table, every time:
+
+- `csv/<table>.csv` — one sheet per table, for Excel / Google Sheets.
+- `restore/` — the same rows as lossless JSON + `manifest.json`.
+- `README.txt` — contents and restore steps.
+
+To restore, extract the ZIP and point the §10.5 restore command at its
+`restore` folder:
+
+```
+python -m plutus.scripts.restore_personal "<extracted>\restore" --dry-run
+python -m plutus.scripts.restore_personal "<extracted>\restore" --yes
+```
+
+If the Console shows "backup is incomplete", a table could not be read
+(usually a migration not applied on that database); the README inside the
+ZIP lists which ones.
+
 ### 10.4 Backup retention
 
 The free Storage tier gives 1 GB. Each gzipped dump is ~20–40 MB. That is ~25–50 backups before you hit the limit. **Manually delete old backups from the Storage UI monthly**, or add a cleanup step to the workflow.

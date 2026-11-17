@@ -181,3 +181,100 @@ class TestRestore:
         sql = personal.manual_reset_sql()
         assert "journal_trades" in sql and "journal_settings" not in sql
         assert "pg_get_serial_sequence" in sql
+
+
+# ---------------------------------------------------------------------------
+# One-click ZIP export (Console "Download backup" -> GET /api/backup/export)
+# ---------------------------------------------------------------------------
+import csv as _csv
+import io as _io
+import zipfile as _zipfile
+
+
+def _unzip(payload: bytes) -> dict:
+    with _zipfile.ZipFile(_io.BytesIO(payload)) as zf:
+        return {n: zf.read(n) for n in zf.namelist()}
+
+
+class TestZipExport:
+    def test_csv_cells(self):
+        text = personal.rows_to_csv([
+            {"id": 1, "name": 'Food, "out"', "tags": ["a", "b"], "meta": {"k": 1},
+             "done": True, "note": None, "amt": Decimal("12.50")},
+            {"id": 2, "name": "line\nbreak", "tags": [], "meta": None,
+             "done": False, "note": "x", "amt": "3"},
+        ])
+        rows = list(_csv.reader(_io.StringIO(text)))
+        assert rows[0] == ["id", "name", "tags", "meta", "done", "note", "amt"]
+        assert rows[1] == ["1", 'Food, "out"', '["a", "b"]', '{"k": 1}', "true", "", "12.50"]
+        assert rows[2] == ["2", "line\nbreak", "[]", "", "false", "x", "3"]
+        assert personal.rows_to_csv([]) == ""
+
+    def test_zip_has_csv_per_table_and_restorable_json(self, tmp_path: Path):
+        now = datetime(2026, 11, 17, 9, 0, 0, tzinfo=timezone.utc)
+        payload, m = personal.build_export_zip(FakeSupabase(_tables()), source="x.supabase.co",
+                                               now=now)
+        files = _unzip(payload)
+        for spec in personal.TABLES:
+            assert f"csv/{spec.name}.csv" in files
+            assert f"restore/{spec.name}.json" in files
+        assert m["errors"] == {} and m["tables"]["stocks"]["rows"] == 2
+        # CSV: BOM for Excel, header + rows, Decimal kept as text.
+        raw = files["csv/journal_trades.csv"]
+        assert raw.startswith(b"\xef\xbb\xbf")
+        rows = list(_csv.DictReader(_io.StringIO(raw.decode("utf-8-sig"))))
+        assert rows == [{"id": "11", "opportunity_id": "3", "symbol": "TCS.NS",
+                         "qty": "10", "buy_price": "2348.50"}]
+        assert files["csv/networth_assets.csv"] == b"\xef\xbb\xbf"    # empty table
+        assert b"restore_personal" in files["README.txt"]
+        # restore/ is a folder restore_personal can read as-is.
+        for name, data in files.items():
+            if name.startswith("restore/"):
+                (tmp_path / name.split("/", 1)[1]).write_bytes(data)
+        manifest, data = personal.load_backup(tmp_path)
+        assert manifest["created_at"] == now.isoformat()
+        assert data["journal_trades"][0]["buy_price"] == "2348.50"
+        assert [c["id"] for c in data["expense_categories"]] == [1, 2, 3]
+
+    def test_failed_table_is_reported_in_manifest_and_readme(self):
+        def fetch(client, spec):
+            if spec.name == "expenses":
+                raise RuntimeError("boom")
+            return [{"id": 1}]
+        payload, m = personal.build_export_zip(
+            FakeSupabase({}), fetch=fetch,
+            tables=personal.select_tables(["expenses", "watchlists"]))
+        files = _unzip(payload)
+        assert "csv/expenses.csv" not in files and "csv/watchlists.csv" in files
+        assert "expenses" in m["errors"]
+        assert b"NOT EXPORTED" in files["README.txt"] and b"expenses" in files["README.txt"]
+
+
+class TestExportRoute:
+    URL = "/api/backup/export"
+
+    @pytest.fixture
+    def http(self, monkeypatch):
+        pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+        from plutus.api import create_app
+        monkeypatch.delenv("PLUTUS_APP_PASSWORD", raising=False)
+        monkeypatch.setenv("PLUTUS_ENV", "dev")
+        return TestClient(create_app(supabase_client=FakeSupabase(_tables())))
+
+    def test_downloads_zip_with_summary_headers(self, http):
+        r = http.get(self.URL)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"] == "application/zip"
+        assert "plutus-backup-" in r.headers["content-disposition"]
+        assert r.headers["x-plutus-backup-tables"] == str(len(personal.TABLES))
+        assert int(r.headers["x-plutus-backup-rows"]) == sum(len(v) for v in _tables().values())
+        assert r.headers["x-plutus-backup-errors"] == ""
+        assert "csv/expenses.csv" in _unzip(r.content)
+
+    def test_owner_only(self, http, monkeypatch):
+        from plutus.api import auth
+        monkeypatch.setenv("PLUTUS_APP_PASSWORD", "pw")
+        assert http.get(self.URL).status_code == 403
+        token, _ = auth.issue_token(auth.OWNER)
+        assert http.get(self.URL, headers={auth.HEADER: token}).status_code == 200

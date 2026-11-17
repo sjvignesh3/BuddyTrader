@@ -26,9 +26,12 @@ injected client / upsert so the tests run offline.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import shutil
+import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -171,6 +174,123 @@ def export_tables(
     (out_dir / MANIFEST).write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     manifest["dir"] = str(out_dir)
     return manifest
+
+
+# ---------------------------------------------------------------------------
+# One-click export (Console -> "Download backup"): a single ZIP in memory
+# ---------------------------------------------------------------------------
+CSV_DIR = "csv"
+RESTORE_DIR = "restore"
+
+_ZIP_README = """Plutus personal-data backup
+===========================
+Created : {created_at}
+Source  : {source}
+Tables  : {n_tables}   Rows: {n_rows}
+{error_block}
+What is in this ZIP
+-------------------
+csv/      One CSV per table (journal, IPO, notes, expenses, net worth,
+          watchlists, universe). Open them in Excel / Google Sheets.
+          Lists and nested values are written as JSON text; an empty
+          table is an empty file.
+restore/  The same rows as JSON, exactly as stored (ids and types kept),
+          plus manifest.json. THIS is what a restore reads - keep it.
+
+How to restore into a new / emptied Supabase project
+----------------------------------------------------
+1. Apply the migrations in plutus/migrations to the target project.
+2. Point plutus/.env (PLUTUS_SUPABASE_URL / PLUTUS_SUPABASE_SERVICE_KEY)
+   at the target.
+3. Extract this ZIP, then from the repo root:
+     python -m plutus.scripts.restore_personal "<extracted folder>/restore" --dry-run
+     python -m plutus.scripts.restore_personal "<extracted folder>/restore" --yes
+Restore is idempotent (upserts by id), so re-running is safe.
+
+Market data (prices, fundamentals, scan results) is not included - it
+re-syncs from the data sources.
+"""
+
+
+def _csv_cell(v: Any) -> Any:
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, default=_json_default, ensure_ascii=False)
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    return v
+
+
+def rows_to_csv(rows: List[Dict[str, Any]]) -> str:
+    """One table as CSV text. Header = union of the row keys in first-seen
+    order (PostgREST returns every column on every row, so in practice the
+    table's own column order). No rows -> empty string."""
+    cols: List[str] = list(dict.fromkeys(k for r in rows for k in r))
+    if not cols:
+        return ""
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\r\n")
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([_csv_cell(r.get(c)) for c in cols])
+    return buf.getvalue()
+
+
+def build_export_zip(
+    client: Any,
+    *,
+    tables: Optional[Sequence[TableSpec]] = None,
+    fetch: Callable[[Any, TableSpec], List[Dict[str, Any]]] = _default_fetch,
+    source: str = "",
+    now: Optional[datetime] = None,
+) -> Tuple[bytes, Dict[str, Any]]:
+    """Every personal table as one ZIP: csv/<table>.csv for reading,
+    restore/<table>.json + restore/manifest.json for restore_personal.
+    Returns (zip bytes, manifest). Like export_tables, a table that fails to
+    read lands in manifest['errors'] and the rest still export."""
+    specs = list(tables) if tables is not None else list(TABLES)
+    now = now or datetime.now(timezone.utc)
+    manifest: Dict[str, Any] = {
+        "format": FORMAT_VERSION,
+        "created_at": now.isoformat(),
+        "source": source,
+        "tables": {},
+        "errors": {},
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for spec in specs:
+            try:
+                rows = fetch(client, spec)
+            except Exception as exc:  # noqa: BLE001 — keep going, report at the end
+                logger.error("%s: export failed: %s", spec.name, exc)
+                manifest["errors"][spec.name] = f"{type(exc).__name__}: {exc}"
+                continue
+            # utf-8-sig: Excel needs the BOM to read non-ASCII text correctly.
+            zf.writestr(f"{CSV_DIR}/{spec.name}.csv",
+                        rows_to_csv(rows).encode("utf-8-sig"))
+            zf.writestr(f"{RESTORE_DIR}/{spec.name}.json",
+                        json.dumps(rows, default=_json_default, indent=1,
+                                   ensure_ascii=False).encode("utf-8"))
+            manifest["tables"][spec.name] = {
+                "rows": len(rows), "group": spec.group, "file": f"{spec.name}.json",
+                "conflict_cols": list(spec.conflict_cols),
+            }
+        zf.writestr(f"{RESTORE_DIR}/{MANIFEST}", json.dumps(manifest, indent=1))
+        errors = manifest["errors"]
+        error_block = ""
+        if errors:
+            error_block = ("\nNOT EXPORTED (read failed - this backup is incomplete):\n"
+                           + "".join(f"  {n}: {e}\n" for n, e in errors.items()))
+        zf.writestr("README.txt", _ZIP_README.format(
+            created_at=manifest["created_at"], source=source or "(unknown)",
+            n_tables=len(manifest["tables"]),
+            n_rows=sum(t["rows"] for t in manifest["tables"].values()),
+            error_block=error_block))
+    return buf.getvalue(), manifest
 
 
 def prune_backups(out_root: Path, keep: int) -> List[Path]:
