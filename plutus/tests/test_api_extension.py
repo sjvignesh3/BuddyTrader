@@ -174,7 +174,9 @@ def db():
             {"symbol": "TCS.NS", "quarter_end_date": "2026-06-30", "roce": Decimal("46.8"),
              "pe_median_3y": Decimal("28.00"), "pe_median_5y": Decimal("30.00"),
              "pe_median_10y": Decimal("25.00"), "pe_low_10y": Decimal("15.00"),
-             "pe_high_10y": Decimal("45.00"), "pb_5y_avg": Decimal("12.0")},
+             "pe_high_10y": Decimal("45.00"), "pb_5y_avg": Decimal("12.0"),
+             "operating_profit_ttm": Decimal("700000000000"), "depreciation_ttm": Decimal("50000000000"),
+             "interest_ttm": Decimal("10000000000"), "borrowings": Decimal("350000000000")},
         ],
         "strategy_configs": [],
         "watchlists": [
@@ -250,17 +252,29 @@ class TestStock:
         assert d["pe_vs_median_10y"] == "0.90"
         assert d["pe_range_position_pct"] == "25.0"           # (22.5 - 15) / (45 - 15)
         assert d["pb_vs_5y_avg"] == "0.75"
+        assert d["interest_coverage"] == "65.0"               # (700 - 50) / 10
+        assert d["debt_to_ebitda"] == "0.50"                  # 350 / 700
+        assert d["no_interest_cost"] is False and d["zero_debt"] is False
         assert body["thresholds"]["valuation"]["ps_max"] == "3"
+        assert body["thresholds"]["valuation"]["debt_ebitda_max"] == "2.5"
         assert body["fundamentals"]["pe_median_10y"] == "25.00"
 
     def test_derived_valuation_handles_missing_inputs(self):
         assert ext.derived_valuation(None, None) == {
-            "ps": None, "mcap_to_ebitda": None, "pe_vs_median_3y": None, "pe_vs_median_5y": None,
+            "ps": None, "mcap_to_ebitda": None, "interest_coverage": None, "no_interest_cost": False,
+            "debt_to_ebitda": None, "zero_debt": False, "pe_vs_median_3y": None, "pe_vs_median_5y": None,
             "pe_vs_median_10y": None, "pe_range_position_pct": None, "pb_vs_5y_avg": None}
         d = ext.derived_valuation({"pe_current": "60", "market_cap": "100", "revenue_ttm": "0"},
                                   {"pe_low_10y": "10", "pe_high_10y": "50"})
         assert d["ps"] is None                                # zero denominator
         assert d["pe_range_position_pct"] == Decimal("100.0")  # clamped above the range
+        # no interest cost / no debt are facts, not infinities
+        d2 = ext.derived_valuation(None, {"operating_profit_ttm": "100", "depreciation_ttm": "10", "interest_ttm": "0", "borrowings": "0"})
+        assert d2["interest_coverage"] is None and d2["no_interest_cost"] is True
+        assert d2["debt_to_ebitda"] == Decimal("0.00") and d2["zero_debt"] is True
+        d3 = ext.derived_valuation(None, {"operating_profit_ttm": "-5", "interest_ttm": "2", "borrowings": "10"})
+        assert d3["debt_to_ebitda"] is None                   # negative EBITDA: ratio meaningless
+        assert d3["interest_coverage"] == Decimal("-2.5")
 
     def test_unknown_symbol_404(self, client):
         assert client.get("/api/extension/stock/NOPE").status_code == 404

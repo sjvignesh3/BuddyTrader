@@ -43,6 +43,7 @@ const MONEY_KEYS = new Set<string>([
   "roce", "roe", "net_debt_to_equity",
   "pe_5y_avg", "pb_5y_avg",
   "pe_median_3y", "pe_median_5y", "pe_median_10y", "pe_low_10y", "pe_high_10y",
+  "operating_profit_ttm", "depreciation_ttm", "interest_ttm", "borrowings",
   "score", "best_score", "duration_seconds",
 ]);
 

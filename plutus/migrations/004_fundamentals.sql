@@ -73,3 +73,9 @@ ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_median_5y   NUMERIC(10,2);
 ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_median_10y  NUMERIC(10,2);
 ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_low_10y     NUMERIC(10,2);
 ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_high_10y    NUMERIC(10,2);
+
+-- Leverage inputs (added by 030_fundamentals_leverage.sql; repeated here).
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS operating_profit_ttm NUMERIC(20,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS depreciation_ttm     NUMERIC(20,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS interest_ttm         NUMERIC(20,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS borrowings           NUMERIC(20,2);

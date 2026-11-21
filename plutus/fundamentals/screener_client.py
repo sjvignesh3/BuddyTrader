@@ -332,6 +332,8 @@ class ScreenerClient:
             "ratios": ratios,
             "shareholding": shareholding,
             "total_assets": total_assets,
+            # Operating profit / depreciation / interest (TTM) + borrowings, ₹ Cr
+            "leverage": sp.extract_leverage(html),
         }
 
 

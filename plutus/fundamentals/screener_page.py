@@ -219,6 +219,49 @@ def extract_total_assets(html: str) -> Optional[Decimal]:
     return None
 
 
+LEVERAGE_KEYS = ("operating_profit_ttm", "depreciation_ttm", "interest_ttm", "borrowings")
+
+
+def extract_leverage(html: str) -> Dict[str, Any]:
+    """Inputs for interest coverage and debt / EBITDA (migration 030), in
+    ₹ CRORES as printed:
+      * #profit-loss, TTM column (else the right-most year): Operating Profit,
+        Depreciation, Interest. Screener's "Operating Profit" is EBITDA, so
+        EBIT = Operating Profit − Depreciation and coverage = EBIT / Interest.
+      * #balance-sheet, right-most column: Borrowings (gross debt; cash is in
+        an Ajax schedule the page does not carry, so no net debt here).
+    Every key is present (None when a row or section is missing); `ttm_label`
+    names the column used."""
+    out: Dict[str, Any] = {k: None for k in LEVERAGE_KEYS}
+    out["ttm_label"] = None
+    pl = parse_section_table(html, "profit-loss")
+    if pl and len(pl[0]) >= 2:
+        headers = pl[0]
+        idx = next((i for i, h in enumerate(headers) if h.strip().upper() == "TTM"), len(headers) - 1)
+        out["ttm_label"] = headers[idx].strip() or None
+        for row in pl[1:]:
+            if not row:
+                continue
+            label = row[0].strip().lower().rstrip(" +").strip()
+            cell = parse_number(row[idx]) if idx < len(row) else None
+            if label.startswith("operating profit") and out["operating_profit_ttm"] is None:
+                out["operating_profit_ttm"] = cell
+            elif label.startswith("depreciation") and out["depreciation_ttm"] is None:
+                out["depreciation_ttm"] = cell
+            elif label == "interest" and out["interest_ttm"] is None:
+                out["interest_ttm"] = cell
+    bs = parse_section_table(html, "balance-sheet")
+    for row in bs[1:] if bs else []:
+        if row and row[0].strip().lower().startswith("borrowings"):
+            for cell in reversed(row[1:]):
+                v = parse_number(cell)
+                if v is not None:
+                    out["borrowings"] = v
+                    break
+            break
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Ratios — #top-ratios + quick-ratios fragment (legacy _extract_ratios)
 # ---------------------------------------------------------------------------

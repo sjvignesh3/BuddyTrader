@@ -180,7 +180,7 @@
     const meds = [['3Y', num(fund.pe_median_3y), num(d.pe_vs_median_3y)], ['5Y', num(fund.pe_median_5y), num(d.pe_vs_median_5y)], ['10Y', num(fund.pe_median_10y), num(d.pe_vs_median_10y)]].filter((m) => m[1] != null);
     const low = num(fund.pe_low_10y), high = num(fund.pe_high_10y), pos = num(d.pe_range_position_pct);
     const ps = num(d.ps), me = num(d.mcap_to_ebitda), pb5 = num(d.pb_vs_5y_avg);
-    if (!meds.length && low == null && ps == null && me == null) return null;
+    if (!meds.length && low == null && ps == null && me == null && num(d.interest_coverage) == null && num(d.debt_to_ebitda) == null && !d.no_interest_cost && !d.zero_debt) return null;
     const cls = (ratio) => (ratio == null ? '' : ratio <= V.pe_vs_median_good ? 'px-val-good' : ratio <= V.pe_vs_median_warn ? 'px-val-warn' : 'px-val-bad');
     const box = el('div', { class: 'px-box' }, [el('div', { class: 'px-box-title' }, ['Valuation vs history', el('span', { class: 'px-muted', text: pe != null ? 'P/E ' + U.fmt(pe, 1) : '' })])]);
     if (meds.length) {
@@ -200,7 +200,14 @@
     if (ps != null) box.appendChild(kv('Market cap / sales' + (ps > V.ps_max ? ' (> ' + V.ps_max + ')' : ''), U.fmt(ps, 2) + (ps > V.ps_max ? ' ✗' : ' ✓')));
     if (me != null) box.appendChild(kv('Market cap / EBITDA' + (me > V.mcap_ebitda_max ? ' (> ' + V.mcap_ebitda_max + ')' : ''), U.fmt(me, 1) + (me > V.mcap_ebitda_max ? ' ✗' : ' ✓')));
     if (pb5 != null) box.appendChild(kv('P/B vs 5Y avg', U.fmt(snap.pb_current, 2) + ' · ' + (pb5 <= 1 ? '−' : '+') + Math.abs(Math.round((pb5 - 1) * 100)) + '%'));
-    box.appendChild(el('div', { class: 'px-muted px-val-note', text: 'Medians from Screener’s weekly P/E (quarterly sync). Display only — not part of the score.' }));
+    // leverage (migration 030): interest coverage and gross debt / EBITDA from the Screener P&L + balance sheet
+    const cov = num(d.interest_coverage), dte = num(d.debt_to_ebitda);
+    const V2 = Object.assign({ interest_coverage_good: 8, interest_coverage_min: 3, debt_ebitda_good: 1.5, debt_ebitda_max: 2.5 }, V);
+    if (d.no_interest_cost) box.appendChild(kv('Interest coverage', 'no interest cost ✓'));
+    else if (cov != null) box.appendChild(kv('Interest coverage (EBIT / interest)' + (cov < V2.interest_coverage_min ? ' (< ' + V2.interest_coverage_min + 'x)' : ''), U.fmt(cov, 1) + 'x ' + (cov >= V2.interest_coverage_good ? '✓' : cov >= V2.interest_coverage_min ? '~' : '✗')));
+    if (d.zero_debt) box.appendChild(kv('Debt / EBITDA', 'zero debt ✓'));
+    else if (dte != null) box.appendChild(kv('Debt / EBITDA (gross)' + (dte > V2.debt_ebitda_max ? ' (> ' + V2.debt_ebitda_max + ')' : ''), U.fmt(dte, 2) + 'x ' + (dte <= V2.debt_ebitda_good ? '✓' : dte <= V2.debt_ebitda_max ? '~' : '✗')));
+    box.appendChild(el('div', { class: 'px-muted px-val-note', text: 'Medians from Screener’s weekly P/E; coverage and debt from its P&L / balance sheet (quarterly sync). Display only — not part of the score.' }));
     return box;
   }
 

@@ -137,6 +137,10 @@ VALUATION_BARS = {
     "mcap_ebitda_max": Decimal("15"),    # market cap / TTM EBITDA (EV proxy: net debt not stored)
     "pe_vs_median_good": Decimal("0.90"),  # current P/E <= 90 % of the median -> green
     "pe_vs_median_warn": Decimal("1.10"),  # <= 110 % -> amber, above -> red
+    "interest_coverage_good": Decimal("8"),   # EBIT / interest
+    "interest_coverage_min": Decimal("3"),
+    "debt_ebitda_good": Decimal("1.5"),       # borrowings / EBITDA (gross)
+    "debt_ebitda_max": Decimal("2.5"),
 }
 
 
@@ -170,9 +174,19 @@ def derived_valuation(snap: Optional[Dict[str, Any]],
     pos: Optional[Decimal] = None
     if pe is not None and low is not None and high is not None and high > low:
         pos = max(Decimal(0), min(Decimal(100), ((pe - low) / (high - low) * 100))).quantize(Decimal("0.1"))
+    # Leverage from the Screener P&L / balance sheet (migration 030). Interest
+    # of zero means "no interest cost": coverage is reported as None and the
+    # card says so, rather than inventing an infinite number.
+    op, dep, intr, debt = _dec(f.get("operating_profit_ttm")), _dec(f.get("depreciation_ttm")), _dec(f.get("interest_ttm")), _dec(f.get("borrowings"))
+    ebit = (op - (dep or Decimal(0))) if op is not None else None
+    coverage = _ratio(ebit, intr, "0.1") if intr and intr > 0 else None
     return {
         "ps": _ratio(mcap, _dec(s.get("revenue_ttm"))),
         "mcap_to_ebitda": _ratio(mcap, _dec(s.get("ebitda_ttm")), "0.1"),
+        "interest_coverage": coverage,
+        "no_interest_cost": bool(op is not None and intr is not None and intr == 0),
+        "debt_to_ebitda": _ratio(debt, op) if op and op > 0 else None,
+        "zero_debt": bool(debt is not None and debt == 0),
         "pe_vs_median_3y": _ratio(pe, med3),
         "pe_vs_median_5y": _ratio(pe, med5),
         "pe_vs_median_10y": _ratio(pe, med10),

@@ -44,6 +44,7 @@ extension/
 | Read bundles | `GET /api/extension/bootstrap` (v2: per-stock `checks` + `check_labels` for the filter chips), `GET /api/extension/stock/{symbol}`, `GET /api/strategy_configs` (`plutus/api/extension.py`) |
 | Custom watchlists / labels | migrations `020_watchlists.sql` + `028_watchlist_color.sql` (colour) + `/api/watchlists` (`plutus/api/watchlists.py`, gated by `X-Plutus-Auth`) |
 | Notes / positions / opportunities | existing `/api/journal/*` |
+| Leverage on the card and as Screener tiles: interest coverage = (Operating profit − Depreciation) / Interest (TTM), debt / EBITDA = Borrowings / Operating profit | migration `030_fundamentals_leverage.sql`; filled by the quarterly Screener sync from the page's own P&L and balance sheet (gross debt — Screener's cash sits in an Ajax schedule) |
 | P/E history (3Y / 5Y / 10Y medians, 10Y range) on the card and as Screener tiles | migration `029_fundamentals_pe_medians.sql`; filled by the quarterly Screener sync (one chart request per stock, the same one that gives the 5Y average) |
 | PlayArea membership | existing `/api/universe/pools/PlayArea/members` |
 
@@ -53,6 +54,7 @@ Apply the migration on each database the API points at:
 psql "$PLUTUS_SUPABASE_DB_URL" -f plutus/migrations/020_watchlists.sql
 psql "$PLUTUS_SUPABASE_DB_URL" -f plutus/migrations/028_watchlist_color.sql          # before deploying the new backend
 psql "$PLUTUS_SUPABASE_DB_URL" -f plutus/migrations/029_fundamentals_pe_medians.sql   # then run the quarterly sync once
+psql "$PLUTUS_SUPABASE_DB_URL" -f plutus/migrations/030_fundamentals_leverage.sql     # same sync fills these too
 ```
 
 The Supabase Edge Function (`supabase/functions/plutus-api`) does **not** carry the extension routes; point the
@@ -82,7 +84,7 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
 * **Hover a row** for the Plutus card in brief: the 11 checks with their values, signal, distances, held line.
 * **Drawer** (`☰` or `Alt+D`, slides out beside the panel) that follows the selected stock:
   *Filters* (sort, region, **per-rule filter chips**, live-price settings, watchlist New / Rename / Delete),
-  *Stock* (the same Plutus card Screener shows, now with a **Valuation vs history** box: P/E against its 3Y / 5Y / 10Y medians, the 10Y range with today's position, market cap / sales, market cap / EBITDA, P/B vs 5Y average), *Trades* (open lots with live P&L, closed trades with realised
+  *Stock* (the same Plutus card Screener shows, now with a **Valuation vs history** box: P/E against its 3Y / 5Y / 10Y medians, the 10Y range with today's position, market cap / sales, market cap / EBITDA, P/B vs 5Y average, interest coverage, debt / EBITDA), *Trades* (open lots with live P&L, closed trades with realised
   P&L and days held, opportunities, sizing plans), *Notes* (the full dated timeline: add with `Ctrl+Enter`,
   edit, delete).
 * **Labels**: a watchlist can carry a colour (migration 028). Rows show a dot per list they belong to; `🏷`

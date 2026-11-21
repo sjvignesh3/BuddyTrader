@@ -30,6 +30,8 @@ _CRORE = Decimal(10_000_000)  # 1 Cr = 1e7 rupees
 
 # P/E history columns (migration 029) filled by screener_client.pe_stats.
 PE_HISTORY_KEYS = ("pe_median_3y", "pe_median_5y", "pe_median_10y", "pe_low_10y", "pe_high_10y")
+# Leverage inputs (migration 030) from screener_page.extract_leverage.
+LEVERAGE_KEYS = ("operating_profit_ttm", "depreciation_ttm", "interest_ttm", "borrowings")
 
 
 def _cr_to_abs(v: Optional[Decimal]) -> Optional[Decimal]:
@@ -86,6 +88,9 @@ def rows_from_bundle(bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
     # newest row only, like the other "latest at fetch time" metrics.
     pe_hist = {k: ratios.get(k) for k in PE_HISTORY_KEYS}
     total_assets_cr = bundle.get("total_assets")
+    # Leverage inputs (migration 030): ₹ Cr on the page -> absolute rupees like sales.
+    lev_src = bundle.get("leverage") or {}
+    leverage = {k: _cr_to_abs(lev_src.get(k)) for k in LEVERAGE_KEYS}
 
     # Lenders (Banks / NBFC score): ROA from the account's "Return on
     # assets" quick ratio when configured, else TTM net profit / assets.
@@ -105,6 +110,8 @@ def rows_from_bundle(bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
             flags[name] = "screener.in"
     if any(v is not None for v in pe_hist.values()):
         flags["pe_history"] = "screener.in:chart"
+    if any(v is not None for v in leverage.values()):
+        flags["leverage"] = "screener.in:" + str(lev_src.get("ttm_label") or "P&L")
     if roa_source:
         flags["roa"] = roa_source
     if any(q.get("gross_npa_pct") is not None or q.get("net_npa_pct") is not None
@@ -148,6 +155,7 @@ def rows_from_bundle(bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
             "pe_5y_avg": pe5 if newest else None,
             "pb_5y_avg": pb5 if newest else None,
             **{k: (v if newest else None) for k, v in pe_hist.items()},
+            **{k: (v if newest else None) for k, v in leverage.items()},
             "data_source": "screener.in",
             "data_quality_flags": flags if newest else {},
             "raw_yf_payload": raw_payload if newest else {},

@@ -361,6 +361,23 @@ _FIELDS: list[Field] = [
           precision=(10, 2), unit="ratio",
           formula="max(weekly P/E) over the last 10Y."),
 
+    # Leverage inputs (migration 030): Screener #profit-loss TTM column and the
+    # latest #balance-sheet column, ₹ absolute. The API derives interest
+    # coverage = (operating_profit − depreciation) / interest and
+    # debt / EBITDA = borrowings / operating_profit. Display only.
+    Field("operating_profit_ttm", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(20, 2), unit="inr",
+          formula="Screener P&L 'Operating Profit' (EBITDA), TTM column, ₹ Cr × 1e7."),
+    Field("depreciation_ttm", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(20, 2), unit="inr",
+          formula="Screener P&L 'Depreciation', TTM column, ₹ Cr × 1e7."),
+    Field("interest_ttm", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(20, 2), unit="inr",
+          formula="Screener P&L 'Interest', TTM column, ₹ Cr × 1e7."),
+    Field("borrowings", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(20, 2), unit="inr",
+          formula="Screener balance sheet 'Borrowings', latest column, ₹ Cr × 1e7 (gross debt)."),
+
     Field("raw_yf_payload", "fundamentals", FieldDType.JSONB, FieldSource.YF_QUARTERLY, FieldTier.B_QUARTERLY,
           notes="Full quarterly + info blob for future backfills."),
     Field("data_quality_flags", "fundamentals", FieldDType.JSONB, FieldSource.SYSTEM, FieldTier.B_QUARTERLY,

@@ -647,6 +647,11 @@
     const vsMed = (m) => (pe == null || m == null ? null : pe <= m * 0.9 ? 'good' : pe <= m * 1.1 ? 'warn' : 'bad');
     if (!has(/3 ?y.*median|median.*3 ?y/) && med3 != null) add('Median PE 3Y', med3.toFixed(1), vsMed(med3), 'Plutus: median weekly PE, last 3 years · current ' + (pe == null ? '—' : pe.toFixed(1)));
     if (!has(/10 ?y.*median|median.*10 ?y/) && med10 != null) add('Median PE 10Y', med10.toFixed(1), vsMed(med10), 'Plutus: median weekly PE, last 10 years · current ' + (pe == null ? '—' : pe.toFixed(1)));
+    // Leverage (migration 030): derived server-side from the P&L / balance sheet of this very page.
+    const dv = st.stock.derived || {};
+    const cov = num(dv.interest_coverage), dte = num(dv.debt_to_ebitda);
+    if (!has(/interest coverage/) && (cov != null || dv.no_interest_cost)) add('Interest coverage', dv.no_interest_cost ? 'no interest' : cov.toFixed(1) + 'x', dv.no_interest_cost || cov >= 8 ? 'good' : cov >= 3 ? 'warn' : 'bad', 'Plutus: (Operating profit − Depreciation) / Interest, TTM');
+    if (!has(/debt.*ebitda|ebitda.*debt/) && (dte != null || dv.zero_debt)) add('Debt / EBITDA', dv.zero_debt ? '0 (no debt)' : dte.toFixed(2) + 'x', dv.zero_debt || dte <= 1.5 ? 'good' : dte <= 2.5 ? 'warn' : 'bad', 'Plutus: Borrowings / Operating profit (TTM), gross debt');
     if (!has(/pe.*range|range.*pe/) && lo != null && hi != null && hi > lo) {
       const pos = pe == null ? null : Math.max(0, Math.min(100, (pe - lo) / (hi - lo) * 100));
       add('PE 10Y range', lo.toFixed(1) + ' – ' + hi.toFixed(1) + (pos == null ? '' : ' · ' + Math.round(pos) + '%'), pos == null ? null : pos <= 35 ? 'good' : pos <= 65 ? 'warn' : 'bad', 'Plutus: where the current PE sits between the 10-year low and high');
