@@ -41,7 +41,7 @@
   // Shared with the Screener walk-through pill (chrome.storage.local, not page storage).
   const NAV_KEY = 'plutus_nav';
   const DRAWER_W = 320;
-  const DRAWER_TABS = [['filters', 'Filters'], ['stock', 'Stock'], ['trades', 'Trades'], ['notes', 'Notes']];
+  const DRAWER_TABS = [['filters', 'Filters', '⚙'], ['stock', 'Stock', '▦'], ['trades', 'Trades', '⇄'], ['notes', 'Notes', '✎']];
 
   // ---- state ------------------------------------------------------------------
   const st = {
@@ -817,16 +817,16 @@
   // Drawer (F18): Filters · Stock · Trades · Notes — follows the selected stock
   // =============================================================================
   function buildDrawer() {
-    drawerTitleEl = el('span', { class: 'px-drawer-sym', text: '' });
+    drawerTitleEl = el('div', { class: 'px-drawer-stock' });
     drawerTabsEl = el('div', { class: 'px-drawer-tabs' });
     drawerBody = el('div', { class: 'px-drawer-body' });
     drawer = el('div', { id: 'px-tv-drawer', class: 'px-collapsed' }, [
       el('div', { class: 'px-drawer-head' }, [
         drawerTabsEl,
         el('span', { class: 'px-header-spacer' }),
-        drawerTitleEl,
         el('button', { class: 'px-icon-btn', title: 'Close the drawer (Alt+D)', text: '✕', onclick: () => toggleDrawer(false) }),
       ]),
+      drawerTitleEl,
       drawerBody,
     ]);
     document.body.appendChild(drawer);
@@ -867,9 +867,23 @@
     if (!st.settings.tvDrawerOpen) return;
     const tab = drawerTab();
     drawerTabsEl.innerHTML = '';
-    DRAWER_TABS.forEach(([id, label]) => drawerTabsEl.appendChild(el('button', { class: 'px-drawer-tab' + (tab === id ? ' px-on' : ''), text: label, onclick: () => setDrawerTab(id) })));
+    DRAWER_TABS.forEach(([id, label, icon]) => drawerTabsEl.appendChild(el('button', { class: 'px-drawer-tab' + (tab === id ? ' px-on' : ''), onclick: () => setDrawerTab(id) }, [el('span', { class: 'px-drawer-tab-ico', text: icon }), label])));
     const sym = currentSymbol();
-    drawerTitleEl.textContent = sym ? S.toPlain(sym) : '';
+    drawerTitleEl.innerHTML = '';
+    if (sym && tab !== 'filters') {
+      const r = rowFor(sym);
+      const cur = r.market === 'US' ? '$' : '₹';
+      drawerTitleEl.style.display = '';
+      drawerTitleEl.appendChild(el('span', { class: 'px-chip px-chip-cap-' + (r.cap ? (CAP_LETTER[r.cap] || 'U') : 'U'), text: r.cap ? (CAP_LETTER[r.cap] || 'U') : 'U' }));
+      drawerTitleEl.appendChild(el('div', { class: 'px-drawer-stock-main' }, [
+        el('div', { class: 'px-drawer-sym', text: r.plain }),
+        el('div', { class: 'px-drawer-name', text: (r.name || '') + (r.sector ? ' · ' + r.sector : '') }),
+      ]));
+      drawerTitleEl.appendChild(el('div', { class: 'px-drawer-price' }, [
+        el('div', { class: 'px-drawer-last', text: r.last == null ? '—' : cur + U.fmt(r.last, r.last >= 1000 ? 0 : 2) }),
+        el('div', { class: 'px-drawer-chg ' + (r.chgPct == null ? '' : r.chgPct >= 0 ? 'px-up' : 'px-down'), text: (r.chgPct == null ? '' : pct(r.chgPct) + '%') + (r.live ? ' · live' : r.last != null ? ' · close' : '') }),
+      ]));
+    } else drawerTitleEl.style.display = 'none';
     drawerBody.innerHTML = '';
     if (tab === 'filters') renderFiltersTab(drawerBody);
     else if (tab === 'stock') renderStockTab(drawerBody, sym);
@@ -1018,60 +1032,94 @@
     if (st.trades.loading || !st.trades.data) { body.appendChild(el('div', { class: 'px-muted', text: st.trades.error || 'Loading journal…' })); return; }
     const d = st.trades.data;
 
-    // open lots with live P&L
+    // open position: a hero card (same numbers as the held strip) + per-lot rows
     const open = (d.open || []).slice().sort((a, b) => String(b.buy_date).localeCompare(String(a.buy_date)));
     if (open.length) {
       const qty = open.reduce((a, t) => a + (Number(t.qty) || 0), 0);
       const cost = open.reduce((a, t) => a + (num(t.buy_price) || 0) * (Number(t.qty) || 0), 0);
-      const pnl = lp && qty ? (lp.price - cost / qty) * qty : null;
-      const table = el('div', { class: 'px-held-lots px-dlots' });
-      table.appendChild(el('div', { class: 'px-held-lot px-held-lot-head' }, ['Bought', 'Qty @', 'P&L', 'T / SL'].map((h) => el('span', { text: h }))));
+      const avg = qty ? cost / qty : null;
+      const pnl = lp && qty ? (lp.price - avg) * qty : null;
+      const pnlPct = lp && avg ? (lp.price / avg - 1) * 100 : null;
+      const newest = open.find((t) => num(t.target_price) || num(t.stop_price)) || {};
+      const first = open.map((t) => t.buy_date).filter(Boolean).sort()[0];
+      const days = first ? Math.max(0, Math.floor((Date.now() - new Date(first + 'T00:00:00').getTime()) / 86400000)) : null;
+      const dist = (p) => (lp && num(p) ? (num(p) / lp.price - 1) * 100 : null);
+      const hero = el('div', { class: 'px-hero' }, [
+        el('div', { class: 'px-hero-row' }, [
+          el('span', { class: 'px-chip px-chip-held', text: 'OPEN' }),
+          el('span', { class: 'px-hero-qty', text: qty.toLocaleString() + ' @ ' + cur + U.fmt(avg, 2) }),
+          el('span', { class: 'px-header-spacer' }),
+          el('span', { class: 'px-muted', text: open.length + (open.length > 1 ? ' lots' : ' lot') + (days == null ? '' : ' · ' + days + 'd') }),
+        ]),
+        el('div', { class: 'px-hero-pnl ' + (pnl == null ? '' : pnl >= 0 ? 'px-up' : 'px-down') }, [
+          el('span', { class: 'px-hero-big', text: pnlPct == null ? '—' : sign(pnlPct) + '%' }),
+          el('span', { class: 'px-hero-amt', text: pnl == null ? '' : (pnl >= 0 ? '+' : '−') + cur + Math.round(Math.abs(pnl)).toLocaleString(cur === '$' ? 'en-US' : 'en-IN') }),
+          el('span', { class: 'px-header-spacer' }),
+          el('span', { class: 'px-muted', text: lp ? (lp.live ? 'live ' : 'close ') + cur + U.fmt(lp.price, 2) : '' }),
+        ]),
+        el('div', { class: 'px-hero-grid' }, [
+          el('div', { class: 'px-hero-cell' }, [el('span', { class: 'px-hero-k', text: 'Target' }), el('span', { class: 'px-hero-v ' + (num(newest.target_price) && lp && lp.price >= num(newest.target_price) ? 'px-up' : ''), text: num(newest.target_price) ? cur + U.fmt(newest.target_price, 0) + '  ' + sign(dist(newest.target_price)) + '%' : '—' })]),
+          el('div', { class: 'px-hero-cell' }, [el('span', { class: 'px-hero-k', text: 'Stop' }), el('span', { class: 'px-hero-v ' + (num(newest.stop_price) ? (lp && lp.price <= num(newest.stop_price) ? 'px-down' : '') : 'px-warn'), text: num(newest.stop_price) ? cur + U.fmt(newest.stop_price, 0) + '  ' + sign(dist(newest.stop_price)) + '%' : 'no stop' })]),
+          el('div', { class: 'px-hero-cell' }, [el('span', { class: 'px-hero-k', text: 'Invested → value' }), el('span', { class: 'px-hero-v', text: money(cost) + (lp ? ' → ' + money(lp.price * qty) : '') })]),
+          el('div', { class: 'px-hero-cell' }, [el('span', { class: 'px-hero-k', text: 'Risk to stop' }), el('span', { class: 'px-hero-v', text: num(newest.stop_price) && lp ? money(Math.max(0, lp.price - num(newest.stop_price)) * qty) : '—' })]),
+        ]),
+      ]);
+      const table = el('div', { class: 'px-table' });
+      table.appendChild(el('div', { class: 'px-tr px-th' }, ['Bought', 'Qty @', 'P&L', 'T / SL'].map((h) => el('span', { text: h }))));
       open.forEach((t) => {
         const bp = num(t.buy_price), q = Number(t.qty) || 0;
         const lotPct = lp && bp ? (lp.price / bp - 1) * 100 : null;
-        table.appendChild(el('div', { class: 'px-held-lot', title: (t.strategy ? t.strategy + ' · ' : '') + (t.order_type || '') + (t.notes ? '\n' + t.notes : '') }, [
+        table.appendChild(el('div', { class: 'px-tr', title: (t.strategy ? t.strategy + ' · ' : '') + (t.order_type || '') + (t.notes ? '\n' + t.notes : '') }, [
           el('span', { text: shortDate(t.buy_date) }),
           el('span', { text: q + ' @ ' + (bp ? U.fmt(bp, 1) : '—') }),
-          el('span', { class: lotPct == null ? '' : lotPct >= 0 ? 'px-up' : 'px-down', text: lotPct == null ? '—' : sign(lotPct) + '%' }),
+          el('span', { class: 'px-pnl ' + (lotPct == null ? '' : lotPct >= 0 ? 'px-up' : 'px-down'), text: lotPct == null ? '—' : sign(lotPct) + '%' }),
           el('span', { text: (num(t.target_price) ? U.fmt(t.target_price, 0) : '—') + ' / ' + (num(t.stop_price) ? U.fmt(t.stop_price, 0) : '—') }),
         ]));
       });
-      body.appendChild(section('Open · ' + qty.toLocaleString() + ' @ ' + cur + U.fmt(cost / qty, 2) + (pnl == null ? '' : ' · ' + sign(pnl / cost * 100) + '% ' + money(pnl)), [table]));
-    } else body.appendChild(section('Open', [el('div', { class: 'px-muted', text: 'No open position.' })]));
+      body.appendChild(section('Open position', [hero, table]));
+    } else body.appendChild(section('Open position', [el('div', { class: 'px-empty-sm', text: 'No open position in ' + r.plain + '.' })]));
 
     // closed trades
     const closed = (d.closed || []).slice().sort((a, b) => String(b.sell_date || b.buy_date).localeCompare(String(a.sell_date || a.buy_date)));
     if (closed.length) {
-      let realised = 0;
-      const table = el('div', { class: 'px-held-lots px-dlots' });
-      table.appendChild(el('div', { class: 'px-held-lot px-held-lot-head' }, ['Buy → Sell', 'Qty', 'P&L', 'Days'].map((h) => el('span', { text: h }))));
+      let realised = 0, wins = 0;
+      const table = el('div', { class: 'px-table' });
+      table.appendChild(el('div', { class: 'px-tr px-th' }, ['Buy → Sell', 'Qty @', 'P&L', 'Days'].map((h) => el('span', { text: h }))));
       closed.forEach((t) => {
         const bp = num(t.buy_price), sp = num(t.sell_price), q = Number(t.qty) || 0;
         const p = bp != null && sp != null ? (sp - bp) * q : num(t.realized_pnl);
-        if (p != null) realised += p;
+        if (p != null) { realised += p; if (p >= 0) wins++; }
         const days = t.buy_date && t.sell_date ? Math.round((new Date(t.sell_date) - new Date(t.buy_date)) / 86400000) : null;
-        table.appendChild(el('div', { class: 'px-held-lot', title: (t.strategy || '') + (t.exit_reason ? ' · ' + t.exit_reason : '') }, [
+        table.appendChild(el('div', { class: 'px-tr', title: (t.strategy || '') + (t.exit_reason ? ' · ' + t.exit_reason : '') }, [
           el('span', { text: shortDate(t.buy_date) + ' → ' + shortDate(t.sell_date) }),
-          el('span', { text: q + ' @ ' + (bp ? U.fmt(bp, 0) : '—') + '→' + (sp ? U.fmt(sp, 0) : '—') }),
-          el('span', { class: p == null ? '' : p >= 0 ? 'px-up' : 'px-down', text: p == null ? '—' : (bp && sp ? sign((sp / bp - 1) * 100) + '%' : money(p)) }),
+          el('span', { text: q + ' @ ' + (bp ? U.fmt(bp, 0) : '—') + ' → ' + (sp ? U.fmt(sp, 0) : '—') }),
+          el('span', { class: 'px-pnl ' + (p == null ? '' : p >= 0 ? 'px-up' : 'px-down'), text: p == null ? '—' : (bp && sp ? sign((sp / bp - 1) * 100) + '%' : money(p)) }),
           el('span', { text: days == null ? '—' : days + 'd' }),
         ]));
       });
-      body.appendChild(section('Closed (' + closed.length + ') · realised ' + money(realised), [table]));
+      body.appendChild(section('Closed · ' + closed.length + (closed.length > 1 ? ' trades' : ' trade') + ' · ' + wins + ' won', [
+        el('div', { class: 'px-kpis' }, [
+          el('div', { class: 'px-kpi ' + (realised >= 0 ? 'px-up' : 'px-down') }, [el('span', { class: 'px-kpi-k', text: 'Realised' }), el('span', { class: 'px-kpi-v', text: (realised >= 0 ? '+' : '') + money(realised) })]),
+          el('div', { class: 'px-kpi' }, [el('span', { class: 'px-kpi-k', text: 'Win rate' }), el('span', { class: 'px-kpi-v', text: Math.round(wins / closed.length * 100) + '%' })]),
+        ]),
+        table,
+      ]));
     }
 
     // opportunities
     const opps = d.opportunities || [];
     if (opps.length) {
+      const STATUS_CHIP = { ACTIVE: 'px-chip-buy', CONVERTED: 'px-chip-held', DROPPED: 'px-chip-none' };
       const list = el('div', { class: 'px-notes' });
       opps.forEach((o) => list.appendChild(el('div', { class: 'px-note' }, [
         el('div', { class: 'px-note-head' }, [
           el('span', { class: 'px-note-date', text: shortDate(o.opp_date) }),
-          el('span', { class: 'px-chip px-chip-none', text: o.status || '' }),
-          o.strategy ? el('span', { class: 'px-muted', text: o.strategy }) : null,
+          el('span', { class: 'px-chip ' + (STATUS_CHIP[String(o.status || '').toUpperCase()] || 'px-chip-none'), text: o.status || '' }),
+          o.action_filter ? el('span', { class: 'px-chip px-chip-none', text: o.action_filter }) : null,
           el('span', { class: 'px-header-spacer' }),
-          el('span', { class: 'px-muted', text: (num(o.buy_price) ? cur + U.fmt(o.buy_price, 0) : '') + (num(o.target_price) ? ' → ' + cur + U.fmt(o.target_price, 0) : '') }),
+          el('span', { class: 'px-opp-price', text: (num(o.buy_price) ? cur + U.fmt(o.buy_price, 0) : '') + (num(o.target_price) ? ' → ' + cur + U.fmt(o.target_price, 0) : '') }),
         ]),
+        o.strategy ? el('div', { class: 'px-muted', text: o.strategy }) : null,
         o.notes ? el('div', { class: 'px-note-body', text: o.notes }) : null,
       ])));
       body.appendChild(section('Opportunities (' + opps.length + ')', [list]));
@@ -1090,7 +1138,7 @@
       ])));
       body.appendChild(section('Sizing plans (' + plans.length + ')', [list]));
     }
-    if (!open.length && !closed.length && !opps.length && !plans.length) body.appendChild(el('div', { class: 'px-muted', text: 'Nothing in the journal for ' + r.plain + ' yet.' }));
+    if (!open.length && !closed.length && !opps.length && !plans.length) body.appendChild(el('div', { class: 'px-empty-sm', text: 'Nothing in the journal for ' + r.plain + ' yet. Size a position or add an opportunity above.' }));
   }
 
   // ---- Notes tab (F4): full timeline with add / edit / delete ----------------
