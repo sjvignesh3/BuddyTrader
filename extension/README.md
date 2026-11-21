@@ -14,6 +14,8 @@ extension/
 │   ├── panel_logic.js       pure list logic: markets, US cap tiers, sectors, sort comparator (Node-tested)
 │   ├── card.js              the Plutus stock card (Screener overlay + TradingView drawer), thresholds, lender bars
 │   ├── tvscan.js            TradingView scanner client for live quotes: batching, 10 s cache, back-off (Node-tested)
+│   ├── table_colour.js      financial-table colouring rules shared with the US sites (Node-tested)
+├── us/                      US research sites: us_sites.js + us.css (stockanalysis, roic, vcpscanner, stockresearch)
 │   └── sizer.js             position sizer: port of lib/sizing.ts + the journal cap rule, and its dialog
 ├── tv/                      TradingView panel (tv_content.js + tv.css)
 ├── screener/                Screener.in overlays (screener_content.js + screener.css)
@@ -122,6 +124,20 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
 * Chart buttons: fundamentals (quarterly & annual sales / profit / OPM, EPS, interest, borrowings) and
   shareholding series.
 
+**US research sites** (`stockanalysis.com/stocks/*`, `roic.ai/quote/*`, `vcpscanner.com/stock/*`, `stockresearch.app/stocks/*`)
+
+* Financial tables are coloured with the **same rules as Screener** (`shared/table_colour.js`): value rows up / down
+  vs the same quarter last year (or the previous year), row peak dark green; expenses as % of revenue with the
+  lowest / highest marked; reverse rows (interest, tax, D&A, debt) lower-is-better; margins ±0.05 pt; growth
+  bands; current / quick ratio and interest coverage bands; net debt vs net cash; other income / unusual items
+  through the outlier fence. A bank's *net interest income* is treated as revenue, not a cost. Every pass clears
+  its own marks first, so colours never stack; no scroll listeners.
+* roic.ai's split label / value tables are paired by row.
+* stockresearch.app gets three extra P/E tiles from the page's own weekly series: 3-year median, 3-year and
+  10-year low–high.
+* A pill (bottom-right): colours on / off, TradingView chart, Plutus stock page, `N` dated note. Nothing is
+  fetched, nothing is written to Plutus, and no site control is touched.
+
 **Workflow across both sites**
 
 * **Linked tabs** (`⇄` in the panel header and on the Screener pill). Switching the chart moves an open Screener
@@ -147,6 +163,7 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
 node --test extension/tests/*.test.js
 ```
 
+`tests/harness/us_harness.html` colours a stockanalysis-style income statement with the real US script.
 `tests/harness/tv_harness.html` renders the real panel against a stubbed service worker and a fixture
 universe (India + US) for eyeballing layout changes without TradingView:
 `python -m http.server 8799 --directory extension` → `http://127.0.0.1:8799/tests/harness/tv_harness.html`.

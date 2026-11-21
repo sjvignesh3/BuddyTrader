@@ -1,0 +1,55 @@
+/* Plutus Companion — US research sites (stockanalysis.com, roic.ai, vcpscanner.com, stockresearch.app).
+   Translucent fills so they read on both light and dark site themes. */
+:root {
+  --px-us-up: rgba(34, 197, 94, .22);
+  --px-us-down: rgba(239, 68, 68, .20);
+  --px-us-warn: rgba(245, 158, 11, .30);
+  --px-us-alert: rgba(245, 158, 11, .55);
+  --px-us-best: #15803d;
+  --px-us-worst: #b91c1c;
+}
+td.px-c-up { background-color: var(--px-us-up) !important; }
+td.px-c-down { background-color: var(--px-us-down) !important; }
+td.px-c-warn { background-color: var(--px-us-warn) !important; }
+td.px-c-alert { background-color: var(--px-us-alert) !important; font-weight: 700; }
+td.px-c-best { background-color: var(--px-us-best) !important; color: #fff !important; font-weight: 700; }
+td.px-c-worst { background-color: var(--px-us-worst) !important; color: #fff !important; font-weight: 700; }
+td.px-c-note { outline: 1px dashed rgba(245, 158, 11, .8); outline-offset: -1px; }
+/* sites that nest the text in a span with its own background */
+td.px-c-up *, td.px-c-down *, td.px-c-warn *, td.px-c-alert *, td.px-c-best *, td.px-c-worst * { background: transparent !important; }
+td.px-c-best *, td.px-c-worst * { color: #fff !important; }
+
+#px-us-pill {
+  position: fixed; right: 16px; bottom: 16px; z-index: 2147483000; display: flex; align-items: center; gap: 6px;
+  background: #131722; color: #d1d4dc; border: 1px solid #363a45; border-radius: 999px; padding: 5px 8px 5px 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.35); font: 12px/1.2 -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+#px-us-pill * { box-sizing: border-box; }
+.px-us-brand { display: inline-flex; align-items: center; gap: 5px; font-weight: 800; color: #fff; }
+.px-us-sym { font-weight: 700; color: #facc15; }
+.px-us-btn { background: #1e222d; color: #d1d4dc; border: 1px solid #363a45; border-radius: 999px; padding: 3px 9px; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; text-decoration: none; }
+.px-us-btn:hover { background: #2a2e39; color: #fff; }
+.px-us-btn.px-on { color: #5eead4; border-color: rgba(94,234,212,.45); }
+.px-us-x { padding: 3px 7px; color: #868993; }
+
+/* stockresearch.app P/E tiles */
+.px-pe-tile dd { display: flex; align-items: center; gap: 6px; }
+.px-pe-badge { font-size: 9px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; background: rgba(20,184,166,.18); color: #0f766e; border-radius: 999px; padding: 1px 6px; }
+
+/* dialog + toasts reuse the TradingView dark styling */
+.px-dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 2147483200; display: flex; align-items: center; justify-content: center; }
+.px-dialog { background: #131722; color: #d1d4dc; border: 1px solid #363a45; border-radius: 10px; width: 360px; max-width: calc(100vw - 32px); box-shadow: 0 12px 40px rgba(0,0,0,.6); font: 12px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; }
+.px-dialog * { box-sizing: border-box; }
+.px-dialog-title { font-weight: 800; font-size: 13px; padding: 10px 12px; border-bottom: 1px solid #363a45; color: #fff; }
+.px-dialog-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.px-dialog-body label { display: flex; flex-direction: column; gap: 3px; color: #868993; font-size: 11px; }
+.px-dialog-body input, .px-dialog-body textarea { background: #1e222d; color: #d1d4dc; border: 1px solid #363a45; border-radius: 6px; padding: 6px 8px; font: inherit; width: 100%; }
+.px-dialog-body textarea { min-height: 120px; resize: vertical; }
+.px-dialog-error { color: #f23645; font-size: 11px; padding: 0 12px; }
+.px-dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid #363a45; }
+.px-btn { border-radius: 6px; padding: 6px 12px; cursor: pointer; font-weight: 700; border: 1px solid #363a45; background: #1e222d; color: #d1d4dc; }
+.px-btn-primary { background: #0f766e; border-color: #0d9488; color: #fff; }
+#px-toasts { position: fixed; right: 16px; bottom: 60px; z-index: 2147483300; display: flex; flex-direction: column; gap: 6px; }
+.px-toast { background: #1e222d; color: #fff; border: 1px solid #363a45; border-left: 3px solid #2962ff; border-radius: 8px; padding: 8px 12px; font: 12px/1.3 -apple-system, "Segoe UI", Roboto, sans-serif; box-shadow: 0 6px 20px rgba(0,0,0,.4); max-width: 360px; transition: opacity .3s; }
+.px-toast-success { border-left-color: #26a69a; } .px-toast-error { border-left-color: #f23645; } .px-toast-out { opacity: 0; }
+.px-logo { display: inline-flex; line-height: 0; } .px-logo svg { display: block; border-radius: 22%; }

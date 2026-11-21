@@ -35,6 +35,10 @@
     tvLiveIntervalSec: 15,           // 15 | 30 | 60
     tvHoverCard: true,               // hover a row -> Plutus checks card
 
+    // US research sites (stockanalysis.com, roic.ai, vcpscanner.com, stockresearch.app)
+    usSitesEnabled: true,
+    usHighlight: true,               // the pill's on/off switch
+
     // Cross-site
     linkTabs: true,                  // TradingView and Screener company tabs follow each other
     scrWalk: true,                   // ← / → walk-through pill on Screener company pages

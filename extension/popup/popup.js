@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const BOOLS = ['tvEnabled', 'tvShowChips', 'tvFocusMode', 'tvSpaceKeyNavigates', 'tvHeldStrip', 'tvLivePrices', 'tvHoverCard', 'scrEnabled', 'scrAutoConsolidated', 'scrPlutusCard', 'scrHighlightTables', 'scrPageRules', 'scrWalk', 'linkTabs'];
+  const BOOLS = ['tvEnabled', 'tvShowChips', 'tvFocusMode', 'tvSpaceKeyNavigates', 'tvHeldStrip', 'tvLivePrices', 'tvHoverCard', 'scrEnabled', 'scrAutoConsolidated', 'scrPlutusCard', 'scrHighlightTables', 'scrPageRules', 'scrWalk', 'linkTabs', 'usSitesEnabled'];
   const TEXTS = ['apiUrl', 'webAppUrl', 'token', 'adminToken', 'tvSort', 'tvRegion'];
   const NUMBER_SELECTS = ['tvLiveIntervalSec'];
   const LOCAL_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
