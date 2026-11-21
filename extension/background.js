@@ -24,6 +24,7 @@ const SCR_MATCH = ['https://*.screener.in/*', 'https://screener.in/*'];
 
 let bootstrapInflight = null;
 let positionsCache = { at: 0, data: null };
+let tokenRejected = false;
 
 // ---------------------------------------------------------------------------
 // storage helpers
@@ -67,8 +68,16 @@ async function apiFetch(path, opts = {}) {
   clearTimeout(timer);
   let body = null;
   try { body = await res.json(); } catch (e) { body = null; }
+  // Token health: a 401 while we hold a token means this API rejects it
+  // (expired, or minted by another Plutus API). Tell the panels once; a later
+  // authenticated success clears the flag.
+  if (settings.token && !/^\/api\/auth\//.test(path)) {
+    if (res.status === 401 && !tokenRejected) { tokenRejected = true; broadcast({ type: 'plutus:token-state', rejected: true }); }
+    else if (res.ok && tokenRejected && settings.token) { tokenRejected = false; broadcast({ type: 'plutus:token-state', rejected: false }); }
+  }
   if (!res.ok) {
     let msg = (body && (body.error || body.detail)) || res.statusText || ('HTTP ' + res.status);
+    if (res.status === 401 && settings.token) msg = 'Plutus rejected the saved token (expired, or issued by another Plutus API) — sign in on the web app again or paste a fresh token in the popup';
     // A 404 on the extension routes means the API process predates them (or the
     // URL points at the read-only Edge Function): say so instead of "Not Found".
     if (res.status === 404 && /^\/api\/(extension|watchlists|strategy_configs)/.test(path) && !(body && (body.error || body.detail))) {
@@ -490,6 +499,7 @@ const HANDLERS = {
   'trades.forSymbol': (m) => tradesForSymbol(m.symbol),
   'live.quotes': (m) => liveQuotes(m.symbols || []),
   'bridge.register': () => registerTokenBridge(),
+  'token.state': () => ({ rejected: tokenRejected }),
   'opportunity.create': (m) => opportunityCreate(m.body || {}),
   'playarea.add': (m) => playAreaAdd(m.symbol),
   'playarea.remove': (m) => playAreaRemove(m.symbol),
@@ -523,6 +533,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (before.apiUrl !== after.apiUrl || before.token !== after.token) {
     positionsCache = { at: 0, data: null }; openTradesCache = { at: 0, data: null }; settingsCache = { at: 0, data: null };
     storageSet({ [CACHE_STOCK]: {} });
+    if (tokenRejected) { tokenRejected = false; broadcast({ type: 'plutus:token-state', rejected: false }); }
   }
   if (before.webAppUrl !== after.webAppUrl) registerTokenBridge().catch(() => {});
 });

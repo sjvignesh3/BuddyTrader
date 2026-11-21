@@ -16,13 +16,20 @@
     <label>Plutus API URL
       <input type="text" id="apiUrl" placeholder="http://127.0.0.1:8787 or https://plutus-api.onrender.com" spellcheck="false">
     </label>
-    <label>Plutus web app URL <span class="hint">(a deployed URL asks for that site once, then your sign-in there feeds the token here)</span>
+    <label>Plutus web app URL <span class="hint">(sign in there and the token flows here through the token bridge)</span>
       <input type="text" id="webAppUrl" placeholder="http://localhost:5173" spellcheck="false">
     </label>
-    <div id="bridgeInfo" class="hint"></div>
+    <div class="row">
+      <button id="allowBridge" class="btn" style="display:none">Allow token bridge on this site</button>
+      <span id="bridgeInfo" class="hint"></span>
+    </div>
     <label>Session token <span class="hint">(owner or viewer; needed for notes, positions, watchlists, PlayArea)</span>
       <input type="password" id="token" placeholder="paste from the Plutus web app · localStorage plutus.auth.v1" spellcheck="false" autocomplete="off">
     </label>
+    <div class="row">
+      <span id="tokenInfo" class="hint"></span>
+      <button id="clearToken" class="btn btn-ghost" style="display:none">Clear token</button>
+    </div>
     <label>Admin token <span class="hint">(optional · sync triggers)</span>
       <input type="password" id="adminToken" placeholder="X-Plutus-Admin-Token" spellcheck="false" autocomplete="off">
     </label>

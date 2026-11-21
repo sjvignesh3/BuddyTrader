@@ -105,6 +105,7 @@
         if (!m) return;
         if (m.type === 'plutus:bootstrap-updated') loadAll();
         if (m.type === 'plutus:switch-symbol') followLinkedSymbol(m.symbol);
+        if (m.type === 'plutus:token-state') { st.tokenRejected = !!m.rejected; renderBanner(); if (!m.rejected) loadAll(); }
       });
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area === 'local' && changes[NAV_KEY]) adoptNavFromScreener(changes[NAV_KEY].newValue);
@@ -138,6 +139,7 @@
         st.lots.get(k).push(t);
       });
       if (boot._stale) st.error = 'Plutus API unreachable — showing cached data (' + (boot._error || '') + ')';
+      U.send({ type: 'token.state' }).then((t) => { st.tokenRejected = !!(t && t.rejected); renderBanner(); }).catch(() => {});
     } catch (e) {
       st.error = e.message;
     }
@@ -357,6 +359,14 @@
     if (!bannerEl) return;
     if (st.loading && !st.boot) { bannerEl.style.display = ''; bannerEl.className = 'px-banner px-info'; bannerEl.textContent = 'Loading Plutus universe…'; return; }
     if (st.error) { bannerEl.style.display = ''; bannerEl.className = 'px-banner'; bannerEl.textContent = st.error; return; }
+    if (st.boot && st.settings && st.settings.token && st.tokenRejected) {
+      bannerEl.style.display = ''; bannerEl.className = 'px-banner';
+      bannerEl.innerHTML = '';
+      bannerEl.appendChild(el('span', { text: 'Plutus rejected the saved token (expired, or from another Plutus API) — notes, positions and trades are off. ' }));
+      bannerEl.appendChild(el('a', { text: 'Sign in on the web app', onclick: () => window.open(st.settings.webAppUrl, '_blank') }));
+      bannerEl.appendChild(el('span', { text: ' and the bridge replaces it, or paste a fresh token in the popup.' }));
+      return;
+    }
     if (st.boot && !(st.settings && st.settings.token)) {
       bannerEl.style.display = ''; bannerEl.className = 'px-banner px-info';
       bannerEl.innerHTML = 'No Plutus token — watchlists are stored in this browser only; notes / PlayArea / held badges need a token (extension popup).';

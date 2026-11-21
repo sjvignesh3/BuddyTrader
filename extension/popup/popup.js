@@ -33,14 +33,38 @@
     } catch (e) { info.textContent = e.message; }
   }
   async function showBridgeState(webAppUrl) {
-    const info = $('bridgeInfo');
+    const info = $('bridgeInfo'), btn = $('allowBridge');
+    btn.style.display = 'none';
     let origin;
     try { origin = new URL(webAppUrl).origin; } catch (e) { info.textContent = ''; return; }
-    if (LOCAL_RE.test(origin) || !chrome.permissions) { info.textContent = ''; return; }
+    if (LOCAL_RE.test(origin) || !chrome.permissions) { info.textContent = LOCAL_RE.test(origin) ? 'Local web app: the token is picked up automatically.' : ''; return; }
     try {
       const ok = await chrome.permissions.contains({ origins: [origin + '/*'] });
-      info.textContent = ok ? 'Token bridge active on ' + origin + '.' : 'Save to allow the token bridge on ' + origin + '.';
+      info.textContent = ok ? 'Token bridge active on ' + origin + ': sign in there and the token arrives here.' : 'The token bridge is not allowed on ' + origin + ' yet.';
+      btn.style.display = ok ? 'none' : '';
     } catch (e) { info.textContent = ''; }
+  }
+
+  /** What the stored token says about itself (`<role>.<exp>.<sig>`), without trusting it. */
+  function describeToken(token, apiVerdict) {
+    const info = $('tokenInfo'), clear = $('clearToken');
+    clear.style.display = token ? '' : 'none';
+    if (!token) { info.textContent = 'No token: notes, positions, watchlists and PlayArea are off until you sign in on the web app (or paste one).'; info.className = 'hint'; return; }
+    const parts = token.split('.');
+    const exp = Number(parts[1]);
+    if (parts.length !== 3 || !Number.isFinite(exp)) { info.textContent = 'This is not a Plutus token (expected role.expiry.signature).'; info.className = 'hint bad'; return; }
+    const when = new Date(exp * 1000);
+    const expired = exp * 1000 < Date.now();
+    let text = parts[0] + ' token · ' + (expired ? 'EXPIRED on ' : 'valid until ') + when.toLocaleDateString() + ' ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    let bad = expired;
+    if (!expired && apiVerdict && apiVerdict.authenticated === false && apiVerdict.required) {
+      text += ' — but THIS API rejects it (issued by another Plutus API, e.g. local vs deployed). Sign in on the web app above, or paste a token from it.';
+      bad = true;
+    } else if (expired) {
+      text += ' — sign in on the web app again; the bridge will replace it.';
+    }
+    info.textContent = text;
+    info.className = 'hint' + (bad ? ' bad' : ' ok');
   }
   const OVERRIDES = ['pe_max', 'roce_min', 'roe_min', 'net_debt_to_equity_max', 'pledging_max'];
   const TILES = ['publicHoldingMaxPct', 'high52RedPct', 'high52YellowPct', 'smaGreenPct', 'athGreenPct', 'athYellowPct'];
@@ -101,10 +125,12 @@
       const r = await send({ type: 'ping' });
       const a = r.auth || {};
       const role = a.role || (a.required === false ? 'owner (gate off)' : 'no token');
-      conn.className = 'badge ' + (a.authenticated === false && a.required ? 'badge-warn' : 'badge-ok');
-      conn.textContent = a.authenticated === false && a.required ? 'api ok · sign in' : 'connected';
-      out.className = 'out ok';
+      const rejected = a.authenticated === false && a.required;
+      conn.className = 'badge ' + (rejected ? 'badge-warn' : 'badge-ok');
+      conn.textContent = rejected ? (collect().token ? 'api ok · token rejected' : 'api ok · sign in') : 'connected';
+      out.className = 'out ' + (rejected && collect().token ? 'bad' : 'ok');
       out.textContent = 'API ' + (r.health && r.health.version ? 'v' + r.health.version : 'ok') + ' in ' + r.latencyMs + ' ms\nauth: ' + (a.error ? a.error : 'required=' + a.required + ' authenticated=' + a.authenticated + ' role=' + role);
+      describeToken(collect().token, a);
     } catch (e) {
       conn.className = 'badge badge-bad'; conn.textContent = 'offline';
       out.className = 'out bad'; out.textContent = e.message;
@@ -117,7 +143,23 @@
     fill(initial);
     showCacheInfo();
     showBridgeState(initial.webAppUrl);
+    describeToken(initial.token, null);
     test();
+    $('token').addEventListener('input', () => describeToken($('token').value.trim(), null));
+    $('webAppUrl').addEventListener('change', () => showBridgeState($('webAppUrl').value.trim()));
+    $('allowBridge').addEventListener('click', async () => {
+      // permissions.request needs the click: ask first, save after
+      const perm = ensureBridgePermission($('webAppUrl').value.trim());
+      await PlutusSettings.save(collect());
+      await perm;
+      showBridgeState($('webAppUrl').value.trim());
+    });
+    $('clearToken').addEventListener('click', async () => {
+      $('token').value = '';
+      await PlutusSettings.save({ token: '', _bridged: false });
+      describeToken('', null);
+      test();
+    });
     $('save').addEventListener('click', async () => {
       const s = collect();
       // permissions.request must run inside the click: ask before any await

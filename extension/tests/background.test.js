@@ -31,7 +31,8 @@ function loadWorker({ settings = {}, tabs = [], fetch, granted = [] } = {}) {
       onChanged: { addListener() {} },
     },
     tabs: {
-      query: async (q) => tabs.filter((t) => !q.url || matches(t.url, [].concat(q.url))),
+      // Both styles the worker uses: awaited, and callback (broadcast).
+      query: (q, cb) => { const r = tabs.filter((t) => !q.url || matches(t.url, [].concat(q.url))); if (cb) cb(r); return Promise.resolve(r); },
       update: async (id, props) => { calls.updated.push({ id, url: props.url }); const t = tabs.find((x) => x.id === id); if (t) t.url = props.url; return t; },
       sendMessage: async (id, msg) => { calls.sent.push({ id, msg }); },
     },
@@ -250,6 +251,29 @@ test('live.quotes is off by setting, and otherwise goes through the scanner clie
   assert.equal(on.calls.fetched.length, 1);
   assert.equal(on.calls.fetched[0].url, 'https://scanner.tradingview.com/india/scan');
   assert.deepEqual(on.calls.fetched[0].body, { symbols: { tickers: ['NSE:INFY'] }, columns: ['close', 'change', 'change_abs'] });
+});
+
+test('a 401 while holding a token flags it as rejected, tells the panels, and a later success clears it', async () => {
+  let status = 401;
+  const w = loadWorker({ settings: { token: 'stale.tok' }, tabs: [TV(1)], fetch: async () => ({ ok: status === 200, status, json: async () => (status === 200 ? { notes: [] } : { detail: 'Sign in required' }) }) });
+  const r1 = await w.send({ type: 'notes.list', symbol: 'TCS.NS' });
+  assert.equal(r1.ok, false);
+  assert.match(r1.error, /rejected the saved token/);
+  assert.deepEqual(JSON.parse(JSON.stringify(w.calls.sent)), [{ id: 1, msg: { type: 'plutus:token-state', rejected: true } }]);
+  assert.equal((await w.send({ type: 'token.state' })).data.rejected, true);
+  status = 200;
+  await w.send({ type: 'notes.list', symbol: 'TCS.NS' });
+  assert.equal((await w.send({ type: 'token.state' })).data.rejected, false);
+  assert.equal(w.calls.sent.length, 2);
+  assert.equal(w.calls.sent[1].msg.rejected, false);
+});
+
+test('without a token a 401 is just "sign in required" — nothing is flagged', async () => {
+  const w = loadWorker({ tabs: [TV(1)], fetch: async () => ({ ok: false, status: 401, json: async () => ({ detail: 'Sign in required' }) }) });
+  const r = await w.send({ type: 'api', path: '/api/journal/notes' });
+  assert.equal(r.status, 401);
+  assert.equal(w.calls.sent.length, 0);
+  assert.equal((await w.send({ type: 'token.state' })).data.rejected, false);
 });
 
 // ---- token bridge on the deployed web app (F5) ------------------------------
