@@ -163,8 +163,45 @@
     if (snap.pe_current) tech.appendChild(kv('PE / PB' + (cur === '₹' ? ' (Screener weekly)' : ''), U.fmt(snap.pe_current, 1) + ' / ' + U.fmt(snap.pb_current, 2)));
     body.appendChild(tech);
 
+    // box 3: valuation vs history (display only — nothing here is a scan rule)
+    const val = valuationBox(data, T, cur);
+    if (val) body.appendChild(val);
+
     if (opts.extra) body.appendChild(opts.extra);
     return card;
+  }
+
+  /** Current P/E against its 3Y / 5Y / 10Y medians and the 10Y range, plus P/S and Mcap/EBITDA. */
+  function valuationBox(data, T, cur) {
+    const snap = data.snapshot || {}, fund = data.fundamentals || {}, d = data.derived || {};
+    const V = Object.assign({ ps_max: 3, mcap_ebitda_max: 15, pe_vs_median_good: 0.9, pe_vs_median_warn: 1.1 },
+      Object.fromEntries(Object.entries(((data.thresholds || {}).valuation) || {}).map(([k, v]) => [k, num(v)]).filter(([, v]) => v != null)));
+    const pe = num(snap.pe_current);
+    const meds = [['3Y', num(fund.pe_median_3y), num(d.pe_vs_median_3y)], ['5Y', num(fund.pe_median_5y), num(d.pe_vs_median_5y)], ['10Y', num(fund.pe_median_10y), num(d.pe_vs_median_10y)]].filter((m) => m[1] != null);
+    const low = num(fund.pe_low_10y), high = num(fund.pe_high_10y), pos = num(d.pe_range_position_pct);
+    const ps = num(d.ps), me = num(d.mcap_to_ebitda), pb5 = num(d.pb_vs_5y_avg);
+    if (!meds.length && low == null && ps == null && me == null) return null;
+    const cls = (ratio) => (ratio == null ? '' : ratio <= V.pe_vs_median_good ? 'px-val-good' : ratio <= V.pe_vs_median_warn ? 'px-val-warn' : 'px-val-bad');
+    const box = el('div', { class: 'px-box' }, [el('div', { class: 'px-box-title' }, ['Valuation vs history', el('span', { class: 'px-muted', text: pe != null ? 'P/E ' + U.fmt(pe, 1) : '' })])]);
+    if (meds.length) {
+      const row = el('div', { class: 'px-val-meds' });
+      meds.forEach(([label, med, ratio]) => row.appendChild(el('div', { class: 'px-val-med ' + cls(ratio), title: ratio == null ? '' : 'current P/E is ' + Math.round(ratio * 100) + '% of the ' + label + ' median' }, [
+        el('span', { class: 'px-val-k', text: label + ' median' }), el('span', { class: 'px-val-v', text: U.fmt(med, 1) }),
+        el('span', { class: 'px-val-r', text: ratio == null ? '' : (ratio <= 1 ? '−' : '+') + Math.abs(Math.round((ratio - 1) * 100)) + '%' }),
+      ])));
+      box.appendChild(row);
+    }
+    if (low != null && high != null && high > low) {
+      box.appendChild(kv('10Y P/E range', U.fmt(low, 1) + ' – ' + U.fmt(high, 1) + (pos == null ? '' : ' · now at ' + Math.round(pos) + '%')));
+      const bar = el('div', { class: 'px-range' }, [el('i', { style: 'left:' + (pos == null ? 0 : pos).toFixed(1) + '%' + (pos == null ? ';display:none' : '') })]);
+      box.appendChild(bar);
+      box.appendChild(el('div', { class: 'px-gauge-labels', html: '<span>10Y low</span><span>10Y high</span>' }));
+    }
+    if (ps != null) box.appendChild(kv('Market cap / sales' + (ps > V.ps_max ? ' (> ' + V.ps_max + ')' : ''), U.fmt(ps, 2) + (ps > V.ps_max ? ' ✗' : ' ✓')));
+    if (me != null) box.appendChild(kv('Market cap / EBITDA' + (me > V.mcap_ebitda_max ? ' (> ' + V.mcap_ebitda_max + ')' : ''), U.fmt(me, 1) + (me > V.mcap_ebitda_max ? ' ✗' : ' ✓')));
+    if (pb5 != null) box.appendChild(kv('P/B vs 5Y avg', U.fmt(snap.pb_current, 2) + ' · ' + (pb5 <= 1 ? '−' : '+') + Math.abs(Math.round((pb5 - 1) * 100)) + '%'));
+    box.appendChild(el('div', { class: 'px-muted px-val-note', text: 'Medians from Screener’s weekly P/E (quarterly sync). Display only — not part of the score.' }));
+    return box;
   }
 
   root.PlutusCard = { SIGNAL_CHIP, LENDER_DEFAULTS, lenderGroups, thresholds, lenderGroup, barsFor, kv, build };

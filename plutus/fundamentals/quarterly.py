@@ -28,6 +28,9 @@ from plutus.registry.types import round_half_up
 
 _CRORE = Decimal(10_000_000)  # 1 Cr = 1e7 rupees
 
+# P/E history columns (migration 029) filled by screener_client.pe_stats.
+PE_HISTORY_KEYS = ("pe_median_3y", "pe_median_5y", "pe_median_10y", "pe_low_10y", "pe_high_10y")
+
 
 def _cr_to_abs(v: Optional[Decimal]) -> Optional[Decimal]:
     if v is None:
@@ -79,6 +82,9 @@ def rows_from_bundle(bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
     net_de = ratios.get("net_debt_to_equity")
     pe5 = ratios.get("pe_5yr_avg")
     pb5 = ratios.get("pb_5yr_avg")
+    # P/E history from Screener's chart series (screener_client.pe_stats):
+    # newest row only, like the other "latest at fetch time" metrics.
+    pe_hist = {k: ratios.get(k) for k in PE_HISTORY_KEYS}
     total_assets_cr = bundle.get("total_assets")
 
     # Lenders (Banks / NBFC score): ROA from the account's "Return on
@@ -97,6 +103,8 @@ def rows_from_bundle(bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
                       ("total_assets", total_assets_cr)):
         if val is not None:
             flags[name] = "screener.in"
+    if any(v is not None for v in pe_hist.values()):
+        flags["pe_history"] = "screener.in:chart"
     if roa_source:
         flags["roa"] = roa_source
     if any(q.get("gross_npa_pct") is not None or q.get("net_npa_pct") is not None
@@ -139,6 +147,7 @@ def rows_from_bundle(bundle: Dict[str, Any]) -> List[Dict[str, Any]]:
             "roa": roa if newest else None,
             "pe_5y_avg": pe5 if newest else None,
             "pb_5y_avg": pb5 if newest else None,
+            **{k: (v if newest else None) for k, v in pe_hist.items()},
             "data_source": "screener.in",
             "data_quality_flags": flags if newest else {},
             "raw_yf_payload": raw_payload if newest else {},

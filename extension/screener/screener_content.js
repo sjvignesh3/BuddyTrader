@@ -642,6 +642,15 @@
     }
     const pe5 = num(fund.pe_5y_avg), pe = num(snap.pe_current);
     if (!has(/5 ?y.*pe|pe.*5 ?y/) && pe5 != null) add('5Y avg PE', pe5.toFixed(1), pe != null ? (pe < pe5 ? 'good' : 'bad') : null, 'Plutus: current PE ' + (pe == null ? '—' : pe.toFixed(1)));
+    // P/E history (migration 029): medians beat averages on bubble years; the range frames today's P/E.
+    const med3 = num(fund.pe_median_3y), med10 = num(fund.pe_median_10y), lo = num(fund.pe_low_10y), hi = num(fund.pe_high_10y);
+    const vsMed = (m) => (pe == null || m == null ? null : pe <= m * 0.9 ? 'good' : pe <= m * 1.1 ? 'warn' : 'bad');
+    if (!has(/3 ?y.*median|median.*3 ?y/) && med3 != null) add('Median PE 3Y', med3.toFixed(1), vsMed(med3), 'Plutus: median weekly PE, last 3 years · current ' + (pe == null ? '—' : pe.toFixed(1)));
+    if (!has(/10 ?y.*median|median.*10 ?y/) && med10 != null) add('Median PE 10Y', med10.toFixed(1), vsMed(med10), 'Plutus: median weekly PE, last 10 years · current ' + (pe == null ? '—' : pe.toFixed(1)));
+    if (!has(/pe.*range|range.*pe/) && lo != null && hi != null && hi > lo) {
+      const pos = pe == null ? null : Math.max(0, Math.min(100, (pe - lo) / (hi - lo) * 100));
+      add('PE 10Y range', lo.toFixed(1) + ' – ' + hi.toFixed(1) + (pos == null ? '' : ' · ' + Math.round(pos) + '%'), pos == null ? null : pos <= 35 ? 'good' : pos <= 65 ? 'warn' : 'bad', 'Plutus: where the current PE sits between the 10-year low and high');
+    }
   }
 
   // =============================================================================

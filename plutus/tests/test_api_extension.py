@@ -139,7 +139,10 @@ def db():
         "daily_snapshots": [
             {"symbol": "TCS.NS", "snapshot_date": "2026-09-22", "close": Decimal("3500.50"),
              "cap_bucket": "Large", "below_200dma_pct": Decimal("12.5"),
-             "fall_from_ath_pct": Decimal("22.1"), "volume": 10},
+             "fall_from_ath_pct": Decimal("22.1"), "volume": 10,
+             "market_cap": Decimal("12000000000000"), "revenue_ttm": Decimal("2500000000000"),
+             "ebitda_ttm": Decimal("700000000000"), "pe_current": Decimal("22.50"),
+             "pb_current": Decimal("9.00")},
             {"symbol": "INFY.NS", "snapshot_date": "2026-09-22", "close": Decimal("1500"),
              "cap_bucket": None, "below_200dma_pct": Decimal("-1"), "volume": 10},
             {"symbol": "TCS.NS", "snapshot_date": "2026-09-21", "close": Decimal("3400"),
@@ -160,7 +163,10 @@ def db():
              "status": "BUY_ZONE", "score": Decimal("100"), "metrics_snapshot": {}},
         ],
         "fundamentals": [
-            {"symbol": "TCS.NS", "quarter_end_date": "2026-06-30", "roce": Decimal("46.8")},
+            {"symbol": "TCS.NS", "quarter_end_date": "2026-06-30", "roce": Decimal("46.8"),
+             "pe_median_3y": Decimal("28.00"), "pe_median_5y": Decimal("30.00"),
+             "pe_median_10y": Decimal("25.00"), "pe_low_10y": Decimal("15.00"),
+             "pe_high_10y": Decimal("45.00"), "pb_5y_avg": Decimal("12.0")},
         ],
         "strategy_configs": [],
         "watchlists": [
@@ -228,6 +234,25 @@ class TestStock:
         ids = {r["strategy_id"] for r in body["scan_results"]}
         assert ids == {"envelope_200dma", "fundamental_screener"}
         assert body["summary"]["funda_points"] == 9
+        # derived valuation: Decimal on the server, strings on the wire, None when an input is missing
+        d = body["derived"]
+        assert d["ps"] == "4.80"                              # 12 T / 2.5 T
+        assert d["mcap_to_ebitda"] == "17.1"
+        assert d["pe_vs_median_3y"] == "0.80"                 # 22.5 / 28
+        assert d["pe_vs_median_10y"] == "0.90"
+        assert d["pe_range_position_pct"] == "25.0"           # (22.5 - 15) / (45 - 15)
+        assert d["pb_vs_5y_avg"] == "0.75"
+        assert body["thresholds"]["valuation"]["ps_max"] == "3"
+        assert body["fundamentals"]["pe_median_10y"] == "25.00"
+
+    def test_derived_valuation_handles_missing_inputs(self):
+        assert ext.derived_valuation(None, None) == {
+            "ps": None, "mcap_to_ebitda": None, "pe_vs_median_3y": None, "pe_vs_median_5y": None,
+            "pe_vs_median_10y": None, "pe_range_position_pct": None, "pb_vs_5y_avg": None}
+        d = ext.derived_valuation({"pe_current": "60", "market_cap": "100", "revenue_ttm": "0"},
+                                  {"pe_low_10y": "10", "pe_high_10y": "50"})
+        assert d["ps"] is None                                # zero denominator
+        assert d["pe_range_position_pct"] == Decimal("100.0")  # clamped above the range
 
     def test_unknown_symbol_404(self, client):
         assert client.get("/api/extension/stock/NOPE").status_code == 404

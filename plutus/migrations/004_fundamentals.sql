@@ -65,3 +65,11 @@ ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS gross_npa_pct NUMERIC(6,2);
 ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS net_npa_pct   NUMERIC(6,2);
 ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS total_assets  NUMERIC(20,2);
 ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS roa           NUMERIC(6,2);
+
+-- P/E history from Screener's chart series (added by
+-- 029_fundamentals_pe_medians.sql; repeated here for the same reason).
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_median_3y   NUMERIC(10,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_median_5y   NUMERIC(10,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_median_10y  NUMERIC(10,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_low_10y     NUMERIC(10,2);
+ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS pe_high_10y    NUMERIC(10,2);

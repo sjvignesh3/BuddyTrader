@@ -229,7 +229,10 @@ class ScreenerClient:
             logger.debug("%s: company id lookup failed: %s", symbol, exc)
         return None
 
-    def _chart_avg(self, company_id: int, metric: str, years: int = 5) -> Optional[Decimal]:
+    def _chart_series(self, company_id: int, metric: str) -> List[Tuple[str, Decimal]]:
+        """Ten years of one Screener chart metric as [(yyyy-mm-dd, value)],
+        positive values only, oldest first. Empty list on any failure (the
+        caller treats that as "not available"). One GET per metric."""
         try:
             r = self._s.get(
                 f"{SCREENER_BASE}/api/company/{company_id}/chart/",
@@ -240,23 +243,25 @@ class ScreenerClient:
             )
             datasets = r.json().get("datasets", [])
             if not datasets:
-                return None
-            cutoff = (datetime.now() - timedelta(days=years * 365)).strftime("%Y-%m-%d")
-            values: List[Decimal] = []
+                return []
+            out: List[Tuple[str, Decimal]] = []
             for row in datasets[0].get("values", []):
-                if row[1] is None or str(row[0]) < cutoff:
+                if row[1] is None:
                     continue
                 d = to_decimal(str(row[1]))
                 if d is not None and d > 0:
-                    values.append(d)
-            if not values:
-                return None
-            return (sum(values, Decimal(0)) / Decimal(len(values))).quantize(
-                Decimal("0.01"))
+                    out.append((str(row[0]), d))
+            return out
         except Exception as exc:  # noqa: BLE001
-            logger.debug("chart avg failed id=%s metric=%s: %s",
+            logger.debug("chart series failed id=%s metric=%s: %s",
                          company_id, metric, exc)
-            return None
+            return []
+
+    def _chart_avg(self, company_id: int, metric: str, years: int = 5,
+                   series: Optional[List[Tuple[str, Decimal]]] = None) -> Optional[Decimal]:
+        if series is None:
+            series = self._chart_series(company_id, metric)
+        return series_mean(series, years)
 
     # ---- Weekly ratios (PE / PB / Market Cap) --------------------------------
     def fetch_ratios_only(self, symbol: str) -> Dict[str, Any]:
@@ -308,14 +313,18 @@ class ScreenerClient:
         if ratios.get("pledged_pct") is None:
             ratios["pledged_pct"] = sp.extract_pledging_fallback(html)
 
-        # 5y averages: quick-ratios win; public chart API fills the gap.
-        if ratios.get("pe_5yr_avg") is None or ratios.get("pb_5yr_avg") is None:
-            cid = self._company_id(symbol)
-            if cid is not None:
-                if ratios.get("pe_5yr_avg") is None:
-                    ratios["pe_5yr_avg"] = self._chart_avg(cid, "Price to Earning")
-                if ratios.get("pb_5yr_avg") is None:
-                    ratios["pb_5yr_avg"] = self._chart_avg(cid, "Price to book value")
+        # P/E history: ONE chart request gives the 3Y / 5Y / 10Y medians, the
+        # 10Y low-high range and, when the quick ratios lack it, the 5Y mean.
+        # (Means are the scan's check; medians are what the valuation card
+        # and the extension show — the median ignores bubble years.)
+        cid = self._company_id(symbol)
+        if cid is not None:
+            pe_series = self._chart_series(cid, "Price to Earning")
+            ratios.update(pe_stats(pe_series))
+            if ratios.get("pe_5yr_avg") is None:
+                ratios["pe_5yr_avg"] = series_mean(pe_series, 5)
+            if ratios.get("pb_5yr_avg") is None:
+                ratios["pb_5yr_avg"] = self._chart_avg(cid, "Price to book value")
 
         return {
             "symbol": symbol,
@@ -324,6 +333,52 @@ class ScreenerClient:
             "shareholding": shareholding,
             "total_assets": total_assets,
         }
+
+
+# ---- P/E history statistics (pure; unit-tested) -------------------------------
+PE_STAT_KEYS = ("pe_median_3y", "pe_median_5y", "pe_median_10y", "pe_low_10y", "pe_high_10y")
+
+
+def _window(series: List[Tuple[str, Decimal]], years: int,
+            now: Optional[datetime] = None) -> List[Decimal]:
+    cutoff = ((now or datetime.now()) - timedelta(days=years * 365)).strftime("%Y-%m-%d")
+    return [v for d, v in series if str(d) >= cutoff]
+
+
+def _median(values: List[Decimal]) -> Optional[Decimal]:
+    if not values:
+        return None
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    m = s[mid] if n % 2 else (s[mid - 1] + s[mid]) / Decimal(2)
+    return m.quantize(Decimal("0.01"))
+
+
+def series_mean(series: List[Tuple[str, Decimal]], years: int,
+                now: Optional[datetime] = None) -> Optional[Decimal]:
+    values = _window(series, years, now)
+    if not values:
+        return None
+    return (sum(values, Decimal(0)) / Decimal(len(values))).quantize(Decimal("0.01"))
+
+
+def pe_stats(series: List[Tuple[str, Decimal]],
+             now: Optional[datetime] = None) -> Dict[str, Optional[Decimal]]:
+    """Median P/E over the last 3 / 5 / 10 years plus the 10-year low and
+    high, from Screener's weekly "Price to Earning" series. Every key is
+    present (None when the window is empty) so the rows stay uniform."""
+    out: Dict[str, Optional[Decimal]] = {k: None for k in PE_STAT_KEYS}
+    if not series:
+        return out
+    out["pe_median_3y"] = _median(_window(series, 3, now))
+    out["pe_median_5y"] = _median(_window(series, 5, now))
+    ten = _window(series, 10, now)
+    out["pe_median_10y"] = _median(ten)
+    if ten:
+        out["pe_low_10y"] = min(ten).quantize(Decimal("0.01"))
+        out["pe_high_10y"] = max(ten).quantize(Decimal("0.01"))
+    return out
 
 
 def _json_safe_raw_map(ratios: Dict[str, Any]) -> Dict[str, str]:

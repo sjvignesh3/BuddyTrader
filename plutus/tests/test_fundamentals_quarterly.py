@@ -183,6 +183,19 @@ class TestRowsFromBundle:
         # Older rows: quarterly financials only.
         assert r1["roce"] is None
         assert r1["promoter_holding_pct"] is None
+
+    def test_pe_history_rides_the_newest_row(self):
+        b = self._bundle()
+        b["ratios"].update({"pe_median_3y": Decimal("28.00"), "pe_median_5y": Decimal("30.50"),
+                            "pe_median_10y": Decimal("26.10"), "pe_low_10y": Decimal("14.20"),
+                            "pe_high_10y": Decimal("44.90")})
+        r0, r1 = rows_from_bundle(b)
+        assert r0["pe_median_10y"] == Decimal("26.10") and r0["pe_high_10y"] == Decimal("44.90")
+        assert r0["data_quality_flags"]["pe_history"] == "screener.in:chart"
+        assert r1["pe_median_10y"] is None
+        # No history at all: columns present and None, no flag.
+        r0b = rows_from_bundle(self._bundle())[0]
+        assert r0b["pe_median_3y"] is None and "pe_history" not in r0b["data_quality_flags"]
         assert r1["data_quality_flags"] == {}
 
     def test_uniform_keys_across_rows(self):

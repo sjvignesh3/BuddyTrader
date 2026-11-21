@@ -341,6 +341,26 @@ _FIELDS: list[Field] = [
           precision=(10, 2), unit="ratio",
           formula="mean(daily_close / book_value_per_share) over last 5Y."),
 
+    # P/E history (migration 029): Screener's weekly "Price to Earning"
+    # chart series, one request per quarterly sync. Medians ignore bubble
+    # years; the 10Y range frames where today's P/E sits. Display only —
+    # the fundamental check keeps using pe_5y_avg.
+    Field("pe_median_3y", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(10, 2), unit="ratio",
+          formula="median(weekly P/E) over the last 3Y (screener.in chart API)."),
+    Field("pe_median_5y", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(10, 2), unit="ratio",
+          formula="median(weekly P/E) over the last 5Y (screener.in chart API)."),
+    Field("pe_median_10y", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(10, 2), unit="ratio",
+          formula="median(weekly P/E) over the last 10Y (screener.in chart API)."),
+    Field("pe_low_10y", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(10, 2), unit="ratio",
+          formula="min(weekly P/E) over the last 10Y (positive values only)."),
+    Field("pe_high_10y", "fundamentals", FieldDType.DECIMAL, FieldSource.DERIVED, FieldTier.B_QUARTERLY,
+          precision=(10, 2), unit="ratio",
+          formula="max(weekly P/E) over the last 10Y."),
+
     Field("raw_yf_payload", "fundamentals", FieldDType.JSONB, FieldSource.YF_QUARTERLY, FieldTier.B_QUARTERLY,
           notes="Full quarterly + info blob for future backfills."),
     Field("data_quality_flags", "fundamentals", FieldDType.JSONB, FieldSource.SYSTEM, FieldTier.B_QUARTERLY,

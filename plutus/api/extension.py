@@ -126,6 +126,58 @@ def default_thresholds() -> Dict[str, Any]:
         },
         "ath_fall_pct_by_cap": dict(ATH_FALL_RULE),
         "pointers": dict(POINTER_RULES),
+        "valuation": dict(VALUATION_BARS),
+    }
+
+
+# Display-only valuation bars (not scan rules): where the card turns a value
+# green / amber. The scan's thresholds stay in strategy_configs.
+VALUATION_BARS = {
+    "ps_max": Decimal("3"),              # market cap / TTM revenue
+    "mcap_ebitda_max": Decimal("15"),    # market cap / TTM EBITDA (EV proxy: net debt not stored)
+    "pe_vs_median_good": Decimal("0.90"),  # current P/E <= 90 % of the median -> green
+    "pe_vs_median_warn": Decimal("1.10"),  # <= 110 % -> amber, above -> red
+}
+
+
+def _dec(v: Any) -> Optional[Decimal]:
+    if v is None or v == "":
+        return None
+    try:
+        return v if isinstance(v, Decimal) else Decimal(str(v))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ratio(a: Optional[Decimal], b: Optional[Decimal], places: str = "0.01") -> Optional[Decimal]:
+    if a is None or b is None or b == 0:
+        return None
+    return (a / b).quantize(Decimal(places))
+
+
+def derived_valuation(snap: Optional[Dict[str, Any]],
+                      fund: Optional[Dict[str, Any]]) -> Dict[str, Optional[Decimal]]:
+    """Ratios the card shows that are NOT stored: built here, with Decimal,
+    from the snapshot (market cap, P/E, revenue / EBITDA TTM) and the latest
+    fundamentals row (P/E medians, 10Y range). None when an input is missing.
+    Nothing here feeds a score."""
+    s = snap or {}
+    f = fund or {}
+    mcap = _dec(s.get("market_cap"))
+    pe = _dec(s.get("pe_current"))
+    med3, med5, med10 = _dec(f.get("pe_median_3y")), _dec(f.get("pe_median_5y")), _dec(f.get("pe_median_10y"))
+    low, high = _dec(f.get("pe_low_10y")), _dec(f.get("pe_high_10y"))
+    pos: Optional[Decimal] = None
+    if pe is not None and low is not None and high is not None and high > low:
+        pos = max(Decimal(0), min(Decimal(100), ((pe - low) / (high - low) * 100))).quantize(Decimal("0.1"))
+    return {
+        "ps": _ratio(mcap, _dec(s.get("revenue_ttm"))),
+        "mcap_to_ebitda": _ratio(mcap, _dec(s.get("ebitda_ttm")), "0.1"),
+        "pe_vs_median_3y": _ratio(pe, med3),
+        "pe_vs_median_5y": _ratio(pe, med5),
+        "pe_vs_median_10y": _ratio(pe, med10),
+        "pe_range_position_pct": pos,
+        "pb_vs_5y_avg": _ratio(_dec(s.get("pb_current")), _dec(f.get("pb_5y_avg"))),
     }
 
 
@@ -347,6 +399,7 @@ def register_extension_routes(app: Any, cli: Any) -> None:
             "summary": stock_entry(stock, snap, results),
             "snapshot": snap,
             "fundamentals": fund,
+            "derived": derived_valuation(snap, fund),
             "scan_results": results,
             "thresholds": default_thresholds(),
         })

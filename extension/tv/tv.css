@@ -345,6 +345,19 @@ body.px-switching div[data-dialog-name="symbol-search"] { opacity: 0 !important;
 .px-gauge i { position: absolute; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--px-brand, #14b8a6); transform: translateX(-7px); }
 .px-gauge-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--px-mute); }
 
+/* --- valuation box (shared card) --- */
+.px-val-meds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
+.px-val-med { border: 1px solid var(--px-line, #363a45); border-radius: 8px; padding: 5px 7px; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.px-val-k { font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--px-mute); }
+.px-val-v { font-weight: 800; font-size: 13px; font-variant-numeric: tabular-nums; }
+.px-val-r { font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.px-val-med.px-val-good { border-color: rgba(38,166,154,.5); } .px-val-med.px-val-good .px-val-r { color: #5eead4; }
+.px-val-med.px-val-warn { border-color: rgba(245,158,11,.5); } .px-val-med.px-val-warn .px-val-r { color: #fcd34d; }
+.px-val-med.px-val-bad { border-color: rgba(242,54,69,.5); } .px-val-med.px-val-bad .px-val-r { color: #fca5a5; }
+.px-range { position: relative; height: 8px; border-radius: 999px; background: linear-gradient(90deg, rgba(34,197,94,.55), rgba(245,158,11,.5) 50%, rgba(239,68,68,.5)); margin: 6px 0 3px; }
+.px-range i { position: absolute; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--px-brand, #14b8a6); transform: translateX(-7px); }
+.px-val-note { font-size: 10px; margin-top: 4px; }
+
 /* --- row hover card (F17) --- */
 #px-hover { position: fixed; z-index: 2147483100; background: var(--px-bg); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 10px; box-shadow: 0 10px 32px rgba(0,0,0,.55); padding: 9px 10px; font: 11.5px/1.35 -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
 #px-hover.px-collapsed { display: none; }

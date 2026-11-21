@@ -89,7 +89,9 @@
           const checks = Object.entries(e.checks || {}).map(([id, passed]) => ({ id, label: BOOT.check_labels[id] || id, passed, detail: passed == null ? 'not available' : (BOOT.check_labels[id] || id) + ' · ' + (passed ? 'ok' : 'miss') }));
           return { symbol: e.symbol, plain: e.plain, market: e.market, snapshot_date: BOOT.snapshot_date, in_universe: true,
             summary: Object.assign({}, e), snapshot: { close: e.close, dma_200: String(Number(e.close) / (1 - Number(e.below_200dma_pct) / 100)), below_200dma_pct: e.below_200dma_pct, fall_from_ath_pct: e.fall_from_ath_pct, ath: String(Number(e.close) / (1 - Number(e.fall_from_ath_pct) / 100)), high_52w: String(Number(e.close) / (1 + Number(e.distance_from_52w_high_pct) / 100)), low_52w: String(Number(e.close) * 0.8), distance_from_52w_high_pct: e.distance_from_52w_high_pct, has_valid_20pct_rally: true, last_rally_pct: '23.4', days_since_last_rally: 41, pe_current: '28.4', pb_current: '6.1' },
-            fundamentals: { quarter_label: 'Sep 2026' }, scan_results: [{ strategy_id: 'fundamental_screener', status: 'PASS', metrics_snapshot: { points: e.funda_points, points_max: 11, unknown: checks.filter((c) => c.passed == null).length, checks } }], thresholds: BOOT.thresholds };
+            fundamentals: { quarter_label: 'Sep 2026', pe_5y_avg: '27.9', pb_5y_avg: '8.1', pe_median_3y: '26.4', pe_median_5y: '27.1', pe_median_10y: '22.8', pe_low_10y: '14.9', pe_high_10y: '41.2' },
+            derived: { ps: '4.80', mcap_to_ebitda: '17.1', pe_vs_median_3y: '1.08', pe_vs_median_5y: '1.05', pe_vs_median_10y: '1.25', pe_range_position_pct: '51.3', pb_vs_5y_avg: '0.75' },
+            scan_results: [{ strategy_id: 'fundamental_screener', status: 'PASS', metrics_snapshot: { points: e.funda_points, points_max: 11, unknown: checks.filter((c) => c.passed == null).length, checks } }], thresholds: BOOT.thresholds };
         }
         case 'trades.forSymbol': {
           const p = msg.symbol.replace(/\.(NS|BO)$/, '');
