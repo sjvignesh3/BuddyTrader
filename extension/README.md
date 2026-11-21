@@ -12,6 +12,8 @@ extension/
 │   ├── settings.js          one settings blob in chrome.storage.local with defaults
 │   ├── ui.js                toast / dialog / DOM helpers, brand mark + the message bridge
 │   ├── panel_logic.js       pure list logic: markets, US cap tiers, sectors, sort comparator (Node-tested)
+│   ├── card.js              the Plutus stock card (Screener overlay + TradingView drawer), thresholds, lender bars
+│   ├── tvscan.js            TradingView scanner client for live quotes: batching, 10 s cache, back-off (Node-tested)
 │   └── sizer.js             position sizer: port of lib/sizing.ts + the journal cap rule, and its dialog
 ├── tv/                      TradingView panel (tv_content.js + tv.css)
 ├── screener/                Screener.in overlays (screener_content.js + screener.css)
@@ -37,7 +39,7 @@ extension/
 
 | Piece | Where |
 |---|---|
-| Read bundles | `GET /api/extension/bootstrap`, `GET /api/extension/stock/{symbol}`, `GET /api/strategy_configs` (`plutus/api/extension.py`) |
+| Read bundles | `GET /api/extension/bootstrap` (v2: per-stock `checks` + `check_labels` for the filter chips), `GET /api/extension/stock/{symbol}`, `GET /api/strategy_configs` (`plutus/api/extension.py`) |
 | Custom watchlists | migration `020_watchlists.sql` + `/api/watchlists` (`plutus/api/watchlists.py`, gated by `X-Plutus-Auth`) |
 | Notes / positions / opportunities | existing `/api/journal/*` |
 | PlayArea membership | existing `/api/universe/pools/PlayArea/members` |
@@ -65,12 +67,22 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
   the region. US rows get a Mega / Large / Mid / Small tier from market cap (display only; sizing is unchanged).
 * **Sector views**: a sector dropdown next to the filter narrows the current list (India groups Banks / NBFC
   by `sector_group`, else `sector`), and every sector of the region is also a virtual list in the selector.
-* **Columns**: each row shows % from the 200 DMA, % off the 52-week high, % off the ATH and the `n/11` score.
-  Click a column header to sort, click again to flip. Chips underneath: technical signal (BUY / OPP / RALLY),
-  PRIME, HELD qty. Cap slicer with counts.
+* **Columns**: Last · Chg% · 200D · 52wH · ATH · `n/11`. Click a header to sort, click again to flip. Chips
+  underneath: technical signal (BUY / OPP / RALLY), PRIME, HELD qty. Cap slicer with counts.
+* **Live prices** (`● live` in the header, on by default): Last and Chg% come from TradingView's own scanner
+  feed for the rows on screen, every 15 / 30 / 60 s while the tab is visible; 200D / 52wH / ATH move with the
+  live price against the **Plutus** levels. The feed is unofficial, so on any error it backs off, shows
+  `live ⏸` and the rows fall back to the nightly close. Display only: nothing live is written to Plutus or
+  used in a score. Quick sorts in the drawer: top gainers, top losers, deepest below 200 DMA.
+* **Hover a row** for the Plutus card in brief: the 11 checks with their values, signal, distances, held line.
 * **Drawer** (`☰` or `Alt+D`, slides out beside the panel) that follows the selected stock:
-  *Filters* (sort, region, watchlist New / Rename / Delete, refresh), *Stock* (summary; the full 11-check card
-  arrives in v0.4), *Trades* (open lots), *Notes* (the full dated timeline: add with `Ctrl+Enter`, edit, delete).
+  *Filters* (sort, region, **per-rule filter chips**, live-price settings, watchlist New / Rename / Delete),
+  *Stock* (the same Plutus card Screener shows), *Trades* (open lots with live P&L, closed trades with realised
+  P&L and days held, opportunities, sizing plans), *Notes* (the full dated timeline: add with `Ctrl+Enter`,
+  edit, delete).
+* **Fundamental filter chips**: each check is a chip with three states — off, *must pass* (solid), *must not
+  fail* (dashed, n/a allowed). `⭐ All pass` keeps only 11/11 stocks. Unlike the HIFY score, a missing value
+  never counts as a pass; stocks with no scan yet are hidden while a chip is on.
 * Hot-keys on the active stock: `N` dated note, `O` opportunity, `B` bookmark to a watchlist, `A` PlayArea
   add/remove, `S` Screener, `P` Plutus stock page.
 * Focus mode hides TradingView upsell dialogs. Data-as-of stamp turns amber when the snapshot is stale.
@@ -135,3 +147,6 @@ universe (India + US) for eyeballing layout changes without TradingView:
 * TradingView selectors live in one object (`TV` at the top of `tv/tv_content.js`); Screener section ids are
   the same ones `plutus/fundamentals/screener_page.py` parses.
 * No money math in the extension beyond display formatting; numbers arrive as strings from the API.
+* Live quotes (`shared/tvscan.js`) are display only and never leave the browser; the Plutus levels they are
+  compared against (200 DMA, 52-week high, ATH) always come from the nightly snapshot.
+* Journal calls name the market: a US symbol sends `market=US`; "all open lots" merges IN and US.

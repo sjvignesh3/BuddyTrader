@@ -35,7 +35,7 @@ from plutus.markets import US, market_of, us_exchange
 
 logger = logging.getLogger(__name__)
 
-BOOTSTRAP_VERSION = 1
+BOOTSTRAP_VERSION = 2   # 2: per-stock `checks` + top-level `check_labels`
 
 # Same as frontend_v2/src/lib/rows.ts ATH_FALL_RULE — Large > 20 · Mid > 30 ·
 # Small & Micro > 40 (% fall from ATH before a stock counts as beaten down).
@@ -156,6 +156,40 @@ def funda_points(results: List[Dict[str, Any]]) -> Optional[int]:
     return None
 
 
+def funda_checks(results: List[Dict[str, Any]]) -> Optional[Dict[str, Optional[bool]]]:
+    """``{check_id: True | False | None}`` from the fundamental result's
+    ``metrics_snapshot.checks`` — the per-rule filter chips in the panel.
+    None (n/a) is kept as None so the client never counts it as a pass."""
+    for r in results:
+        if r.get("strategy_id") == FUNDAMENTAL_STRATEGY:
+            ms = r.get("metrics_snapshot") or {}
+            checks = ms.get("checks") or []
+            out: Dict[str, Optional[bool]] = {}
+            for c in checks:
+                cid = c.get("id")
+                if not cid:
+                    continue
+                p = c.get("passed")
+                out[str(cid)] = p if isinstance(p, bool) else None
+            return out
+    return None
+
+
+def check_labels(results_by_symbol: Dict[str, List[Dict[str, Any]]]) -> Dict[str, str]:
+    """``{check_id: label}`` across every stock's latest fundamental result
+    (first label seen wins) so the panel can name its filter chips."""
+    labels: Dict[str, str] = {}
+    for results in results_by_symbol.values():
+        for r in results:
+            if r.get("strategy_id") != FUNDAMENTAL_STRATEGY:
+                continue
+            for c in ((r.get("metrics_snapshot") or {}).get("checks") or []):
+                cid = c.get("id")
+                if cid and str(cid) not in labels and c.get("label"):
+                    labels[str(cid)] = str(c["label"])
+    return labels
+
+
 def stock_entry(stock: Dict[str, Any], snap: Optional[Dict[str, Any]],
                 results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """One compact per-stock record for the bootstrap payload."""
@@ -177,6 +211,7 @@ def stock_entry(stock: Dict[str, Any], snap: Optional[Dict[str, Any]],
         "cap": cap,
         "best_status": best_technical_status(results),
         "funda_points": funda_points(results),
+        "checks": funda_checks(results),
     }
     for k in SNAPSHOT_KEYS:
         if k in snap:
@@ -267,6 +302,7 @@ def register_extension_routes(app: Any, cli: Any) -> None:
                        "market": p.get("market") or "IN",
                        "count": counts.get(p.get("code"), 0)} for p in pools],
             "stocks": entries,
+            "check_labels": check_labels(results),
             "thresholds": default_thresholds(),
             "strategy_configs": _strategy_config_rows(),
         })

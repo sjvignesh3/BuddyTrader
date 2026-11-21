@@ -27,8 +27,8 @@
 
 #px-tv-panel {
   box-sizing: border-box;
-  position: fixed; top: 50px; right: 48px; width: 340px; height: min(80vh, 800px);
-  min-width: 250px; min-height: 260px; max-width: 720px; max-height: calc(100vh - 60px);
+  position: fixed; top: 50px; right: 48px; width: 400px; height: min(80vh, 800px);
+  min-width: 390px; min-height: 260px; max-width: 720px; max-height: calc(100vh - 60px);
   background: var(--px-bg); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 10px;
   box-shadow: 0 10px 32px rgba(0,0,0,.5); z-index: 2147482999; display: flex; flex-direction: column;
   font: 12px/1.35 -apple-system, "Segoe UI", Roboto, sans-serif; resize: both; overflow: hidden;
@@ -96,9 +96,20 @@
 .px-col.px-on { color: #fff; }
 .px-col-dir { font-size: 8px; }
 .px-col-sym { flex: 1 1 auto; text-align: left; justify-content: flex-start; padding-left: 24px; }
-.px-col-num { flex: 0 0 46px; justify-content: flex-end; text-align: right; }
-.px-col-score { flex: 0 0 36px; justify-content: flex-end; text-align: right; }
-.px-cell { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--px-text); white-space: nowrap; }
+.px-col-num { flex: 0 0 42px; justify-content: flex-end; text-align: right; }
+.px-col-last { flex-basis: 52px; }
+.px-col-score { flex: 0 0 34px; justify-content: flex-end; text-align: right; }
+.px-cell { font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--px-text); white-space: nowrap; }
+.px-cell.px-live-cell { color: #fff; font-weight: 700; }
+.px-item { transition: background-color .6s ease; }
+.px-item.px-flash-up { background-color: rgba(38,166,154,.28); transition: none; }
+.px-item.px-flash-down { background-color: rgba(242,54,69,.26); transition: none; }
+.px-live { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--px-border); color: var(--px-mute); cursor: pointer; white-space: nowrap; }
+.px-live.px-live-on { color: #5eead4; border-color: rgba(94,234,212,.4); }
+.px-live.px-live-paused { color: var(--px-amber); border-color: rgba(245,158,11,.5); }
+.px-live.px-live-off { opacity: .6; }
+.px-icon-btn.px-dot { position: relative; }
+.px-icon-btn.px-dot::after { content: ''; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--px-gold); }
 .px-cell.px-up { color: #5eead4; }
 .px-cell.px-down { color: #fca5a5; }
 .px-cell.px-strong { color: #5eead4; }
@@ -254,6 +265,57 @@ body.px-switching div[data-dialog-name="symbol-search"] { opacity: 0 !important;
 .px-note-date { color: var(--px-gold); font-weight: 700; font-size: 11px; }
 .px-note-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; }
 .px-muted.px-down { color: #fca5a5; }
+.px-check-inline { display: inline-flex; align-items: center; gap: 5px; color: var(--px-text); font-size: 11.5px; cursor: pointer; }
+
+/* --- fundamental filter chips (drawer · Filters) --- */
+.px-fchips { display: flex; flex-wrap: wrap; gap: 4px; }
+.px-fchip { background: var(--px-bg2); color: var(--px-mute); border: 1px solid var(--px-border); border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 700; cursor: pointer; }
+.px-fchip:hover { color: var(--px-text); border-color: var(--px-accent); }
+.px-fchip.px-on { background: var(--px-accent2); border-color: #0d9488; color: #fff; }
+.px-fchip.px-soft { border-color: #0d9488; color: #5eead4; border-style: dashed; }
+.px-fchip-star.px-on { background: var(--px-gold); border-color: var(--px-gold); color: #1c1917; }
+
+/* --- the Plutus card inside the drawer (shared markup with Screener, dark palette) --- */
+#px-tv-drawer { --px-line: var(--px-border); --px-panel: var(--px-bg2); --px-ink: var(--px-text); --px-brand: #14b8a6; }
+#px-tv-drawer #px-card { border: 1px solid var(--px-line); border-radius: 10px; background: var(--px-panel); color: var(--px-ink); font-size: 12px; overflow: hidden; }
+#px-tv-drawer .px-card-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--px-line); flex-wrap: wrap; }
+#px-tv-drawer .px-card-title { font-weight: 800; display: inline-flex; align-items: center; gap: 6px; color: #fff; }
+#px-tv-drawer .px-card-meta { color: var(--px-mute); font-size: 10.5px; }
+#px-tv-drawer .px-card-spacer { flex: 1; }
+#px-tv-drawer .px-card-actions { display: flex; gap: 4px; flex-wrap: wrap; width: 100%; }
+#px-tv-drawer .px-card-actions .px-btn { padding: 3px 8px; font-size: 11px; }
+#px-tv-drawer .px-card-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; }
+#px-tv-drawer .px-box { border: 1px solid var(--px-line); border-radius: 8px; padding: 7px 9px; background: var(--px-bg); }
+#px-tv-drawer .px-box-title { font-size: 9.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--px-mute); font-weight: 800; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
+#px-tv-drawer .px-card-body .px-kv { border-bottom: 0; padding: 2px 0; }
+#px-tv-drawer .px-card-body .px-kv span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; }
+#px-tv-drawer .px-chip-cap { background: rgba(56,189,248,.18); color: #7dd3fc; }
+#px-tv-drawer .px-chip-none { background: rgba(134,137,147,.18); color: var(--px-mute); }
+#px-tv-drawer .px-chip-buy { background: rgba(38,166,154,.22); color: #5eead4; }
+#px-tv-drawer .px-chip-opp { background: rgba(245,158,11,.22); color: #fcd34d; }
+#px-tv-drawer .px-chip-rally { background: rgba(167,139,250,.2); color: #c4b5fd; }
+#px-tv-drawer .px-score { font-size: 20px; font-weight: 800; line-height: 1; color: #fff; }
+#px-tv-drawer .px-score small { font-size: 10.5px; color: var(--px-mute); font-weight: 600; }
+.px-checks { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; margin-top: 6px; }
+.px-check { display: flex; align-items: flex-start; gap: 5px; font-size: 11px; line-height: 1.3; cursor: default; }
+.px-check b { font-weight: 800; width: 12px; flex: 0 0 12px; }
+.px-check.px-pass b { color: #5eead4; } .px-check.px-fail b { color: #fca5a5; } .px-check.px-na b { color: var(--px-mute); }
+.px-check.px-na { color: var(--px-mute); }
+.px-gauge { position: relative; height: 8px; border-radius: 999px; background: linear-gradient(90deg, rgba(239,68,68,.5), rgba(245,158,11,.5) 45%, rgba(34,197,94,.55)); margin: 8px 0 4px; }
+.px-gauge i { position: absolute; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--px-brand, #14b8a6); transform: translateX(-7px); }
+.px-gauge-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--px-mute); }
+
+/* --- row hover card (F17) --- */
+#px-hover { position: fixed; z-index: 2147483100; background: var(--px-bg); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 10px; box-shadow: 0 10px 32px rgba(0,0,0,.55); padding: 9px 10px; font: 11.5px/1.35 -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+#px-hover.px-collapsed { display: none; }
+#px-hover * { box-sizing: border-box; }
+.px-hover-head { display: flex; align-items: center; gap: 6px; }
+.px-hover-head b { color: #fff; font-size: 13px; }
+.px-hover-tech { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--px-mute); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.px-hover-checks { display: grid; grid-template-columns: 1fr; gap: 2px; border-top: 1px solid var(--px-border); padding-top: 6px; }
+.px-hover-checks .px-check { font-size: 11px; }
+.px-hover-checks .px-check > span:first-of-type { flex: 1; }
+.px-hover-detail { color: var(--px-mute); font-size: 10px; margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48%; }
 
 /* --- expanded panel (⤢ / Alt+E) --- */
 #px-tv-panel.px-wide { max-width: 720px; }

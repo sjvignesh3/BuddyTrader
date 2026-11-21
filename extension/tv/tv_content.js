@@ -15,7 +15,7 @@
   if (window.__plutusTvLoaded) { if (typeof window.__plutusTvReload === 'function') window.__plutusTvReload(); return; }
   window.__plutusTvLoaded = true;
 
-  const S = window.PlutusSymbols, U = window.PlutusUI, SET = window.PlutusSettings, L = window.PlutusPanelLogic;
+  const S = window.PlutusSymbols, U = window.PlutusUI, SET = window.PlutusSettings, L = window.PlutusPanelLogic, C = window.PlutusCard;
   const el = U.el, esc = U.esc, num = U.num;
 
   // ---- TradingView selectors (one place to fix after a TradingView redeploy) ----
@@ -63,9 +63,16 @@
     loading: false,
     error: null,
     notes: { symbol: null, items: [], loading: false, error: null, editing: null },
+    live: new Map(),            // "TCS.NS" -> {close, chgPct, chg, at, stale?}  (F7, display only)
+    liveTimer: null,
+    liveState: 'off',           // off | live | paused
+    chips: {},                  // check id -> 'pass' | 'nofail'  (F8)
+    allPass: false,
+    stockCache: new Map(),      // "TCS.NS" -> {data|null, error, at}  for the Stock tab / hover card
+    trades: { symbol: null, data: null, loading: false, error: null },
   };
-  let panel, toggleBtn, listEl, headerEl, selectEl, slicerEl, regionEl, filterInput, sectorSelect, asofEl, bannerEl, addRow, addInput, hintEl, focusBtn, linkBtn, heldEl, wideBtn, drawerBtn;
-  let drawer, drawerBody, drawerTabsEl, drawerTitleEl;
+  let panel, toggleBtn, listEl, headerEl, selectEl, slicerEl, regionEl, filterInput, sectorSelect, asofEl, liveEl, bannerEl, addRow, addInput, hintEl, focusBtn, linkBtn, heldEl, wideBtn, drawerBtn;
+  let drawer, drawerBody, drawerTabsEl, drawerTitleEl, hoverEl;
 
   // =============================================================================
   // Boot
@@ -89,8 +96,10 @@
       st.settings = s;
       if (s.tvSort && (s.tvSort !== st.sort.key || (s.tvSortDir && s.tvSortDir !== st.sort.dir))) st.sort = { key: s.tvSort, dir: s.tvSortDir || (L.SORT_KEYS[s.tvSort] || L.SORT_KEYS.default).dir };
       if (regionChanged) setRegion(s.tvRegion === 'US' ? 'US' : 'IN', { silent: true });
-      applyFocusMode(); renderAll();
+      applyFocusMode(); renderAll(); scheduleLive(true);
     });
+    document.addEventListener('visibilitychange', () => scheduleLive(true));
+    scheduleLive(true);
     if (U.contextAlive()) {
       chrome.runtime.onMessage.addListener((m) => {
         if (!m) return;
@@ -189,9 +198,21 @@
     return st.active && st.active.kind === 'wl' ? st.watchlists.find((x) => String(x.id) === String(st.active.id)) : null;
   }
 
+  /**
+   * One row. Nightly numbers come from the bootstrap; when a live quote is
+   * known the distances are recomputed against the Plutus levels (200 DMA,
+   * 52-week high, ATH), so the levels stay Plutus' and only the price moves.
+   */
   function rowFor(symbol) {
     const e = st.stocks.get(symbol);
     const plain = S.toPlain(symbol);
+    const q = st.live.get(symbol) || null;
+    const close = e ? num(e.close) : null;
+    const last = q ? q.close : close;
+    const dma = e ? num(e.dma_200) : null, hi52 = e ? num(e.high_52w) : null, ath = e ? num(e.ath) : null;
+    const below = q && dma ? (dma - q.close) / dma * 100 : (e ? num(e.below_200dma_pct) : null);
+    const off52 = q && hi52 ? (q.close / hi52 - 1) * 100 : (e ? num(e.distance_from_52w_high_pct) : null);
+    const athFall = q && ath ? (1 - q.close / ath) * 100 : (e ? num(e.fall_from_ath_pct) : null);
     return {
       symbol, plain,
       entry: e || null,
@@ -201,15 +222,31 @@
       sector: L.sectorOf(e),
       status: e ? e.best_status : null,
       points: e ? e.funda_points : null,
-      below: e ? num(e.below_200dma_pct) : null,
-      athFall: e ? num(e.fall_from_ath_pct) : null,
-      off52: e ? num(e.distance_from_52w_high_pct) : null,
-      chgPct: e ? num(e.price_change_1d_pct) : null,
+      checks: e ? e.checks || null : null,
+      below, athFall, off52,
+      chgPct: q && q.chgPct != null ? q.chgPct : (e ? num(e.price_change_1d_pct) : null),
       mcap: e ? num(e.market_cap) : null,
-      close: e ? num(e.close) : null,
+      close, last,
+      live: !!q && !q.stale,
       held: st.positions.get(plain) || null,
     };
   }
+
+  /** Per-rule chip filter (F8): 'pass' needs true, 'nofail' allows n/a; n/a never counts as a pass. */
+  function passesChips(r) {
+    const ids = Object.keys(st.chips);
+    if (st.allPass) {
+      if (!r.checks) return false;
+      return Object.values(r.checks).length > 0 && Object.values(r.checks).every((v) => v === true);
+    }
+    if (!ids.length) return true;
+    if (!r.checks) return false;
+    return ids.every((id) => {
+      const v = r.checks[id];
+      return st.chips[id] === 'pass' ? v === true : v !== false;
+    });
+  }
+  function chipsActive() { return st.allPass || Object.keys(st.chips).length > 0; }
 
   function conviction(r) {
     const sig = r.status ? (SIGNAL_WEIGHT[r.status] || 0) : 0;
@@ -226,6 +263,7 @@
     if (st.sectorFilter !== 'All') rows = rows.filter((r) => st.sectorFilter === '__none__' ? !r.sector : r.sector === st.sectorFilter);
     const f = st.filter.trim().toUpperCase();
     if (f) rows = rows.filter((r) => r.plain.includes(f) || (r.name || '').toUpperCase().includes(f));
+    if (chipsActive()) rows = rows.filter(passesChips);
     rows.sort(L.comparator(st.sort.key, st.sort.dir));
     return rows;
   }
@@ -240,12 +278,14 @@
     panel = el('div', { id: 'px-tv-panel' });
     // header
     asofEl = el('span', { class: 'px-asof' });
+    liveEl = el('span', { class: 'px-live', style: 'display:none', title: '', onclick: () => SET.save({ tvLivePrices: !st.settings.tvLivePrices }) });
     focusBtn = el('button', { class: 'px-icon-btn', title: 'Focus mode: hide TradingView upsell dialogs', text: '◐', onclick: () => SET.save({ tvFocusMode: !st.settings.tvFocusMode }) });
     linkBtn = el('button', { class: 'px-icon-btn', title: 'Link tabs: an open Screener company tab follows this chart, and the chart follows Screener', text: '⇄', onclick: () => SET.save({ linkTabs: !st.settings.linkTabs }) });
     drawerBtn = el('button', { class: 'px-icon-btn', title: 'Drawer: filters, stock, trades, notes (Alt+D)', text: '☰', onclick: () => toggleDrawer() });
     const header = el('div', { class: 'px-header' }, [
       el('span', { class: 'px-title' }, [U.logo(18), 'Plutus']),
       asofEl,
+      liveEl,
       el('span', { class: 'px-header-spacer' }),
       drawerBtn,
       el('button', { class: 'px-icon-btn', title: 'Size a position for the active stock (Z)', text: '⚖', onclick: () => sizerDialog(currentSymbol()) }),
@@ -301,6 +341,9 @@
 
     document.body.appendChild(panel);
     buildDrawer();
+    hoverEl = el('div', { id: 'px-hover', class: 'px-collapsed' });
+    document.body.appendChild(hoverEl);
+    listEl.addEventListener('mouseleave', hideHover);
     restoreLayout();
     panel.addEventListener('mouseup', () => { saveLayout(); positionDrawer(); });
     window.addEventListener('resize', positionDrawer);
@@ -330,6 +373,60 @@
     asofEl.textContent = 'as of ' + d.slice(5).replace('-', '/');
     asofEl.title = 'Plutus snapshot date ' + d + (st.boot._cached ? ' (cached)' : '');
     asofEl.classList.toggle('px-stale', age > 4);
+    renderLiveBadge();
+  }
+  function renderLiveBadge() {
+    if (!liveEl) return;
+    const on = !!(st.settings && st.settings.tvLivePrices);
+    liveEl.style.display = st.boot ? '' : 'none';
+    liveEl.className = 'px-live ' + (!on ? 'px-live-off' : st.liveState === 'paused' ? 'px-live-paused' : st.liveState === 'live' ? 'px-live-on' : '');
+    liveEl.textContent = !on ? 'live off' : st.liveState === 'paused' ? 'live ⏸' : st.liveState === 'live' ? '● live' : '○ live';
+    liveEl.title = !on ? 'Live prices are off (click to turn on)'
+      : st.liveState === 'paused' ? 'TradingView quotes paused after an error — rows show the nightly close until they come back (click to turn off)'
+      : 'Live Last / Chg% from TradingView, every ' + (st.settings.tvLiveIntervalSec || 15) + ' s while this tab is visible. Display only (click to turn off)';
+  }
+
+  // ---- live prices (F7): poll the visible rows only ---------------------------
+  function scheduleLive(now) {
+    clearTimeout(st.liveTimer);
+    const on = st.settings && st.settings.tvLivePrices && !panel.classList.contains('px-collapsed') && document.visibilityState === 'visible';
+    if (!on) { if (st.liveState !== 'off') { st.liveState = 'off'; renderLiveBadge(); } return; }
+    const ms = Math.max(10, Number(st.settings.tvLiveIntervalSec) || 15) * 1000;
+    st.liveTimer = setTimeout(pollLive, now ? 50 : ms);
+  }
+  async function pollLive() {
+    if (!st.boot || !listEl) { scheduleLive(); return; }
+    const symbols = Array.from(listEl.querySelectorAll('.px-item')).map((n) => n.getAttribute('data-symbol')).filter(Boolean);
+    if (st.activeSymbol && !symbols.includes(st.activeSymbol)) symbols.push(st.activeSymbol);
+    if (!symbols.length) { scheduleLive(); return; }
+    try {
+      const r = await U.send({ type: 'live.quotes', symbols }, 20000);
+      if (r.off) { st.liveState = 'off'; renderLiveBadge(); return; }
+      const changed = [];
+      Object.keys(r.quotes || {}).forEach((sym) => {
+        const q = r.quotes[sym], prev = st.live.get(sym);
+        st.live.set(sym, q);
+        if (!prev || prev.close !== q.close) changed.push([sym, prev ? Math.sign(q.close - prev.close) : 0]);
+      });
+      st.liveState = r.degraded ? 'paused' : 'live';
+      renderLiveBadge();
+      if (changed.length) applyLive(changed);
+    } catch (e) {
+      st.liveState = 'paused'; renderLiveBadge();
+    }
+    scheduleLive();
+  }
+  /** Patch the cells in place; a live-dependent sort re-renders the whole list instead. */
+  function applyLive(changed) {
+    const liveSort = st.sort.key === 'chg' || st.sort.key === 'dma' || st.sort.key === 'high52' || st.sort.key === 'ath';
+    if (liveSort) { renderList(); renderHeld(); return; }
+    changed.forEach(([sym, dir]) => {
+      const item = listEl.querySelector('.px-item[data-symbol="' + CSS.escape(sym) + '"]');
+      if (!item) return;
+      fillCells(item, rowFor(sym));
+      if (dir) { item.classList.remove('px-flash-up', 'px-flash-down'); void item.offsetWidth; item.classList.add(dir > 0 ? 'px-flash-up' : 'px-flash-down'); }
+    });
+    renderHeld();
   }
 
   // ---- region (F1) ------------------------------------------------------------
@@ -408,6 +505,8 @@
   // ---- sortable column header (F3) -------------------------------------------
   const COLS = [
     ['default', 'Symbol', 'A → Z', 'px-col-sym'],
+    ['mcap', 'Last', 'market cap (the Last column shows the price)', 'px-col-num px-col-last'],
+    ['chg', 'Chg%', "today's change %", 'px-col-num'],
     ['dma', '200D', '% from the 200 DMA (− = below)', 'px-col-num'],
     ['high52', '52wH', '% off the 52-week high', 'px-col-num'],
     ['ath', 'ATH', '% off the all-time high', 'px-col-num'],
@@ -450,18 +549,17 @@
         if (r.held) chips.push(el('span', { class: 'px-chip px-chip-held', text: 'HELD ' + r.held.qty, title: 'Open position: ' + r.held.qty + ' × ' + (r.market === 'US' ? '$' : '₹') + U.fmt(r.held.invested / Math.max(1, r.held.qty), 0) }));
       }
       const capL = r.cap ? (CAP_LETTER[r.cap] || 'U') : 'U';
-      // 200D is stored as "% below" (positive = below the DMA); show it signed like the chart reads it.
-      const dmaDist = r.below == null ? null : -r.below;
-      const numCell = (v, cls, title) => el('span', { class: 'px-cell px-col-num ' + (v == null ? '' : v < 0 ? 'px-down' : v > 0 ? 'px-up' : '') + (cls || ''), text: pct(v), title: title || '' });
       const item = el('div', { class: 'px-item' + (r.symbol === st.activeSymbol ? ' px-active' : '') + (r.entry ? '' : ' px-missing'), 'data-symbol': r.symbol, title: r.entry ? '' : 'Not in the Plutus universe' }, [
         el('span', { class: 'px-chip px-chip-cap-' + capL, text: capL, title: r.cap || 'Cap unknown' }),
         el('div', { class: 'px-item-main' }, [
           el('div', { class: 'px-sym', text: r.plain }),
           showChips && chips.length ? el('div', { class: 'px-chips' }, chips) : (r.name ? el('div', { class: 'px-name', text: r.name }) : null),
         ]),
-        numCell(dmaDist, '', 'Distance from the 200 DMA'),
-        numCell(r.off52 == null ? null : -Math.abs(r.off52), '', '% off the 52-week high'),
-        numCell(r.athFall == null ? null : -Math.abs(r.athFall), '', '% off the all-time high'),
+        el('span', { class: 'px-cell px-col-num px-col-last', 'data-cell': 'last' }),
+        el('span', { class: 'px-cell px-col-num', 'data-cell': 'chg' }),
+        el('span', { class: 'px-cell px-col-num', 'data-cell': 'dma' }),
+        el('span', { class: 'px-cell px-col-num', 'data-cell': 'h52' }),
+        el('span', { class: 'px-cell px-col-num', 'data-cell': 'ath' }),
         el('span', { class: 'px-cell px-col-score ' + (r.points == null ? 'px-muted' : r.points >= 8 ? 'px-strong' : r.points <= 5 ? 'px-weak' : ''), text: r.points == null ? '—' : r.points + '/11', title: 'Fundamental score' }),
         el('div', { class: 'px-actions' }, [
           el('button', { class: 'px-act', title: 'Size a position (Z)', text: '⚖', onclick: (e) => { e.stopPropagation(); sizerDialog(r.symbol); } }),
@@ -472,10 +570,116 @@
           isWl ? el('button', { class: 'px-act px-act-del', title: 'Remove from this watchlist', text: '✕', onclick: (e) => { e.stopPropagation(); removeFromActive(r.symbol); } }) : null,
         ]),
       ]);
+      fillCells(item, r);
       item.addEventListener('click', () => switchTo(r.symbol));
+      item.addEventListener('mouseenter', () => showHover(item, r.symbol));
+      item.addEventListener('mouseleave', hideHover);
       listEl.appendChild(item);
     });
     scrollActiveIntoView();
+  }
+  /** Numeric cells of one row (also used by the live patcher). */
+  function fillCells(item, r) {
+    const set = (key, text, v, title, extra) => {
+      const c = item.querySelector('[data-cell="' + key + '"]');
+      if (!c) return;
+      c.textContent = text;
+      c.title = title || '';
+      c.classList.remove('px-up', 'px-down', 'px-muted', 'px-live-cell');
+      if (v == null) c.classList.add('px-muted'); else if (v < 0) c.classList.add('px-down'); else if (v > 0) c.classList.add('px-up');
+      if (extra) c.classList.add(extra);
+    };
+    const priceTxt = r.last == null ? '—' : (r.last >= 1000 ? Math.round(r.last).toLocaleString('en-US') : r.last.toFixed(r.last >= 100 ? 1 : 2));
+    set('last', priceTxt, 0, r.live ? 'Live price (TradingView)' : 'Nightly close', r.live ? 'px-live-cell' : '');
+    set('chg', r.chgPct == null ? '—' : pct(r.chgPct), r.chgPct, r.live ? "Today's change (live)" : 'Last session change');
+    // 200D is stored as "% below" (positive = below the DMA); show it signed like the chart reads it.
+    set('dma', pct(r.below == null ? null : -r.below), r.below == null ? null : -r.below, 'Distance from the 200 DMA');
+    set('h52', pct(r.off52 == null ? null : -Math.abs(r.off52)), r.off52 == null ? null : -Math.abs(r.off52), '% off the 52-week high');
+    set('ath', pct(r.athFall == null ? null : -Math.abs(r.athFall)), r.athFall == null ? null : -Math.abs(r.athFall), '% off the all-time high');
+  }
+
+  // ---- row hover card (F17): Plutus checks without leaving the list ------------
+  let hoverTimer = null, hoverSym = null;
+  function showHover(item, symbol) {
+    if (!st.settings.tvHoverCard) return;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => {
+      hoverSym = symbol;
+      renderHover(item, symbol);
+      // Detail strings (the actual values) need the per-stock payload; fill them in when it arrives.
+      stockFor(symbol).then(() => { if (hoverSym === symbol && !hoverEl.classList.contains('px-collapsed')) renderHover(item, symbol); }).catch(() => {});
+    }, 400);
+  }
+  function hideHover() { clearTimeout(hoverTimer); hoverSym = null; if (hoverEl) hoverEl.classList.add('px-collapsed'); }
+  function renderHover(item, symbol) {
+    const r = rowFor(symbol);
+    if (!r.entry) { hoverEl.classList.add('px-collapsed'); return; }
+    const cur = r.market === 'US' ? '$' : '₹';
+    const labels = (st.boot && st.boot.check_labels) || {};
+    const cached = st.stockCache.get(symbol);
+    const detail = {};
+    if (cached && cached.data) {
+      const fr = (cached.data.scan_results || []).find((x) => x.strategy_id === 'fundamental_screener');
+      ((fr && fr.metrics_snapshot && fr.metrics_snapshot.checks) || []).forEach((c) => { detail[c.id] = c.detail; });
+    }
+    hoverEl.innerHTML = '';
+    hoverEl.appendChild(el('div', { class: 'px-hover-head' }, [
+      el('b', { text: r.plain }), el('span', { class: 'px-muted', text: r.name || '' }), el('span', { class: 'px-header-spacer' }),
+      el('span', { class: 'px-chip px-chip-score ' + (r.points == null ? '' : r.points >= 8 ? 'px-strong' : r.points <= 5 ? 'px-weak' : ''), text: r.points == null ? '— /11' : r.points + '/11' }),
+    ]));
+    const chips = [];
+    if (r.status && SIGNAL_CHIP[r.status]) chips.push(el('span', { class: 'px-chip ' + SIGNAL_CHIP[r.status][1], text: SIGNAL_CHIP[r.status][0] }));
+    if (conviction(r) === 'PRIME') chips.push(el('span', { class: 'px-chip px-chip-prime', text: 'PRIME' }));
+    if (r.held) chips.push(el('span', { class: 'px-chip px-chip-held', text: 'HELD ' + r.held.qty }));
+    chips.push(el('span', { class: 'px-chip px-chip-cap-' + (CAP_LETTER[r.cap] || 'U'), text: (r.cap || 'cap ?') + (r.sector ? ' · ' + r.sector : '') }));
+    hoverEl.appendChild(el('div', { class: 'px-chips' }, chips));
+    hoverEl.appendChild(el('div', { class: 'px-hover-tech' }, [
+      el('span', { text: (r.live ? 'Live ' : 'Close ') + cur + (r.last == null ? '—' : U.fmt(r.last, 2)) }),
+      el('span', { text: 'Chg ' + pct(r.chgPct) + '%' }),
+      el('span', { text: '200D ' + pct(r.below == null ? null : -r.below) + '%' }),
+      el('span', { text: '52wH ' + pct(r.off52 == null ? null : -Math.abs(r.off52)) + '%' }),
+      el('span', { text: 'ATH ' + pct(r.athFall == null ? null : -Math.abs(r.athFall)) + '%' }),
+    ]));
+    const ids = Object.keys(r.checks || {});
+    if (ids.length) {
+      const grid = el('div', { class: 'px-hover-checks' });
+      ids.forEach((id) => {
+        const v = r.checks[id];
+        grid.appendChild(el('div', { class: 'px-check ' + (v === true ? 'px-pass' : v === false ? 'px-fail' : 'px-na') }, [
+          el('b', { text: v === true ? '✓' : v === false ? '✗' : '·' }),
+          el('span', { text: labels[id] || id }),
+          detail[id] ? el('span', { class: 'px-hover-detail', text: detail[id] }) : null,
+        ]));
+      });
+      hoverEl.appendChild(grid);
+    } else hoverEl.appendChild(el('div', { class: 'px-muted', text: r.market === 'US' ? 'No fundamental score for US stocks yet.' : 'No fundamental scan yet.' }));
+    hoverEl.classList.remove('px-collapsed');
+    // position: left of the panel, aligned with the row; fall back to the right
+    const pr = panel.getBoundingClientRect(), ir = item.getBoundingClientRect();
+    const w = 300, h = hoverEl.offsetHeight || 200;
+    const drawerOpen = st.settings.tvDrawerOpen && drawer && !drawer.classList.contains('px-collapsed');
+    const leftEdge = drawerOpen ? drawer.getBoundingClientRect().left : pr.left;
+    let left = leftEdge - w - 8;
+    if (left < 4) left = Math.min(window.innerWidth - w - 4, pr.right + 8);
+    hoverEl.style.left = Math.max(4, left) + 'px';
+    hoverEl.style.top = Math.max(4, Math.min(window.innerHeight - h - 8, ir.top)) + 'px';
+    hoverEl.style.width = w + 'px';
+  }
+
+  /** Per-stock payload via the worker (10-min cache there, 2-min memo here); never throws. */
+  async function stockFor(symbol, force) {
+    const hit = st.stockCache.get(symbol);
+    if (!force && hit && Date.now() - hit.at < 120000) return hit;
+    try {
+      const data = await U.send({ type: 'stock', symbol, force: !!force });
+      const rec = { data, error: null, at: Date.now() };
+      st.stockCache.set(symbol, rec);
+      return rec;
+    } catch (e) {
+      const rec = { data: null, error: { status: e.status || 0, message: e.message }, at: Date.now() };
+      st.stockCache.set(symbol, rec);
+      return rec;
+    }
   }
 
   function renderHint() {
@@ -492,6 +696,7 @@
     const collapsed = panel.classList.toggle('px-collapsed');
     SET.save({ tvPanelOpen: !collapsed });
     positionDrawer();
+    scheduleLive(true);
   }
 
   function onSelectList() {
@@ -549,8 +754,10 @@
       const l = JSON.parse(localStorage.getItem(LS_LAYOUT) || 'null');
       if (!l) return;
       panel.style.right = 'auto';
-      panel.style.width = l.width + 'px'; panel.style.height = l.height + 'px';
-      panel.style.left = Math.max(0, Math.min(window.innerWidth - l.width - 8, l.left)) + 'px';
+      // v0.4 added two columns: a layout saved by an older build may be too narrow for them.
+      const w = Math.max(390, Number(l.width) || 0);
+      panel.style.width = w + 'px'; panel.style.height = l.height + 'px';
+      panel.style.left = Math.max(0, Math.min(window.innerWidth - w - 8, l.left - (w - l.width))) + 'px';
       panel.style.top = Math.max(0, Math.min(window.innerHeight - 100, l.top)) + 'px';
       if (l.wide) panel.classList.add('px-wide');
       syncWideBtn();
@@ -573,7 +780,7 @@
     } else {
       let normal = null;
       try { normal = (JSON.parse(localStorage.getItem(LS_LAYOUT) || 'null') || {}).normal; } catch (e) { /* ignore */ }
-      w = (normal && normal.width) || 340;
+      w = Math.max(390, (normal && normal.width) || 400);
       h = (normal && normal.height) || Math.min(window.innerHeight * 0.78, 760);
     }
     const right = r.right;                            // keep the right edge where it is
@@ -646,6 +853,7 @@
     if (!drawer) return;
     positionDrawer();
     drawerBtn.classList.toggle('px-on', !!st.settings.tvDrawerOpen);
+    drawerBtn.classList.toggle('px-dot', chipsActive());
     if (!st.settings.tvDrawerOpen) return;
     const tab = drawerTab();
     drawerTabsEl.innerHTML = '';
@@ -666,10 +874,15 @@
   // ---- Filters tab: sort, region, watchlist admin ------------------------------
   function renderFiltersTab(body) {
     const sortSel = el('select', { class: 'px-select', onchange: () => setSort(sortSel.value, (L.SORT_KEYS[sortSel.value] || L.SORT_KEYS.default).dir) });
-    Object.keys(L.SORT_KEYS).filter((k) => k !== 'name' && k !== 'chg').forEach((k) => sortSel.appendChild(el('option', { value: k, text: L.SORT_KEYS[k].label })));
+    Object.keys(L.SORT_KEYS).filter((k) => k !== 'name').forEach((k) => sortSel.appendChild(el('option', { value: k, text: L.SORT_KEYS[k].label })));
     sortSel.value = L.SORT_KEYS[st.sort.key] ? (st.sort.key === 'name' ? 'default' : st.sort.key) : 'default';
+    const quick = el('div', { class: 'px-drow' }, [
+      el('button', { class: 'px-small-btn', text: '▲ Top gainers', onclick: () => setSort('chg', 'desc') }),
+      el('button', { class: 'px-small-btn', text: '▼ Top losers', onclick: () => setSort('chg', 'asc') }),
+      el('button', { class: 'px-small-btn', text: 'Deepest below 200D', onclick: () => setSort('dma', 'desc') }),
+    ]);
     const dirBtn = el('button', { class: 'px-small-btn', text: st.sort.dir === 'asc' ? '▲ asc' : '▼ desc', title: 'Flip the sort direction', onclick: () => setSort(st.sort.key, st.sort.dir === 'asc' ? 'desc' : 'asc') });
-    body.appendChild(section('Sort', [el('div', { class: 'px-drow' }, [sortSel, dirBtn])]));
+    body.appendChild(section('Sort', [el('div', { class: 'px-drow' }, [sortSel, dirBtn]), quick]));
 
     if (hasUs()) {
       const seg = el('div', { class: 'px-region px-region-inline' });
@@ -687,8 +900,42 @@
       el('div', { class: 'px-muted', text: w ? 'Active: ' + w.name + ' (' + (w.symbols || []).length + ')' : 'Pick a watchlist in the panel to rename or delete it.' }),
     ]));
 
-    body.appendChild(section('Fundamental filters', [
-      el('div', { class: 'px-muted', text: 'Per-rule pass / fail chips arrive in v0.4 together with live prices.' }),
+    // F8: per-rule chips. Three states per rule — off → must pass → must not fail (n/a allowed) → off.
+    const labels = (st.boot && st.boot.check_labels) || {};
+    const present = new Set();
+    activeSymbols().forEach((sym) => { const e = st.stocks.get(sym); Object.keys((e && e.checks) || {}).forEach((id) => present.add(id)); });
+    const ids = Object.keys(labels).filter((id) => present.has(id));
+    const chipRow = el('div', { class: 'px-fchips' });
+    chipRow.appendChild(el('button', { class: 'px-fchip px-fchip-star' + (st.allPass ? ' px-on' : ''), title: 'Only stocks that pass every check (n/a counts as not passed)', text: '⭐ All pass',
+      onclick: () => { st.allPass = !st.allPass; if (st.allPass) st.chips = {}; renderAll(); } }));
+    ids.forEach((id) => {
+      const state = st.chips[id];
+      chipRow.appendChild(el('button', { class: 'px-fchip' + (state === 'pass' ? ' px-on' : state === 'nofail' ? ' px-soft' : ''), text: labels[id],
+        title: state === 'pass' ? 'Must pass (click: allow n/a)' : state === 'nofail' ? 'Must not fail — n/a allowed (click: off)' : 'Click: must pass',
+        onclick: () => {
+          st.allPass = false;
+          if (!state) st.chips[id] = 'pass'; else if (state === 'pass') st.chips[id] = 'nofail'; else delete st.chips[id];
+          renderAll();
+        } }));
+    });
+    const shown = visibleRows().length;
+    body.appendChild(section('Fundamental filters' + (chipsActive() ? ' · ' + shown + ' shown' : ''), [
+      ids.length ? chipRow : el('div', { class: 'px-muted', text: 'No scored stocks in this list yet.' }),
+      el('div', { class: 'px-drow' }, [
+        chipsActive() ? el('button', { class: 'px-small-btn', text: 'Clear filters', onclick: () => { st.chips = {}; st.allPass = false; renderAll(); } }) : null,
+        el('span', { class: 'px-muted', text: 'Solid = must pass · outlined = must not fail (n/a allowed). Stocks without a scan are hidden while a filter is on.' }),
+      ]),
+    ]));
+
+    const liveSel = el('select', { class: 'px-select', onchange: () => SET.save({ tvLiveIntervalSec: Number(liveSel.value) }) });
+    [[15, 'every 15 s'], [30, 'every 30 s'], [60, 'every 60 s']].forEach(([v, t]) => liveSel.appendChild(el('option', { value: String(v), text: t })));
+    liveSel.value = String([15, 30, 60].includes(Number(st.settings.tvLiveIntervalSec)) ? st.settings.tvLiveIntervalSec : 15);
+    body.appendChild(section('Live prices', [
+      el('div', { class: 'px-drow' }, [
+        el('label', { class: 'px-check-inline' }, [el('input', { type: 'checkbox', ...(st.settings.tvLivePrices ? { checked: 'checked' } : {}), onchange: (e) => SET.save({ tvLivePrices: !!e.target.checked }) }), ' Live Last / Chg% from TradingView']),
+        liveSel,
+      ]),
+      el('div', { class: 'px-muted', text: 'Display only — nothing is written to Plutus. 200D / 52wH / ATH move with the live price against the Plutus levels.' }),
     ]));
 
     body.appendChild(section('Data', [
@@ -699,59 +946,141 @@
     ]));
   }
 
-  // ---- Stock tab: a compact summary now; the full Plutus card lands in v0.4 ----
+  // ---- Stock tab (F9): the same Plutus card Screener shows, via shared/card.js --
   function renderStockTab(body, sym) {
     if (!sym) { body.appendChild(el('div', { class: 'px-empty', text: 'Pick a stock.' })); return; }
     const r = rowFor(sym);
-    if (!r.entry) { body.appendChild(el('div', { class: 'px-empty', text: r.plain + ' is not in the Plutus universe.' })); return; }
-    const cur = r.market === 'US' ? '$' : '₹';
-    const kv = (k, v, cls) => el('div', { class: 'px-kv' }, [el('span', { class: 'px-kv-k', text: k }), el('span', { class: 'px-kv-v ' + (cls || ''), text: v })]);
-    body.appendChild(section(r.plain + (r.name ? ' · ' + r.name : ''), [
-      kv('Market · cap', r.market + (r.cap ? ' · ' + r.cap : '')),
-      kv('Sector', r.sector || '—'),
-      kv('Pools', (r.entry.pools || []).join(', ') || '—'),
-      kv('Close', r.close == null ? '—' : cur + U.fmt(r.close, 2)),
-      kv('Signal', r.status || '—'),
-      kv('Fundamental score', r.points == null ? '—' : r.points + ' / 11', r.points == null ? '' : r.points >= 8 ? 'px-up' : r.points <= 5 ? 'px-down' : ''),
-      kv('From 200 DMA', pct(r.below == null ? null : -r.below) + '%', r.below > 0 ? 'px-up' : ''),
-      kv('Off 52-week high', pct(r.off52 == null ? null : -Math.abs(r.off52)) + '%'),
-      kv('Off ATH', pct(r.athFall == null ? null : -Math.abs(r.athFall)) + '%'),
-      r.held ? kv('Held', r.held.qty + ' · ' + cur + U.fmt(r.held.invested, 0), 'px-up') : null,
-    ]));
-    body.appendChild(el('div', { class: 'px-drow' }, [
-      el('button', { class: 'px-small-btn', text: '✎ Note', onclick: () => noteDialog(sym) }),
-      el('button', { class: 'px-small-btn', text: '⚡ Opportunity', onclick: () => opportunityDialog(sym) }),
-      el('button', { class: 'px-small-btn', text: '⚖ Size', onclick: () => sizerDialog(sym) }),
+    const cached = st.stockCache.get(sym);
+    if (!cached || Date.now() - cached.at > 120000) {
+      stockFor(sym).then(() => { if (drawerTab() === 'stock' && currentSymbol() === sym) renderDrawer(); });
+    }
+    const card = C.build({
+      ticker: r.plain, data: cached ? cached.data : null, error: cached ? cached.error : null,
+      boot: st.boot, settings: st.settings, held: r.held, compact: true,
+      actions: {
+        note: () => noteDialog(sym),
+        size: () => sizerDialog(sym),
+        opportunity: () => opportunityDialog(sym),
+        playAreaAdd: () => togglePlayArea(sym, true),
+        playAreaRemove: () => togglePlayArea(sym),
+        retry: () => stockFor(sym, true).then(() => renderDrawer()),
+      },
+    });
+    body.appendChild(card);
+    const links = el('div', { class: 'px-drow' }, [
       r.market === 'US' ? null : el('button', { class: 'px-small-btn', text: '⧉ Screener', onclick: () => openScreener(sym) }),
       el('button', { class: 'px-small-btn', text: '⌂ Plutus', onclick: () => openPlutus(sym) }),
-    ]));
-    body.appendChild(el('div', { class: 'px-muted', text: 'The full 11-check card (the one Screener shows) moves here in v0.4.' }));
+      el('button', { class: 'px-small-btn', text: '↻', title: 'Reload this stock', onclick: () => stockFor(sym, true).then(() => renderDrawer()) }),
+    ]);
+    body.appendChild(links);
+    if (r.live && r.last != null) body.appendChild(el('div', { class: 'px-muted', text: 'Live ' + (r.market === 'US' ? '$' : '₹') + U.fmt(r.last, 2) + ' · ' + pct(r.chgPct) + '% today (TradingView). The card above uses the nightly snapshot.' }));
   }
 
-  // ---- Trades tab: open lots now; closed trades and opportunities in v0.4 ------
+  // ---- Trades tab (F19): everything the journal knows about this stock -------
+  async function loadTrades(sym, force) {
+    if (!sym || !st.settings.token) return;
+    if (!force && st.trades.symbol === sym && !st.trades.error && !st.trades.loading) return;
+    st.trades = { symbol: sym, data: null, loading: true, error: null };
+    renderDrawer();
+    try {
+      const data = await U.send({ type: 'trades.forSymbol', symbol: sym });
+      if (st.trades.symbol !== sym) return;
+      st.trades.data = data;
+    } catch (e) { st.trades.error = e.message; }
+    st.trades.loading = false;
+    renderDrawer();
+  }
   function renderTradesTab(body, sym) {
     if (!sym) { body.appendChild(el('div', { class: 'px-empty', text: 'Pick a stock.' })); return; }
     if (!st.settings.token) { body.appendChild(el('div', { class: 'px-empty', text: 'Trades need a Plutus token (extension popup).' })); return; }
-    const lots = (st.lots && st.lots.get(S.toPlain(sym))) || [];
-    if (!lots.length) body.appendChild(section('Open lots', [el('div', { class: 'px-muted', text: 'No open position in ' + S.toPlain(sym) + '.' })]));
-    else {
+    if (st.trades.symbol !== sym) loadTrades(sym);
+    const r = rowFor(sym);
+    const cur = r.market === 'US' ? '$' : '₹';
+    const lp = livePrice(sym);
+    const sign = (v, nd) => (v == null ? '—' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(nd == null ? 1 : nd));
+    const money = (v) => (v == null ? '—' : (v < 0 ? '−' : '') + cur + Math.round(Math.abs(v)).toLocaleString(cur === '$' ? 'en-US' : 'en-IN'));
+
+    body.appendChild(el('div', { class: 'px-drow' }, [
+      el('button', { class: 'px-small-btn px-primary', text: '⚖ Size a position', onclick: () => sizerDialog(sym) }),
+      el('button', { class: 'px-small-btn', text: '⚡ Add opportunity', onclick: () => opportunityDialog(sym) }),
+      el('button', { class: 'px-small-btn', text: '↻', title: 'Reload', onclick: () => loadTrades(sym, true) }),
+    ]));
+    if (st.trades.loading || !st.trades.data) { body.appendChild(el('div', { class: 'px-muted', text: st.trades.error || 'Loading journal…' })); return; }
+    const d = st.trades.data;
+
+    // open lots with live P&L
+    const open = (d.open || []).slice().sort((a, b) => String(b.buy_date).localeCompare(String(a.buy_date)));
+    if (open.length) {
+      const qty = open.reduce((a, t) => a + (Number(t.qty) || 0), 0);
+      const cost = open.reduce((a, t) => a + (num(t.buy_price) || 0) * (Number(t.qty) || 0), 0);
+      const pnl = lp && qty ? (lp.price - cost / qty) * qty : null;
       const table = el('div', { class: 'px-held-lots px-dlots' });
-      table.appendChild(el('div', { class: 'px-held-lot px-held-lot-head' }, ['Bought', 'Qty @', 'Target', 'Stop'].map((h) => el('span', { text: h }))));
-      lots.slice().sort((a, b) => String(b.buy_date).localeCompare(String(a.buy_date))).forEach((t) => {
-        table.appendChild(el('div', { class: 'px-held-lot', title: (t.strategy ? t.strategy + ' · ' : '') + (t.order_type || '') }, [
+      table.appendChild(el('div', { class: 'px-held-lot px-held-lot-head' }, ['Bought', 'Qty @', 'P&L', 'T / SL'].map((h) => el('span', { text: h }))));
+      open.forEach((t) => {
+        const bp = num(t.buy_price), q = Number(t.qty) || 0;
+        const lotPct = lp && bp ? (lp.price / bp - 1) * 100 : null;
+        table.appendChild(el('div', { class: 'px-held-lot', title: (t.strategy ? t.strategy + ' · ' : '') + (t.order_type || '') + (t.notes ? '\n' + t.notes : '') }, [
           el('span', { text: shortDate(t.buy_date) }),
-          el('span', { text: (Number(t.qty) || 0) + ' @ ' + (num(t.buy_price) ? U.fmt(t.buy_price, 1) : '—') }),
-          el('span', { text: num(t.target_price) ? U.fmt(t.target_price, 0) : '—' }),
-          el('span', { text: num(t.stop_price) ? U.fmt(t.stop_price, 0) : '—' }),
+          el('span', { text: q + ' @ ' + (bp ? U.fmt(bp, 1) : '—') }),
+          el('span', { class: lotPct == null ? '' : lotPct >= 0 ? 'px-up' : 'px-down', text: lotPct == null ? '—' : sign(lotPct) + '%' }),
+          el('span', { text: (num(t.target_price) ? U.fmt(t.target_price, 0) : '—') + ' / ' + (num(t.stop_price) ? U.fmt(t.stop_price, 0) : '—') }),
         ]));
       });
-      body.appendChild(section('Open lots (' + lots.length + ')', [table]));
+      body.appendChild(section('Open · ' + qty.toLocaleString() + ' @ ' + cur + U.fmt(cost / qty, 2) + (pnl == null ? '' : ' · ' + sign(pnl / cost * 100) + '% ' + money(pnl)), [table]));
+    } else body.appendChild(section('Open', [el('div', { class: 'px-muted', text: 'No open position.' })]));
+
+    // closed trades
+    const closed = (d.closed || []).slice().sort((a, b) => String(b.sell_date || b.buy_date).localeCompare(String(a.sell_date || a.buy_date)));
+    if (closed.length) {
+      let realised = 0;
+      const table = el('div', { class: 'px-held-lots px-dlots' });
+      table.appendChild(el('div', { class: 'px-held-lot px-held-lot-head' }, ['Buy → Sell', 'Qty', 'P&L', 'Days'].map((h) => el('span', { text: h }))));
+      closed.forEach((t) => {
+        const bp = num(t.buy_price), sp = num(t.sell_price), q = Number(t.qty) || 0;
+        const p = bp != null && sp != null ? (sp - bp) * q : num(t.realized_pnl);
+        if (p != null) realised += p;
+        const days = t.buy_date && t.sell_date ? Math.round((new Date(t.sell_date) - new Date(t.buy_date)) / 86400000) : null;
+        table.appendChild(el('div', { class: 'px-held-lot', title: (t.strategy || '') + (t.exit_reason ? ' · ' + t.exit_reason : '') }, [
+          el('span', { text: shortDate(t.buy_date) + ' → ' + shortDate(t.sell_date) }),
+          el('span', { text: q + ' @ ' + (bp ? U.fmt(bp, 0) : '—') + '→' + (sp ? U.fmt(sp, 0) : '—') }),
+          el('span', { class: p == null ? '' : p >= 0 ? 'px-up' : 'px-down', text: p == null ? '—' : (bp && sp ? sign((sp / bp - 1) * 100) + '%' : money(p)) }),
+          el('span', { text: days == null ? '—' : days + 'd' }),
+        ]));
+      });
+      body.appendChild(section('Closed (' + closed.length + ') · realised ' + money(realised), [table]));
     }
-    body.appendChild(el('div', { class: 'px-drow' }, [
-      el('button', { class: 'px-small-btn', text: '⚖ Size a position', onclick: () => sizerDialog(sym) }),
-      el('button', { class: 'px-small-btn', text: '⚡ Add opportunity', onclick: () => opportunityDialog(sym) }),
-    ]));
-    body.appendChild(el('div', { class: 'px-muted', text: 'Closed trades, opportunities and live P&L per lot arrive in v0.4.' }));
+
+    // opportunities
+    const opps = d.opportunities || [];
+    if (opps.length) {
+      const list = el('div', { class: 'px-notes' });
+      opps.forEach((o) => list.appendChild(el('div', { class: 'px-note' }, [
+        el('div', { class: 'px-note-head' }, [
+          el('span', { class: 'px-note-date', text: shortDate(o.opp_date) }),
+          el('span', { class: 'px-chip px-chip-none', text: o.status || '' }),
+          o.strategy ? el('span', { class: 'px-muted', text: o.strategy }) : null,
+          el('span', { class: 'px-header-spacer' }),
+          el('span', { class: 'px-muted', text: (num(o.buy_price) ? cur + U.fmt(o.buy_price, 0) : '') + (num(o.target_price) ? ' → ' + cur + U.fmt(o.target_price, 0) : '') }),
+        ]),
+        o.notes ? el('div', { class: 'px-note-body', text: o.notes }) : null,
+      ])));
+      body.appendChild(section('Opportunities (' + opps.length + ')', [list]));
+    }
+
+    // sizing plans
+    const plans = d.plans || [];
+    if (plans.length) {
+      const list = el('div', { class: 'px-notes' });
+      plans.slice(0, 5).forEach((p) => list.appendChild(el('div', { class: 'px-note' }, [
+        el('div', { class: 'px-note-head' }, [
+          el('span', { class: 'px-note-date', text: shortDate(p.created_at || p.plan_date) }),
+          el('span', { class: 'px-muted', text: (p.qty != null ? p.qty + ' × ' : '') + (num(p.entry_price) ? cur + U.fmt(p.entry_price, 0) : '') + (num(p.stop_price) ? ' · SL ' + cur + U.fmt(p.stop_price, 0) : '') + (num(p.target_price) ? ' · T ' + cur + U.fmt(p.target_price, 0) : '') }),
+        ]),
+        p.notes || p.risk_note ? el('div', { class: 'px-note-body', text: p.notes || p.risk_note }) : null,
+      ])));
+      body.appendChild(section('Sizing plans (' + plans.length + ')', [list]));
+    }
+    if (!open.length && !closed.length && !opps.length && !plans.length) body.appendChild(el('div', { class: 'px-muted', text: 'Nothing in the journal for ' + r.plain + ' yet.' }));
   }
 
   // ---- Notes tab (F4): full timeline with add / edit / delete ----------------
@@ -856,6 +1185,7 @@
     highlightActive();
     renderHeld();
     renderDrawer();
+    hideHover();
     document.body.classList.add('px-switching');
     const btn = q1(TV.searchButton);
     if (!btn) { document.body.classList.remove('px-switching'); U.toast('TradingView symbol search button not found — selectors need updating', 'error'); return; }
@@ -988,8 +1318,10 @@
   // =============================================================================
   // Held-position strip (idea 4)
   // =============================================================================
-  /** Live price from the tab title ("INFY 1,020.5 ▼ −0.86%") when it names the active symbol. */
+  /** Live price: the scanner quote, else the tab title ("INFY 1,020.5 ▼ −0.86%") when it names the symbol, else the nightly close. */
   function livePrice(symbol) {
+    const q = st.live.get(symbol);
+    if (q && !q.stale && q.close > 0) return { price: q.close, live: true };
     const m = /^(\S+)\s+([\d,]+(?:\.\d+)?)/.exec((document.title || '').trim());
     if (m && S.toPlutus(m[1]) === symbol) { const n = Number(m[2].replace(/,/g, '')); if (Number.isFinite(n) && n > 0) return { price: n, live: true }; }
     const e = st.stocks.get(symbol);

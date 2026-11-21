@@ -204,6 +204,54 @@ test('notes.list clamps the limit and asks for the plain symbol', async () => {
   assert.equal(w.calls.fetched[1].url, 'http://api.test/api/journal/notes?symbol=TCS&limit=2000');
 });
 
+test('journal calls carry the market: US symbols ask for market=US, open lots merge both markets', async () => {
+  const w = loadWorker({ settings: { token: 't' }, fetch: okJson({ notes: [], trades: [{ symbol: 'X' }], positions: [{ symbol: 'Y' }] }) });
+  w.store.plutus_cache_bootstrap = { fetchedAt: Date.now(), apiUrl: 'http://api.test', data: { stocks: [{ symbol: 'NVDA', exchange: 'NASDAQ' }] } };
+  await w.send({ type: 'notes.list', symbol: 'NVDA', limit: 50 });
+  assert.equal(w.calls.fetched[0].url, 'http://api.test/api/journal/notes?symbol=NVDA&limit=50&market=US');
+  await w.send({ type: 'notes.create', symbol: 'NVDA', content: 'x', note_date: '2026-11-21' });
+  assert.deepEqual(w.calls.fetched[1].body, { symbol: 'NVDA', content: 'x', note_date: '2026-11-21', market: 'US' });
+  await w.send({ type: 'notes.create', symbol: 'TCS.NS', content: 'y', note_date: '2026-11-21' });
+  assert.equal(w.calls.fetched[2].body.market, 'IN');
+  const lots = await w.send({ type: 'trades.open' });
+  const urls = w.calls.fetched.slice(3).map((f) => f.url).sort();
+  assert.deepEqual(urls, ['http://api.test/api/journal/trades?status=OPEN', 'http://api.test/api/journal/trades?status=OPEN&market=US']);
+  assert.equal(lots.data.trades.length, 2);                      // IN + US merged
+  const pos = await w.send({ type: 'positions' });
+  assert.equal(pos.data.positions.length, 2);
+});
+
+test('trades.forSymbol bundles lots, opportunities (filtered to the symbol) and plans', async () => {
+  const w = loadWorker({ settings: { token: 't' }, fetch: async (url) => {
+    if (url.includes('/trades')) return okJson({ trades: [{ symbol: 'TCS', status: 'OPEN', qty: 10 }, { symbol: 'TCS', status: 'CLOSED', qty: 5 }] })();
+    if (url.includes('/opportunities')) return okJson({ opportunities: [{ symbol: 'TCS', status: 'ACTIVE' }, { symbol: 'INFY', status: 'ACTIVE' }] })();
+    return okJson({ plans: [{ id: 1 }] })();
+  } });
+  const res = await w.send({ type: 'trades.forSymbol', symbol: 'TCS.NS' });
+  assert.equal(res.ok, true);
+  const d = JSON.parse(JSON.stringify(res.data));
+  assert.equal(d.symbol, 'TCS');
+  assert.equal(d.market, 'IN');
+  assert.equal(d.open.length, 1);
+  assert.equal(d.closed.length, 1);
+  assert.deepEqual(d.opportunities, [{ symbol: 'TCS', status: 'ACTIVE' }]);
+  assert.equal(d.plans.length, 1);
+  assert.ok(w.calls.fetched.some((f) => f.url === 'http://api.test/api/journal/trades?symbol=TCS'));
+  assert.ok(w.calls.fetched.some((f) => f.url === 'http://api.test/api/sizing/plans?symbol=TCS'));
+});
+
+test('live.quotes is off by setting, and otherwise goes through the scanner client', async () => {
+  const off = loadWorker({ settings: { tvLivePrices: false } });
+  const r0 = await off.send({ type: 'live.quotes', symbols: ['INFY.NS'] });
+  assert.equal(r0.data.off, true);
+  const on = loadWorker({ settings: { tvLivePrices: true }, fetch: okJson({ data: [{ s: 'NSE:INFY', d: [1500, 0.5, 7.5] }] }) });
+  const r1 = await on.send({ type: 'live.quotes', symbols: ['INFY.NS', 'INFY.NS', 'bad symbol!'] });
+  assert.equal(r1.data.quotes['INFY.NS'].close, 1500);
+  assert.equal(on.calls.fetched.length, 1);
+  assert.equal(on.calls.fetched[0].url, 'https://scanner.tradingview.com/india/scan');
+  assert.deepEqual(on.calls.fetched[0].body, { symbols: { tickers: ['NSE:INFY'] }, columns: ['close', 'change', 'change_abs'] });
+});
+
 // ---- token bridge on the deployed web app (F5) ------------------------------
 test('bridge: a deployed web-app origin with permission gets the bridge registered', async () => {
   const w = loadWorker({ settings: { webAppUrl: 'https://plutus.example.app/stocks' }, granted: ['https://plutus.example.app/*'] });

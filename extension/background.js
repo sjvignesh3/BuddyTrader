@@ -10,7 +10,7 @@
  * Message protocol:  chrome.runtime.sendMessage({type, ...payload})
  *   -> {ok: true, data}  |  {ok: false, error, status}
  */
-importScripts('shared/symbols.js', 'shared/settings.js');
+importScripts('shared/symbols.js', 'shared/settings.js', 'shared/tvscan.js');
 
 const CACHE_BOOTSTRAP = 'plutus_cache_bootstrap';
 const CACHE_STOCK = 'plutus_cache_stock';
@@ -255,10 +255,27 @@ async function requireToken() {
   if (!(await hasToken())) throw new ApiError('Sign in required: paste your Plutus token in the extension popup', 401);
 }
 
+// The journal routes answer for ONE market per call (default IN): a US symbol
+// needs `market=US`, and "all open lots" means both markets merged.
+function marketOf(symbol) {
+  return PlutusSymbols.isUs(PlutusSymbols.toPlutus(symbol)) ? 'US' : 'IN';
+}
+function marketQuery(symbol) {
+  return marketOf(symbol) === 'US' ? '&market=US' : '';
+}
+async function bothMarkets(pathFor, mergeKey) {
+  const [inn, us] = await Promise.all([
+    apiFetch(pathFor('IN')),
+    apiFetch(pathFor('US')).catch(() => ({ [mergeKey]: [] })),   // older APIs have no US journal
+  ]);
+  const rows = (inn[mergeKey] || []).concat(us[mergeKey] || []);
+  return Object.assign({}, inn, { [mergeKey]: rows, count: rows.length });
+}
+
 async function getPositions({ force = false } = {}) {
   if (!(await hasToken())) return { positions: [], count: 0, _noToken: true };
   if (!force && positionsCache.data && (Date.now() - positionsCache.at) < POSITIONS_TTL_MS) return positionsCache.data;
-  const data = await apiFetch('/api/journal/positions');
+  const data = await bothMarkets((m) => '/api/journal/positions' + (m === 'US' ? '?market=US' : ''), 'positions');
   positionsCache = { at: Date.now(), data };
   return data;
 }
@@ -267,14 +284,44 @@ async function noteCreate({ symbol, content, note_date }) {
   await requireToken();
   const plain = PlutusSymbols.toPlain(symbol);
   if (!plain) throw new ApiError('not a ticker: ' + symbol, 400);
-  return apiFetch('/api/journal/notes', { method: 'POST', body: { symbol: plain, content, note_date } });
+  return apiFetch('/api/journal/notes', { method: 'POST', body: { symbol: plain, content, note_date, market: marketOf(symbol) } });
 }
 
 async function notesList(symbol, limit) {
   await requireToken();
   const plain = PlutusSymbols.toPlain(symbol);
   const n = Math.max(1, Math.min(2000, Number(limit) || 20));
-  return apiFetch('/api/journal/notes?symbol=' + encodeURIComponent(plain) + '&limit=' + n);
+  return apiFetch('/api/journal/notes?symbol=' + encodeURIComponent(plain) + '&limit=' + n + marketQuery(symbol));
+}
+
+/** Everything the journal knows about one stock: open + closed lots, opportunities, sizing plans. */
+async function tradesForSymbol(symbol) {
+  await requireToken();
+  const plain = PlutusSymbols.toPlain(symbol);
+  if (!plain) throw new ApiError('not a ticker: ' + symbol, 400);
+  const mq = marketQuery(symbol);
+  const [trades, opps, plans] = await Promise.all([
+    apiFetch('/api/journal/trades?symbol=' + encodeURIComponent(plain) + mq),
+    apiFetch('/api/journal/opportunities?' + mq.replace(/^&/, '')).catch(() => ({ opportunities: [] })),
+    apiFetch('/api/sizing/plans?symbol=' + encodeURIComponent(plain) + mq).catch(() => ({ plans: [] })),
+  ]);
+  const all = trades.trades || [];
+  const opportunities = (opps.opportunities || []).filter((o) => String(o.symbol || '').toUpperCase() === plain);
+  return {
+    symbol: plain, market: marketOf(symbol),
+    open: all.filter((t) => String(t.status || '').toUpperCase() === 'OPEN'),
+    closed: all.filter((t) => String(t.status || '').toUpperCase() !== 'OPEN'),
+    opportunities,
+    plans: plans.plans || [],
+  };
+}
+
+/** Live quotes for the rows on screen (display only; see shared/tvscan.js). */
+async function liveQuotes(symbols) {
+  const s = await PlutusSettings.get();
+  if (!s.tvLivePrices) return { quotes: {}, degraded: false, off: true };
+  const syms = Array.from(new Set((symbols || []).map((x) => PlutusSymbols.toPlutus(x)).filter(Boolean))).slice(0, 600);
+  return PlutusTvScan.quotes(syms);
 }
 
 async function noteUpdate(id, patch) {
@@ -331,7 +378,7 @@ let openTradesCache = { at: 0, data: null };
 async function openTrades({ force = false } = {}) {
   if (!(await hasToken())) return { trades: [], count: 0, _noToken: true };
   if (!force && openTradesCache.data && (Date.now() - openTradesCache.at) < POSITIONS_TTL_MS) return openTradesCache.data;
-  const data = await apiFetch('/api/journal/trades?status=OPEN');
+  const data = await bothMarkets((m) => '/api/journal/trades?status=OPEN' + (m === 'US' ? '&market=US' : ''), 'trades');
   openTradesCache = { at: Date.now(), data };
   return data;
 }
@@ -414,6 +461,7 @@ async function ping() {
 async function clearCache() {
   await storageSet({ [CACHE_BOOTSTRAP]: null, [CACHE_STOCK]: {} });
   positionsCache = { at: 0, data: null }; openTradesCache = { at: 0, data: null }; settingsCache = { at: 0, data: null };
+  PlutusTvScan.reset();
   return { cleared: true };
 }
 
@@ -439,6 +487,8 @@ const HANDLERS = {
   'notes.create': (m) => noteCreate(m),
   'notes.update': (m) => noteUpdate(m.id, m.patch || {}),
   'notes.delete': (m) => noteDelete(m.id),
+  'trades.forSymbol': (m) => tradesForSymbol(m.symbol),
+  'live.quotes': (m) => liveQuotes(m.symbols || []),
   'bridge.register': () => registerTokenBridge(),
   'opportunity.create': (m) => opportunityCreate(m.body || {}),
   'playarea.add': (m) => playAreaAdd(m.symbol),
@@ -524,8 +574,8 @@ async function injectIntoOpenTabs() {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: isTv
-          ? ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/panel_logic.js', 'shared/sizer.js', 'tv/tv_content.js']
-          : ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/sizer.js', 'vendor/chart.min.js', 'screener/screener_content.js'],
+          ? ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/panel_logic.js', 'shared/card.js', 'shared/sizer.js', 'tv/tv_content.js']
+          : ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/card.js', 'shared/sizer.js', 'vendor/chart.min.js', 'screener/screener_content.js'],
       });
     } catch (e) { /* restricted tab or already injected */ }
   }

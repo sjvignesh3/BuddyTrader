@@ -34,11 +34,11 @@
   <script>
     // ---- fixture: a slice of a real bootstrap, India + US ----------------------
     const STOCKS = [
-      { symbol: 'INFY.NS', plain: 'INFY', tv: 'NSE:INFY', market: 'IN', exchange: 'NSE', name: 'Infosys', sector: 'Technology', sector_group: null, pools: ['F40'], cap: 'Large', best_status: 'BUY_ZONE', funda_points: 9, close: '1520.35', below_200dma_pct: '6.1', fall_from_ath_pct: '24.3', distance_from_52w_high_pct: '-18.2', price_change_1d_pct: '-0.86', market_cap: '6300000000000' },
-      { symbol: 'TCS.NS', plain: 'TCS', tv: 'NSE:TCS', market: 'IN', exchange: 'NSE', name: 'Tata Consultancy Services', sector: 'Technology', pools: ['F40'], cap: 'Large', best_status: 'OPPORTUNITY', funda_points: 10, close: '3410.00', below_200dma_pct: '12.4', fall_from_ath_pct: '31.0', distance_from_52w_high_pct: '-27.5', price_change_1d_pct: '0.42', market_cap: '12300000000000' },
-      { symbol: 'HDFCBANK.NS', plain: 'HDFCBANK', tv: 'NSE:HDFCBANK', market: 'IN', exchange: 'NSE', name: 'HDFC Bank', sector: 'Financial Services', sector_group: 'Banks', pools: ['F40'], cap: 'Large', best_status: 'VALID', funda_points: 8, close: '1655.10', below_200dma_pct: '-2.2', fall_from_ath_pct: '5.1', distance_from_52w_high_pct: '-4.0', price_change_1d_pct: '1.10', market_cap: '12600000000000' },
+      { symbol: 'INFY.NS', plain: 'INFY', tv: 'NSE:INFY', market: 'IN', exchange: 'NSE', name: 'Infosys', sector: 'Technology', sector_group: null, pools: ['F40'], cap: 'Large', best_status: 'BUY_ZONE', funda_points: 9, checks: { pe_lt_70: true, pe_lt_5yr: true, pb_lt_5yr: false, roce: true, roe: true, net_debt: true, pledging: true, sales_ath: true, profit_ath: true, np_yoy: true, np_ttm: null }, close: '1520.35', below_200dma_pct: '6.1', fall_from_ath_pct: '24.3', distance_from_52w_high_pct: '-18.2', price_change_1d_pct: '-0.86', market_cap: '6300000000000' },
+      { symbol: 'TCS.NS', plain: 'TCS', tv: 'NSE:TCS', market: 'IN', exchange: 'NSE', name: 'Tata Consultancy Services', sector: 'Technology', pools: ['F40'], cap: 'Large', best_status: 'OPPORTUNITY', funda_points: 10, checks: { pe_lt_70: true, pe_lt_5yr: true, pb_lt_5yr: true, roce: true, roe: true, net_debt: true, pledging: true, sales_ath: true, profit_ath: true, np_yoy: false, np_ttm: true }, close: '3410.00', below_200dma_pct: '12.4', fall_from_ath_pct: '31.0', distance_from_52w_high_pct: '-27.5', price_change_1d_pct: '0.42', market_cap: '12300000000000' },
+      { symbol: 'HDFCBANK.NS', plain: 'HDFCBANK', tv: 'NSE:HDFCBANK', market: 'IN', exchange: 'NSE', name: 'HDFC Bank', sector: 'Financial Services', sector_group: 'Banks', pools: ['F40'], cap: 'Large', best_status: 'VALID', funda_points: 8, checks: { pe_lt_30: true, roe: true, roa: true, np_ttm: true, gnpa: true, nnpa: false, pledging: true, sales_ath: true, profit_ath: true, np_yoy: true, pe_lt_5yr: true }, close: '1655.10', below_200dma_pct: '-2.2', fall_from_ath_pct: '5.1', distance_from_52w_high_pct: '-4.0', price_change_1d_pct: '1.10', market_cap: '12600000000000' },
       { symbol: 'BAJFINANCE.NS', plain: 'BAJFINANCE', tv: 'NSE:BAJFINANCE', market: 'IN', exchange: 'NSE', name: 'Bajaj Finance', sector: 'Financial Services', sector_group: 'NBFC', pools: ['F40', 'E40'], cap: 'Large', best_status: null, funda_points: 7, close: '6920.00', below_200dma_pct: '-8.0', fall_from_ath_pct: '9.9', distance_from_52w_high_pct: '-9.9', price_change_1d_pct: '-1.4', market_cap: '4280000000000' },
-      { symbol: 'CELLO.NS', plain: 'CELLO', tv: 'NSE:CELLO', market: 'IN', exchange: 'NSE', name: 'Cello World', sector: 'Consumer Cyclical', pools: ['S200'], cap: 'Small', best_status: 'OPPORTUNITY', funda_points: 6, close: '364.40', below_200dma_pct: '6.1', fall_from_ath_pct: '64.4', distance_from_52w_high_pct: '-41.4', price_change_1d_pct: '-0.12', market_cap: '82140000000' },
+      { symbol: 'CELLO.NS', plain: 'CELLO', tv: 'NSE:CELLO', market: 'IN', exchange: 'NSE', name: 'Cello World', sector: 'Consumer Cyclical', pools: ['S200'], cap: 'Small', best_status: 'OPPORTUNITY', funda_points: 6, checks: { pe_lt_70: true, pe_lt_5yr: true, pb_lt_5yr: false, roce: false, roe: false, net_debt: true, pledging: true, sales_ath: true, profit_ath: false, np_yoy: false, np_ttm: null }, close: '364.40', below_200dma_pct: '6.1', fall_from_ath_pct: '64.4', distance_from_52w_high_pct: '-41.4', price_change_1d_pct: '-0.12', market_cap: '82140000000' },
       { symbol: 'SUMICHEM.NS', plain: 'SUMICHEM', tv: 'NSE:SUMICHEM', market: 'IN', exchange: 'NSE', name: 'Sumitomo Chemical India', sector: 'Basic Materials', pools: ['S200'], cap: 'Mid', best_status: null, funda_points: null, close: '344.70', below_200dma_pct: '22.5', fall_from_ath_pct: '48.2', distance_from_52w_high_pct: '-39.7', price_change_1d_pct: '-0.55', market_cap: '172000000000' },
       { symbol: 'NVDA', plain: 'NVDA', tv: 'NASDAQ:NVDA', market: 'US', exchange: 'NASDAQ', name: 'NVIDIA', sector: 'Technology', pools: ['USMEGA'], cap: null, best_status: 'VALID', funda_points: null, close: '182.11', below_200dma_pct: '-12.0', fall_from_ath_pct: '13.4', distance_from_52w_high_pct: '-13.4', price_change_1d_pct: '2.3', market_cap: '4450000000000' },
       { symbol: 'CAT', plain: 'CAT', tv: 'NYSE:CAT', market: 'US', exchange: 'NYSE', name: 'Caterpillar', sector: 'Industrials', pools: ['USMEGA'], cap: null, best_status: null, funda_points: null, close: '395.20', below_200dma_pct: '-4.1', fall_from_ath_pct: '6.0', distance_from_52w_high_pct: '-6.0', price_change_1d_pct: '-0.7', market_cap: '188000000000' },
@@ -51,7 +51,9 @@
         { code: 'S200', name: 'S200', market: 'IN', count: 2 }, { code: 'PlayArea', name: 'PlayArea', market: 'IN', count: 0 },
         { code: 'USMEGA', name: 'US Mega Cap', market: 'US', count: 3 },
       ],
-      stocks: STOCKS, thresholds: {},
+      stocks: STOCKS,
+      check_labels: { pe_lt_70: 'PE < 70', pe_lt_5yr: 'PE < 5Y avg', pb_lt_5yr: 'PB < 5Y avg', roce: 'ROCE > 15%', roe: 'ROE > 15%', net_debt: 'Net D/E < 0.25', pledging: 'Pledge < 5%', sales_ath: 'Sales near peak', profit_ath: 'Profit near peak', np_yoy: 'NP growth YoY', np_ttm: 'TTM NP > 250 Cr', pe_lt_30: 'PE < 30', roa: 'ROA > 1.2%', gnpa: 'GNPA < 3%', nnpa: 'NNPA < 1%' },
+      thresholds: { fundamental: { pe_max: '70', roce_min: '15', roe_min: '15', net_debt_to_equity_max: '0.25', pledging_max: '5' }, envelope: { buy_zone_below_dma_pct: '14', opportunity_below_dma_pct: '9' }, ath_fall_pct_by_cap: { Large: '20', Mid: '30', Small: '40' } },
     };
     let WATCHLISTS = [
       { id: 1, name: 'S1', symbols: ['CELLO.NS', 'SUMICHEM.NS'] }, { id: 2, name: 'S2', symbols: [] },
@@ -81,6 +83,28 @@
         case 'watchlist.remove': { const w = WATCHLISTS.find((x) => x.id === msg.id); w.symbols = w.symbols.filter((s) => s !== msg.symbol); return { watchlist: w }; }
         case 'watchlist.update': { const w = WATCHLISTS.find((x) => x.id === msg.id); Object.assign(w, msg.patch); return w; }
         case 'watchlist.delete': WATCHLISTS = WATCHLISTS.filter((x) => x.id !== msg.id); return { deleted: msg.id };
+        case 'stock': {
+          const e = STOCKS.find((x) => x.symbol === msg.symbol);
+          if (!e) { const err = new Error(msg.symbol + ' is not in Plutus'); err.status = 404; throw err; }
+          const checks = Object.entries(e.checks || {}).map(([id, passed]) => ({ id, label: BOOT.check_labels[id] || id, passed, detail: passed == null ? 'not available' : (BOOT.check_labels[id] || id) + ' · ' + (passed ? 'ok' : 'miss') }));
+          return { symbol: e.symbol, plain: e.plain, market: e.market, snapshot_date: BOOT.snapshot_date, in_universe: true,
+            summary: Object.assign({}, e), snapshot: { close: e.close, dma_200: String(Number(e.close) / (1 - Number(e.below_200dma_pct) / 100)), below_200dma_pct: e.below_200dma_pct, fall_from_ath_pct: e.fall_from_ath_pct, ath: String(Number(e.close) / (1 - Number(e.fall_from_ath_pct) / 100)), high_52w: String(Number(e.close) / (1 + Number(e.distance_from_52w_high_pct) / 100)), low_52w: String(Number(e.close) * 0.8), distance_from_52w_high_pct: e.distance_from_52w_high_pct, has_valid_20pct_rally: true, last_rally_pct: '23.4', days_since_last_rally: 41, pe_current: '28.4', pb_current: '6.1' },
+            fundamentals: { quarter_label: 'Sep 2026' }, scan_results: [{ strategy_id: 'fundamental_screener', status: 'PASS', metrics_snapshot: { points: e.funda_points, points_max: 11, unknown: checks.filter((c) => c.passed == null).length, checks } }], thresholds: BOOT.thresholds };
+        }
+        case 'trades.forSymbol': {
+          const p = msg.symbol.replace(/\.(NS|BO)$/, '');
+          if (p !== 'INFY') return { symbol: p, open: [], closed: [], opportunities: [], plans: [] };
+          return { symbol: p, market: 'IN',
+            open: [{ symbol: 'INFY', status: 'OPEN', qty: 20, buy_price: '1420.00', buy_date: '2026-08-12', target_price: '1750', stop_price: '1320', strategy: 'Envelope' }],
+            closed: [{ symbol: 'INFY', status: 'CLOSED', qty: 15, buy_price: '1380.00', sell_price: '1610.00', buy_date: '2025-11-03', sell_date: '2026-03-18', strategy: '52-Week Low', exit_reason: 'Target' }],
+            opportunities: [{ symbol: 'INFY', status: 'ACTIVE', opp_date: '2026-11-15', buy_price: '1480', target_price: '1800', strategy: 'Envelope (200 DMA)', notes: 'Wait for the 200 DMA retest.' }],
+            plans: [] };
+        }
+        case 'live.quotes': {
+          const quotes = {};
+          (msg.symbols || []).forEach((sym) => { const e = STOCKS.find((x) => x.symbol === sym); if (!e) return; const base = Number(e.close); const wobble = (Math.sin(Date.now() / 4000 + base) * 0.012); quotes[sym] = { close: Math.round(base * (1 + wobble) * 100) / 100, chgPct: Math.round((Number(e.price_change_1d_pct) + wobble * 100) * 100) / 100, chg: null, at: Date.now() }; });
+          return { quotes, degraded: false };
+        }
         case 'cache.clear': return { cleared: true };
         case 'link.symbol': return { linked: false, reason: 'harness' };
         default: return { ok: true };
@@ -124,6 +148,7 @@
   <script src="../../shared/settings.js"></script>
   <script src="../../shared/ui.js"></script>
   <script src="../../shared/panel_logic.js"></script>
+  <script src="../../shared/card.js"></script>
   <script src="../../shared/sizer.js"></script>
   <script src="../../tv/tv_content.js"></script>
 </body>

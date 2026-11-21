@@ -31,6 +31,9 @@
     tvHeldStrip: true,               // held-position strip for the active symbol
     tvDrawerOpen: false,             // side drawer (Filters · Stock · Trades · Notes)
     tvDrawerTab: 'notes',
+    tvLivePrices: true,              // live Last / Chg% in rows from TradingView's scanner (display only)
+    tvLiveIntervalSec: 15,           // 15 | 30 | 60
+    tvHoverCard: true,               // hover a row -> Plutus checks card
 
     // Cross-site
     linkTabs: true,                  // TradingView and Screener company tabs follow each other

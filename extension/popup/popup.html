@@ -41,6 +41,15 @@
     <label class="check"><input type="checkbox" id="tvFocusMode"> Focus mode: hide upsell dialogs</label>
     <label class="check"><input type="checkbox" id="tvSpaceKeyNavigates"> Space bar advances to the next stock</label>
     <label class="check"><input type="checkbox" id="tvHeldStrip"> Held-position strip (avg cost, P&amp;L, days, target, stop)</label>
+    <label class="check"><input type="checkbox" id="tvLivePrices"> Live Last / Chg% in rows from TradingView (display only)</label>
+    <label>Live refresh
+      <select id="tvLiveIntervalSec">
+        <option value="15">every 15 s</option>
+        <option value="30">every 30 s</option>
+        <option value="60">every 60 s</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="tvHoverCard"> Hover a row: Plutus checks card</label>
     <label>Default sort
       <select id="tvSort">
         <option value="default">A → Z</option>

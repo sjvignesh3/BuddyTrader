@@ -5,8 +5,9 @@
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const BOOLS = ['tvEnabled', 'tvShowChips', 'tvFocusMode', 'tvSpaceKeyNavigates', 'tvHeldStrip', 'scrEnabled', 'scrAutoConsolidated', 'scrPlutusCard', 'scrHighlightTables', 'scrPageRules', 'scrWalk', 'linkTabs'];
+  const BOOLS = ['tvEnabled', 'tvShowChips', 'tvFocusMode', 'tvSpaceKeyNavigates', 'tvHeldStrip', 'tvLivePrices', 'tvHoverCard', 'scrEnabled', 'scrAutoConsolidated', 'scrPlutusCard', 'scrHighlightTables', 'scrPageRules', 'scrWalk', 'linkTabs'];
   const TEXTS = ['apiUrl', 'webAppUrl', 'token', 'adminToken', 'tvSort', 'tvRegion'];
+  const NUMBER_SELECTS = ['tvLiveIntervalSec'];
   const LOCAL_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
 
   /**
@@ -58,6 +59,7 @@
   function fill(s) {
     BOOLS.forEach((k) => { $(k).checked = !!s[k]; });
     TEXTS.forEach((k) => { $(k).value = s[k] == null ? '' : s[k]; });
+    NUMBER_SELECTS.forEach((k) => { $(k).value = String(s[k]); });
     OVERRIDES.forEach((k) => { const v = (s.thresholdOverrides || {})[k]; $('ov_' + k).value = v == null || v === '' ? '' : v; });
     TILES.forEach((k) => { $('t_' + k).value = (s.tiles || {})[k]; });
     $('cacheTtlMinutes').value = s.cacheTtlMinutes;
@@ -68,6 +70,7 @@
     const out = { thresholdOverrides: {}, tiles: {} };
     BOOLS.forEach((k) => { out[k] = $(k).checked; });
     TEXTS.forEach((k) => { out[k] = $(k).value.trim(); });
+    NUMBER_SELECTS.forEach((k) => { const v = Number($(k).value); if (Number.isFinite(v)) out[k] = v; });
     OVERRIDES.forEach((k) => { const v = $('ov_' + k).value.trim(); out.thresholdOverrides[k] = v === '' ? '' : Number(v); });
     TILES.forEach((k) => { const v = Number($('t_' + k).value); if (Number.isFinite(v)) out.tiles[k] = v; });
     const ttl = Number($('cacheTtlMinutes').value); if (Number.isFinite(ttl) && ttl > 0) out.cacheTtlMinutes = ttl;

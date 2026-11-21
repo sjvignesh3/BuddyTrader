@@ -63,6 +63,14 @@ class TestStockEntry:
         assert ext.best_technical_status(results) == "BUY_ZONE"
         assert ext.funda_points(results) == 9
 
+    def test_funda_checks_keep_na_as_none(self):
+        res = [{"strategy_id": "fundamental_screener", "metrics_snapshot": {"checks": [
+            {"id": "a", "passed": True}, {"id": "b", "passed": False}, {"id": "c", "passed": None},
+            {"id": "d", "passed": "yes"}, {"label": "no id"}]}}]
+        assert ext.funda_checks(res) == {"a": True, "b": False, "c": None, "d": None}
+        assert ext.funda_checks([{"strategy_id": "envelope_200dma"}]) is None
+        assert ext.check_labels({"X": res}) == {}         # no labels in these checks
+
     def test_funda_points_falls_back_to_score(self):
         assert ext.funda_points([{"strategy_id": "fundamental_screener",
                                   "score": Decimal("7")}]) == 7
@@ -142,7 +150,11 @@ def db():
              "status": "OPPORTUNITY", "score": Decimal("70"), "metrics_snapshot": {}},
             {"id": 2, "scan_id": "s1", "symbol": "TCS.NS", "strategy_id": "fundamental_screener",
              "status": "PASS", "score": Decimal("9"),
-             "metrics_snapshot": {"points": 9, "points_max": 11, "checks": []}},
+             "metrics_snapshot": {"points": 9, "points_max": 11, "checks": [
+                 {"id": "pe_lt_70", "label": "PE < 70", "passed": True, "detail": "PE 28"},
+                 {"id": "roce", "label": "ROCE > 15%", "passed": False, "detail": "ROCE 12"},
+                 {"id": "pledging", "label": "Pledge < 5%", "passed": None, "detail": "n/a"},
+             ]}},
             # Older scan (lower id) — must lose to the newer OPPORTUNITY row above.
             {"id": 0, "scan_id": "s0", "symbol": "TCS.NS", "strategy_id": "envelope_200dma",
              "status": "BUY_ZONE", "score": Decimal("100"), "metrics_snapshot": {}},
@@ -185,6 +197,11 @@ class TestBootstrap:
         infy = syms["INFY.NS"]
         assert infy["cap"] == "Large"                     # manual fallback
         assert infy["best_status"] is None
+        # per-rule chips: pass / fail / n/a per check id, labels once at the top
+        assert tcs["checks"] == {"pe_lt_70": True, "roce": False, "pledging": None}
+        assert infy["checks"] is None                     # no fundamental scan yet
+        assert body["check_labels"] == {"pe_lt_70": "PE < 70", "roce": "ROCE > 15%", "pledging": "Pledge < 5%"}
+        assert body["pools"][0]["market"] == "IN"
         assert body["thresholds"]["fundamental"]["pe_max"] == "70"
         assert body["thresholds"]["ath_fall_pct_by_cap"]["Mid"] == "30"
 
