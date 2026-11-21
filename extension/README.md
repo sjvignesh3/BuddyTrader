@@ -40,7 +40,7 @@ extension/
 | Piece | Where |
 |---|---|
 | Read bundles | `GET /api/extension/bootstrap` (v2: per-stock `checks` + `check_labels` for the filter chips), `GET /api/extension/stock/{symbol}`, `GET /api/strategy_configs` (`plutus/api/extension.py`) |
-| Custom watchlists | migration `020_watchlists.sql` + `/api/watchlists` (`plutus/api/watchlists.py`, gated by `X-Plutus-Auth`) |
+| Custom watchlists / labels | migrations `020_watchlists.sql` + `028_watchlist_color.sql` (colour) + `/api/watchlists` (`plutus/api/watchlists.py`, gated by `X-Plutus-Auth`) |
 | Notes / positions / opportunities | existing `/api/journal/*` |
 | P/E history (3Y / 5Y / 10Y medians, 10Y range) on the card and as Screener tiles | migration `029_fundamentals_pe_medians.sql`; filled by the quarterly Screener sync (one chart request per stock, the same one that gives the 5Y average) |
 | PlayArea membership | existing `/api/universe/pools/PlayArea/members` |
@@ -49,6 +49,7 @@ Apply the migration on each database the API points at:
 
 ```bash
 psql "$PLUTUS_SUPABASE_DB_URL" -f plutus/migrations/020_watchlists.sql
+psql "$PLUTUS_SUPABASE_DB_URL" -f plutus/migrations/028_watchlist_color.sql          # before deploying the new backend
 psql "$PLUTUS_SUPABASE_DB_URL" -f plutus/migrations/029_fundamentals_pe_medians.sql   # then run the quarterly sync once
 ```
 
@@ -82,6 +83,14 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
   *Stock* (the same Plutus card Screener shows, now with a **Valuation vs history** box: P/E against its 3Y / 5Y / 10Y medians, the 10Y range with today's position, market cap / sales, market cap / EBITDA, P/B vs 5Y average), *Trades* (open lots with live P&L, closed trades with realised
   P&L and days held, opportunities, sizing plans), *Notes* (the full dated timeline: add with `Ctrl+Enter`,
   edit, delete).
+* **Labels**: a watchlist can carry a colour (migration 028). Rows show a dot per list they belong to; `🏷`
+  on a row (or `L`) opens a popover to tick the stock into any list or make a new coloured label; a label row
+  under the cap slicer narrows the list to one label's members. Labels are watchlists — the web app sees the
+  same lists.
+* **Stocks outside the universe**: the Stock tab shows a grey *provisional* card read from TradingView's scanner
+  (price, market cap tier, 200 DMA / 52-week / ATH distances, P/E, P/B, ROE, ROIC, margins, growth) with
+  **Add to PlayArea** and, with an admin token, **Sync now**. Uncoloured and unscored on purpose: TradingView's
+  definitions are not Plutus' checks.
 * **Fundamental filter chips**: each check is a chip with three states — off, *must pass* (solid), *must not
   fail* (dashed, n/a allowed). `⭐ All pass` keeps only 11/11 stocks. Unlike the HIFY score, a missing value
   never counts as a pass; stocks with no scan yet are hidden while a chip is on.

@@ -70,9 +70,13 @@
     allPass: false,
     stockCache: new Map(),      // "TCS.NS" -> {data|null, error, at}  for the Stock tab / hover card
     trades: { symbol: null, data: null, loading: false, error: null },
+    labelFilter: null,          // watchlist id -> only its members (F13)
+    provisional: new Map(),     // "XYZ.NS" -> live.fundamentals result for stocks outside the universe (F14)
   };
-  let panel, toggleBtn, listEl, headerEl, selectEl, slicerEl, regionEl, filterInput, sectorSelect, asofEl, liveEl, bannerEl, addRow, addInput, hintEl, focusBtn, linkBtn, heldEl, wideBtn, drawerBtn;
-  let drawer, drawerBody, drawerTabsEl, drawerTitleEl, hoverEl;
+  // Label colours (a label is a watchlist with a colour). Same family as the chart palette.
+  const PALETTE = ['#14b8a6', '#2962ff', '#a78bfa', '#f59e0b', '#f23645', '#ec4899', '#84cc16'];
+  let panel, toggleBtn, listEl, headerEl, selectEl, slicerEl, labelsEl, regionEl, filterInput, sectorSelect, asofEl, liveEl, bannerEl, addRow, addInput, hintEl, focusBtn, linkBtn, heldEl, wideBtn, drawerBtn;
+  let drawer, drawerBody, drawerTabsEl, drawerTitleEl, hoverEl, labelPop;
 
   // =============================================================================
   // Boot
@@ -266,8 +270,29 @@
     const f = st.filter.trim().toUpperCase();
     if (f) rows = rows.filter((r) => r.plain.includes(f) || (r.name || '').toUpperCase().includes(f));
     if (chipsActive()) rows = rows.filter(passesChips);
+    if (st.labelFilter != null) {
+      const w = st.watchlists.find((x) => String(x.id) === String(st.labelFilter));
+      const members = new Set((w && w.symbols) || []);
+      rows = rows.filter((r) => members.has(r.symbol));
+    }
     rows.sort(L.comparator(st.sort.key, st.sort.dir));
     return rows;
+  }
+
+  // ---- labels (F13): a label is a watchlist with a colour ----------------------
+  function listsFor(symbol) { return st.watchlists.filter((w) => (w.symbols || []).includes(symbol)); }
+  function labelDot(w, size) {
+    return el('span', { class: 'px-dot', style: 'background:' + (w.color || '#868993') + (size ? ';width:' + size + 'px;height:' + size + 'px' : ''), title: w.name });
+  }
+  function swatchPicker(initial) {
+    let value = initial || null;
+    const wrap = el('div', { class: 'px-swatches' });
+    const paint = () => Array.from(wrap.children).forEach((b) => b.classList.toggle('px-on', b.getAttribute('data-color') === (value || '')));
+    const none = el('button', { type: 'button', class: 'px-swatch px-swatch-none', 'data-color': '', title: 'No colour', text: '∅', onclick: (e) => { e.preventDefault(); value = null; paint(); } });
+    wrap.appendChild(none);
+    PALETTE.forEach((c) => wrap.appendChild(el('button', { type: 'button', class: 'px-swatch', 'data-color': c, style: 'background:' + c, title: c, onclick: (e) => { e.preventDefault(); value = c; paint(); } })));
+    paint();
+    return { el: wrap, value: () => value };
   }
 
   // =============================================================================
@@ -318,6 +343,9 @@
     // cap slicer
     slicerEl = el('div', { class: 'px-slicer' });
     panel.appendChild(slicerEl);
+    // label slicer (F13): one chip per watchlist that has members in this region
+    labelsEl = el('div', { class: 'px-labels', style: 'display:none' });
+    panel.appendChild(labelsEl);
 
     // filter + sector (F2)
     filterInput = el('input', { class: 'px-input', type: 'text', placeholder: 'Filter…  ( / )', oninput: () => { st.filter = filterInput.value; renderList(); } });
@@ -353,7 +381,89 @@
     window.addEventListener('keydown', onKeyDown, true);
   }
 
-  function renderAll() { renderBanner(); renderRegion(); renderSelect(); renderSlicer(); renderSectors(); renderCols(); renderList(); renderHint(); renderAsOf(); renderHeld(); renderDrawer(); }
+  function renderAll() { renderBanner(); renderRegion(); renderSelect(); renderSlicer(); renderLabels(); renderSectors(); renderCols(); renderList(); renderHint(); renderAsOf(); renderHeld(); renderDrawer(); }
+
+  function renderLabels() {
+    if (!labelsEl) return;
+    labelsEl.innerHTML = '';
+    const region = st.region;
+    const lists = st.watchlists.filter((w) => (w.symbols || []).some((s) => L.marketOfEntry(st.stocks.get(s), s) === region));
+    if (!lists.length) { labelsEl.style.display = 'none'; st.labelFilter = null; return; }
+    if (st.labelFilter != null && !lists.some((w) => String(w.id) === String(st.labelFilter))) st.labelFilter = null;
+    labelsEl.style.display = '';
+    labelsEl.appendChild(el('span', { class: 'px-labels-k', text: '🏷' }));
+    lists.forEach((w) => {
+      const on = st.labelFilter != null && String(w.id) === String(st.labelFilter);
+      labelsEl.appendChild(el('button', { class: 'px-label' + (on ? ' px-on' : ''), title: w.name + ' · ' + (w.symbols || []).length + (on ? ' (click to show all)' : ' (click to show only these)'),
+        onclick: () => { st.labelFilter = on ? null : w.id; renderLabels(); renderSlicer(); renderList(); } }, [labelDot(w), w.name]));
+    });
+  }
+
+  /** Popover anchored to a row: tick the stock into any list, or make a new coloured label. */
+  function labelPopover(item, symbol) {
+    closeLabelPopover();
+    const plain = S.toPlain(symbol);
+    const mkt = L.marketOfEntry(st.stocks.get(symbol), symbol);
+    const lists = st.watchlists.filter((w) => L.listVisibleIn(mkt, L.listMarket(w.symbols, st.stocks)));
+    labelPop = el('div', { id: 'px-labelpop' });
+    labelPop.appendChild(el('div', { class: 'px-labelpop-head' }, [el('b', { text: 'Labels · ' + plain }), el('span', { class: 'px-header-spacer' }), el('button', { class: 'px-icon-btn', text: '✕', onclick: closeLabelPopover })]));
+    const body = el('div', { class: 'px-labelpop-list' });
+    lists.forEach((w) => {
+      const has = (w.symbols || []).includes(symbol);
+      const cb = el('input', { type: 'checkbox', ...(has ? { checked: 'checked' } : {}) });
+      const row = el('label', { class: 'px-labelpop-row' }, [cb, labelDot(w), el('span', { class: 'px-labelpop-name', text: w.name }), el('span', { class: 'px-muted', text: String((w.symbols || []).length) })]);
+      cb.addEventListener('change', async () => {
+        cb.disabled = true;
+        try {
+          if (cb.checked) await U.send({ type: 'watchlist.add', id: w.id, symbols: [symbol] });
+          else await U.send({ type: 'watchlist.remove', id: w.id, symbol });
+          const wl = await U.send({ type: 'watchlists' });
+          st.watchlists = wl.watchlists || []; st.wlSource = wl.source || 'local';
+          renderLabels(); renderSelect(); renderList();
+          U.toast(plain + (cb.checked ? ' → ' : ' ✕ ') + w.name, 'success', 1200);
+        } catch (e) { U.toast(e.message, 'error'); cb.checked = !cb.checked; }
+        cb.disabled = false;
+      });
+      body.appendChild(row);
+    });
+    if (!lists.length) body.appendChild(el('div', { class: 'px-muted', text: 'No watchlists yet — make the first label below.' }));
+    labelPop.appendChild(body);
+    const name = el('input', { class: 'px-input', type: 'text', placeholder: 'New label…', maxlength: '60' });
+    const sw = swatchPicker(PALETTE[st.watchlists.length % PALETTE.length]);
+    const add = el('button', { class: 'px-small-btn px-primary', text: 'Add' });
+    const create = async () => {
+      if (!name.value.trim()) { U.toast('Name the label first', 'error'); return; }
+      add.disabled = true;
+      try {
+        const w = await U.send({ type: 'watchlist.create', name: name.value.trim(), symbols: [symbol], color: sw.value() });
+        await reloadWatchlists();
+        U.toast(plain + ' → ' + w.name, 'success', 1500);
+        labelPopover(item, symbol);
+      } catch (e) { U.toast(e.message, 'error'); add.disabled = false; }
+    };
+    add.addEventListener('click', create);
+    name.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') create(); if (e.key === 'Escape') closeLabelPopover(); });
+    labelPop.appendChild(el('div', { class: 'px-labelpop-new' }, [el('div', { class: 'px-drow' }, [name, add]), sw.el]));
+    document.body.appendChild(labelPop);
+    // place it left of the panel, aligned with the row
+    const pr = panel.getBoundingClientRect(), ir = item.getBoundingClientRect(), w = 280, h = labelPop.offsetHeight || 220;
+    const drawerOpen = st.settings.tvDrawerOpen && drawer && !drawer.classList.contains('px-collapsed');
+    const leftEdge = drawerOpen ? drawer.getBoundingClientRect().left : pr.left;
+    let left = leftEdge - w - 8;
+    if (left < 4) left = Math.min(window.innerWidth - w - 4, pr.right + 8);
+    labelPop.style.left = Math.max(4, left) + 'px';
+    labelPop.style.top = Math.max(4, Math.min(window.innerHeight - h - 8, ir.top)) + 'px';
+    labelPop.style.width = w + 'px';
+    hideHover();
+    setTimeout(() => { document.addEventListener('mousedown', onDocDownForPop, true); document.addEventListener('keydown', onKeyForPop, true); name.focus(); }, 0);
+  }
+  function onDocDownForPop(e) { if (labelPop && !labelPop.contains(e.target)) closeLabelPopover(); }
+  function onKeyForPop(e) { if (e.key === 'Escape') { e.stopPropagation(); closeLabelPopover(); } }
+  function closeLabelPopover() {
+    if (labelPop) { labelPop.remove(); labelPop = null; }
+    document.removeEventListener('mousedown', onDocDownForPop, true);
+    document.removeEventListener('keydown', onKeyForPop, true);
+  }
 
   function renderBanner() {
     if (!bannerEl) return;
@@ -453,10 +563,10 @@
   function setRegion(region, opts) {
     if (region !== 'IN' && region !== 'US') return;
     st.region = region;
-    st.capFilter = 'All'; st.sectorFilter = 'All'; st.filter = ''; if (filterInput) filterInput.value = '';
+    st.capFilter = 'All'; st.sectorFilter = 'All'; st.labelFilter = null; st.filter = ''; if (filterInput) filterInput.value = '';
     if (!listInRegion(st.active)) { st.active = defaultList(); saveActiveList(); }
     if (!(opts && opts.silent)) SET.save({ tvRegion: region });
-    renderRegion(); renderSelect(); renderSlicer(); renderSectors(); renderList();
+    renderRegion(); renderSelect(); renderSlicer(); renderLabels(); renderSectors(); renderList();
   }
 
   function renderSelect() {
@@ -562,7 +672,8 @@
       const item = el('div', { class: 'px-item' + (r.symbol === st.activeSymbol ? ' px-active' : '') + (r.entry ? '' : ' px-missing'), 'data-symbol': r.symbol, title: r.entry ? '' : 'Not in the Plutus universe' }, [
         el('span', { class: 'px-chip px-chip-cap-' + capL, text: capL, title: r.cap || 'Cap unknown' }),
         el('div', { class: 'px-item-main' }, [
-          el('div', { class: 'px-sym', text: r.plain }),
+          el('div', { class: 'px-sym-row' }, [el('div', { class: 'px-sym', text: r.plain })].concat(
+            (() => { const ls = listsFor(r.symbol); const dots = ls.slice(0, 3).map((w) => labelDot(w)); if (ls.length > 3) dots.push(el('span', { class: 'px-dot-more', text: '+' + (ls.length - 3), title: ls.slice(3).map((w) => w.name).join(', ') })); return dots.length ? [el('span', { class: 'px-dots' }, dots)] : []; })())),
           showChips && chips.length ? el('div', { class: 'px-chips' }, chips) : (r.name ? el('div', { class: 'px-name', text: r.name }) : null),
         ]),
         el('span', { class: 'px-cell px-col-num px-col-last', 'data-cell': 'last' }),
@@ -574,6 +685,7 @@
         el('div', { class: 'px-actions' }, [
           el('button', { class: 'px-act', title: 'Size a position (Z)', text: '⚖', onclick: (e) => { e.stopPropagation(); sizerDialog(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Note (N)', text: '✎', onclick: (e) => { e.stopPropagation(); noteDialog(r.symbol); } }),
+          el('button', { class: 'px-act', title: 'Labels: tick this stock into lists (L)', text: '🏷', onclick: (e) => { e.stopPropagation(); labelPopover(item, r.symbol); } }),
           el('button', { class: 'px-act', title: 'Bookmark to a watchlist (B)', text: '🔖', onclick: (e) => { e.stopPropagation(); bookmarkDialog(r.symbol); } }),
           r.market === 'US' ? null : el('button', { class: 'px-act', title: 'Screener.in (S)', text: '⧉', onclick: (e) => { e.stopPropagation(); openScreener(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Open in Plutus (P)', text: '⌂', onclick: (e) => { e.stopPropagation(); openPlutus(r.symbol); } }),
@@ -695,7 +807,7 @@
   function renderHint() {
     const space = st.settings.tvSpaceKeyNavigates;
     hintEl.innerHTML = '<span><kbd>↑</kbd><kbd>↓</kbd>' + (space ? '<kbd>Space</kbd>' : '') + ' stock</span><span><kbd>←</kbd><kbd>→</kbd> list</span>' +
-      '<span><kbd>Z</kbd> size</span><span><kbd>N</kbd> note</span><span><kbd>B</kbd> bookmark</span><span><kbd>O</kbd> opportunity</span><span><kbd>S</kbd> screener</span><span><kbd>P</kbd> plutus</span><span><kbd>A</kbd> play area</span><span><kbd>Alt</kbd>+<kbd>D</kbd> drawer</span><span><kbd>Alt</kbd>+<kbd>W</kbd> panel</span><span><kbd>Alt</kbd>+<kbd>E</kbd> expand</span>';
+      '<span><kbd>Z</kbd> size</span><span><kbd>N</kbd> note</span><span><kbd>L</kbd> labels</span><span><kbd>B</kbd> bookmark</span><span><kbd>O</kbd> opportunity</span><span><kbd>S</kbd> screener</span><span><kbd>P</kbd> plutus</span><span><kbd>A</kbd> play area</span><span><kbd>Alt</kbd>+<kbd>D</kbd> drawer</span><span><kbd>Alt</kbd>+<kbd>W</kbd> panel</span><span><kbd>Alt</kbd>+<kbd>E</kbd> expand</span>';
     focusBtn.classList.toggle('px-on', !!st.settings.tvFocusMode);
     linkBtn.classList.toggle('px-on', !!st.settings.linkTabs);
     linkBtn.title = st.settings.linkTabs ? 'Tabs linked: Screener follows this chart and the chart follows Screener (click to unlink)' : 'Tabs not linked (click to link TradingView and Screener)';
@@ -978,6 +1090,7 @@
     if (!cached || Date.now() - cached.at > 120000) {
       stockFor(sym).then(() => { if (drawerTab() === 'stock' && currentSymbol() === sym) renderDrawer(); });
     }
+    if (cached && !cached.data && cached.error && cached.error.status === 404) { renderProvisional(body, sym, r); return; }
     const card = C.build({
       ticker: r.plain, data: cached ? cached.data : null, error: cached ? cached.error : null,
       boot: st.boot, settings: st.settings, held: r.held, compact: true,
@@ -998,6 +1111,55 @@
     ]);
     body.appendChild(links);
     if (r.live && r.last != null) body.appendChild(el('div', { class: 'px-muted', text: 'Live ' + (r.market === 'US' ? '$' : '₹') + U.fmt(r.last, 2) + ' · ' + pct(r.chgPct) + '% today (TradingView). The card above uses the nightly snapshot.' }));
+  }
+
+  // ---- F14: a stock outside the Plutus universe — TradingView data, clearly provisional ----
+  function renderProvisional(body, sym, r) {
+    const rec = st.provisional.get(sym);
+    if (!rec) {
+      st.provisional.set(sym, { loading: true, at: Date.now() });
+      U.send({ type: 'live.fundamentals', symbol: sym }, 20000)
+        .then((res) => { st.provisional.set(sym, Object.assign({ loading: false }, res)); })
+        .catch((e) => { st.provisional.set(sym, { loading: false, data: null, error: e.message }); })
+        .then(() => { if (drawerTab() === 'stock' && currentSymbol() === sym) renderDrawer(); });
+    }
+    const cur = r.market === 'US' ? '$' : '₹';
+    const head = el('div', { class: 'px-prov-head' }, [
+      el('span', { class: 'px-chip px-chip-prov', text: 'NOT IN PLUTUS' }),
+      el('span', { class: 'px-muted', text: 'TradingView data · provisional' }),
+    ]);
+    const box = el('div', { class: 'px-prov' }, [head]);
+    const d = rec && rec.data;
+    if (!rec || rec.loading) box.appendChild(el('div', { class: 'px-muted', text: 'Reading TradingView…' }));
+    else if (!d) box.appendChild(el('div', { class: 'px-muted', text: 'No TradingView data (' + (rec.error || 'unknown') + ').' }));
+    else {
+      const f = (v, nd, suf) => (v == null ? '—' : (nd === 0 ? Math.round(v).toLocaleString('en-US') : v.toFixed(nd == null ? 1 : nd)) + (suf || ''));
+      const pct = (v) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%');
+      const tier = r.market === 'US' ? L.usTier(d.marketCap) : (d.marketCap >= 50000e7 ? 'Large' : d.marketCap >= 15000e7 ? 'Mid' : d.marketCap != null ? 'Small' : null);
+      const kv = (k, v) => el('div', { class: 'px-kv' }, [el('span', { class: 'px-kv-k', text: k }), el('span', { class: 'px-kv-v', text: v })]);
+      box.appendChild(el('div', { class: 'px-prov-name', text: (d.name || r.plain) + (d.sector ? ' · ' + d.sector : '') + (d.industry ? ' · ' + d.industry : '') }));
+      box.appendChild(el('div', { class: 'px-prov-grid' }, [
+        kv('Price', cur + f(d.close, d.close >= 1000 ? 0 : 2) + '  ' + pct(d.chgPct)),
+        kv('Market cap', d.marketCap == null ? '—' : (r.market === 'US' ? '$' + (d.marketCap / 1e9).toFixed(1) + ' B' : '₹' + Math.round(d.marketCap / 1e7).toLocaleString('en-IN') + ' Cr') + (tier ? ' · ' + tier : '')),
+        kv('From 200 DMA', pct(d.dist200)),
+        kv('Off 52-week high', pct(d.off52)),
+        kv('Off ATH', pct(d.offAth)),
+        kv('P/E · P/B', f(d.pe, 1) + ' · ' + f(d.pb, 2)),
+        kv('ROE · ROIC', f(d.roe, 1, '%') + ' · ' + f(d.roic, 1, '%')),
+        kv('Debt / equity', f(d.debtToEquity, 2)),
+        kv('OPM · net margin', f(d.opMargin, 1, '%') + ' · ' + f(d.netMargin, 1, '%')),
+        kv('Revenue · profit YoY', pct(d.revenueYoY) + ' · ' + pct(d.netIncomeYoY)),
+        kv('EPS · dividend yield', f(d.eps, 2) + ' · ' + f(d.dividendYield, 2, '%')),
+      ]));
+      box.appendChild(el('div', { class: 'px-muted px-prov-note', text: 'Uncoloured on purpose: these are TradingView’s definitions (ROIC, TTM margins), not Plutus’ Screener-based checks. No score until the stock is in a pool and synced.' }));
+    }
+    body.appendChild(section(r.plain + ' · outside the universe', [box]));
+    body.appendChild(el('div', { class: 'px-drow' }, [
+      el('button', { class: 'px-small-btn px-primary', text: '⚡ Add to PlayArea', title: 'Adds the stock to the PlayArea pool; Plutus data arrives on the next sync', onclick: () => togglePlayArea(sym, true) }),
+      st.settings.adminToken ? el('button', { class: 'px-small-btn', text: '⟳ Sync now', title: 'Trigger the daily sync for this symbol (admin token)', onclick: async () => { try { await U.send({ type: 'sync.trigger', symbols: [sym] }); U.toast('Sync requested for ' + r.plain, 'success'); } catch (e) { U.toast(e.message, 'error'); } } }) : null,
+      r.market === 'US' ? null : el('button', { class: 'px-small-btn', text: '⧉ Screener', onclick: () => openScreener(sym) }),
+      el('button', { class: 'px-small-btn', text: '↻', title: 'Read TradingView again', onclick: () => { st.provisional.delete(sym); renderDrawer(); } }),
+    ]));
   }
 
   // ---- Trades tab (F19): everything the journal knows about this stock -------
@@ -1528,6 +1690,7 @@
     else if (k === '/') { stop(); filterInput.focus(); filterInput.select(); }
     else if (k === 'n' || k === 'N') { stop(); noteDialog(currentSymbol()); }
     else if (k === 'b' || k === 'B') { stop(); bookmarkDialog(currentSymbol()); }
+    else if (k === 'l' || k === 'L') { stop(); const sym = currentSymbol(); const row = sym && listEl.querySelector('.px-item[data-symbol="' + CSS.escape(sym) + '"]'); if (row) labelPopover(row, sym); }
     else if (k === 'o' || k === 'O') { stop(); opportunityDialog(currentSymbol()); }
     else if (k === 's' || k === 'S') { stop(); openScreener(currentSymbol()); }
     else if (k === 'p' || k === 'P') { stop(); openPlutus(currentSymbol()); }
@@ -1586,18 +1749,19 @@
     const wl = await U.send({ type: 'watchlists' });
     st.watchlists = wl.watchlists || []; st.wlSource = wl.source || 'local';
     if (!listExists(st.active)) st.active = defaultList();
-    renderSelect(); renderSlicer(); renderSectors(); renderList(); renderDrawer();
+    renderSelect(); renderSlicer(); renderLabels(); renderSectors(); renderList(); renderDrawer();
   }
 
   function newListDialog(prefill) {
     const name = el('input', { type: 'text', placeholder: 'e.g. Banks to watch', maxlength: '60' });
     const syms = el('input', { type: 'text', placeholder: 'Optional: TCS, INFY, M&M', value: prefill ? S.toPlain(prefill) : '' });
+    const sw = swatchPicker(null);
     return U.dialog({
       title: 'New watchlist', actionLabel: 'Create',
-      body: el('div', {}, [el('label', {}, ['Name', name]), el('label', {}, ['Symbols', syms])]),
+      body: el('div', {}, [el('label', {}, ['Name', name]), el('label', {}, ['Symbols', syms]), el('label', {}, ['Label colour (optional)', sw.el])]),
       onConfirm: async () => {
         if (!name.value.trim()) throw new Error('Name is required');
-        const w = await U.send({ type: 'watchlist.create', name: name.value.trim(), symbols: S.parseList(syms.value) });
+        const w = await U.send({ type: 'watchlist.create', name: name.value.trim(), symbols: S.parseList(syms.value), color: sw.value() });
         await reloadWatchlists();
         st.active = { kind: 'wl', id: w.id, name: w.name }; saveActiveList(); renderSelect(); renderSlicer(); renderSectors(); renderList(); renderDrawer();
         U.toast('Watchlist ' + w.name + ' created', 'success');
@@ -1607,10 +1771,11 @@
   function renameListDialog() {
     const w = activeWatchlist(); if (!w) return;
     const name = el('input', { type: 'text', value: w.name, maxlength: '60' });
-    U.dialog({ title: 'Rename watchlist', actionLabel: 'Rename', body: el('label', {}, ['Name', name]),
+    const sw = swatchPicker(w.color || null);
+    U.dialog({ title: 'Edit watchlist', actionLabel: 'Save', body: el('div', {}, [el('label', {}, ['Name', name]), el('label', {}, ['Label colour', sw.el])]),
       onConfirm: async () => {
         if (!name.value.trim()) throw new Error('Name is required');
-        await U.send({ type: 'watchlist.update', id: w.id, patch: { name: name.value.trim() } });
+        await U.send({ type: 'watchlist.update', id: w.id, patch: { name: name.value.trim(), color: sw.value() } });
         st.active.name = name.value.trim(); saveActiveList();
         await reloadWatchlists(); U.toast('Renamed', 'success', 1500);
       } });

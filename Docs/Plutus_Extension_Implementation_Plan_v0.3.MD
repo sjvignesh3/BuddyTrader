@@ -53,7 +53,7 @@ The one part of their US code that is excluded is the unlock of StockAnalysis' p
 | 1 Quick wins + drawer shell | 0.3.0 | built, committed (`extension-v0.3` 585fe6b), running on the user's chart |
 | 2 Live prices, chips, dossier, hover card, Trades tab | 0.4.0 – 0.4.2 | built, committed (5bf4ad2, 335e402 token diagnostics, c241b47 drawer polish) |
 | 3 P/E medians + valuation box | 0.5.0 | built: `screener_client.pe_stats` from the existing chart request, migration **029** (+ same columns appended to 004), registry fields, `derived` block in `/api/extension/stock`, card valuation box, Screener synthetic tiles. **F11 narrowed:** interest coverage and Net Debt/EBITDA are *not* derivable from stored data (interest, borrowings and cash are not stored); shipped instead: P/S, market cap / EBITDA, P/E vs medians, P/B vs 5Y avg. Those two ratios need the quarterly parser to read the P&L / balance-sheet rows — a later item |
-| 4 Labels + provisional card | 0.6.0 | not started |
+| 4 Labels + provisional card | 0.6.0 | built: migration **028** (`watchlists.color`), `/api/watchlists` accepts `color`, label popover (`🏷` / `L`), row dots, label slicer, colour swatches in the list dialogs; provisional TradingView card for stocks outside the universe (`live.fundamentals`, 1 h cache) with Add to PlayArea / Sync now |
 | 5 US sites | 0.6.x | not started |
 
 ## 1. Local test environment from the 2026-11-20 backup

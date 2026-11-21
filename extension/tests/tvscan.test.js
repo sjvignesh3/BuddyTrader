@@ -86,6 +86,29 @@ test('quotes: a failing region backs off, reports degraded and serves the stale 
   assert.equal(calls, 3);
 });
 
+test('fundamentals: one request, named fields, derived distances, 1 h cache, never throws', async () => {
+  const T = load().PlutusTvScan;
+  let calls = 0;
+  const d = ['NVIDIA', 180, 2.3, 150, 200, 90, 210, 4.4e12, 45.2, 30.1, 90.5, 60.2, 0.4, 62.1, 55.3, 60.0, 70.0, 3.9, 0.02, 'Technology', 'Semiconductors'];
+  const fetchFn = async (url, opts) => { calls++; assert.equal(url, 'https://scanner.tradingview.com/america/scan'); assert.deepEqual(JSON.parse(opts.body).columns, plain(T.FUND_COLUMNS)); return { ok: true, status: 200, json: async () => ({ data: [{ s: 'NASDAQ:NVDA', d }] }) }; };
+  const r = await T.fundamentals('NVDA', fetchFn);
+  assert.equal(r.error, null);
+  assert.equal(r.data.name, 'NVIDIA');
+  assert.equal(r.data.pe, 45.2);
+  assert.equal(r.data.sector, 'Technology');
+  assert.equal(Math.round(r.data.dist200 * 10) / 10, 20);        // 180 vs SMA200 150 -> +20 %
+  assert.equal(Math.round(r.data.off52 * 10) / 10, -10);       // 180 vs 200
+  const again = await T.fundamentals('NVDA', fetchFn);
+  assert.equal(again.cached, true);
+  assert.equal(calls, 1);
+  const bad = await T.fundamentals('INFY.NS', async () => ({ ok: false, status: 500 }));
+  assert.equal(bad.data, null);
+  assert.match(bad.error, /500/);
+  const bare = await T.fundamentals('bad symbol!', fetchFn);
+  assert.equal(bare.data, null);
+  assert.equal(calls, 1);
+});
+
 test('quotes: a thrown fetch never rejects', async () => {
   const T = load().PlutusTvScan;
   const r = await T.quotes(['INFY.NS'], async () => { throw new Error('offline'); });

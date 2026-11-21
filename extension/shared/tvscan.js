@@ -112,7 +112,59 @@
     return result;
   }
 
-  function reset() { cache.clear(); backoff.IN = { until: 0, level: 0 }; backoff.US = { until: 0, level: 0 }; }
+  // ---- one stock outside the Plutus universe: a provisional read ---------------
+  // Shown on a grey "TradingView data · provisional" card only. These columns
+  // are TradingView's own definitions (ROIC, not Screener's ROCE; TTM margins)
+  // and must never be mixed into a Plutus score.
+  const FUND_COLUMNS = [
+    'description', 'close', 'change', 'SMA200', 'price_52_week_high', 'price_52_week_low', 'all_time_high',
+    'market_cap_basic', 'price_earnings_ttm', 'price_book_fq', 'return_on_equity_fq', 'return_on_invested_capital_fq',
+    'debt_to_equity_fq', 'operating_margin_ttm', 'net_margin_ttm', 'total_revenue_yoy_growth_ttm', 'net_income_yoy_growth_ttm',
+    'earnings_per_share_diluted_ttm', 'dividends_yield', 'sector', 'industry',
+  ];
+  const FUND_KEYS = ['name', 'close', 'chgPct', 'sma200', 'high52', 'low52', 'ath', 'marketCap', 'pe', 'pb', 'roe', 'roic',
+    'debtToEquity', 'opMargin', 'netMargin', 'revenueYoY', 'netIncomeYoY', 'eps', 'dividendYield', 'sector', 'industry'];
+  const FUND_TTL_MS = 60 * 60 * 1000;
+  const fundCache = new Map();
 
-  root.PlutusTvScan = { HOSTS, COLUMNS, BATCH, QUOTE_TTL_MS, BACKOFF_MS, buildRequests, requestBody, parseResponse, quotes, reset, _state: { cache, backoff } };
+  function parseFundamentals(json, tv) {
+    const rows = json && Array.isArray(json.data) ? json.data : [];
+    const row = rows.find((r) => r && r.s === tv) || rows[0];
+    if (!row || !Array.isArray(row.d)) return null;
+    const out = {};
+    FUND_KEYS.forEach((k, i) => {
+      const v = row.d[i];
+      out[k] = typeof v === 'number' ? v : (typeof v === 'string' && v ? v : null);
+    });
+    if (out.close == null) return null;
+    const pct = (a, b) => (a != null && b ? (a / b - 1) * 100 : null);
+    out.dist200 = pct(out.close, out.sma200);          // + above, − below
+    out.off52 = pct(out.close, out.high52);
+    out.offAth = pct(out.close, out.ath);
+    return out;
+  }
+
+  async function fundamentals(symbol, fetchFn) {
+    const doFetch = fetchFn || root.fetch;
+    const S = root.PlutusSymbols;
+    const tv = S ? S.toTradingView(symbol) : null;
+    if (!tv || !tv.includes(':')) return { symbol, data: null, error: 'no TradingView ticker for ' + symbol };
+    const hit = fundCache.get(symbol);
+    if (hit && Date.now() - hit.at < FUND_TTL_MS) return Object.assign({ cached: true }, hit);
+    const region = regionOfTicker(tv);
+    try {
+      const res = await doFetch(HOSTS[region], { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ symbols: { tickers: [tv] }, columns: FUND_COLUMNS }) });
+      if (!res || !res.ok) throw new Error('scanner HTTP ' + (res ? res.status : '0'));
+      const data = parseFundamentals(await res.json(), tv);
+      const rec = { symbol, tv, region, data, error: data ? null : 'no data for ' + tv, at: Date.now(), source: 'tradingview-scanner' };
+      fundCache.set(symbol, rec);
+      return rec;
+    } catch (e) {
+      return { symbol, tv, region, data: null, error: (e && e.message) || String(e), at: Date.now() };
+    }
+  }
+
+  function reset() { cache.clear(); fundCache.clear(); backoff.IN = { until: 0, level: 0 }; backoff.US = { until: 0, level: 0 }; }
+
+  root.PlutusTvScan = { HOSTS, COLUMNS, FUND_COLUMNS, FUND_KEYS, BATCH, QUOTE_TTL_MS, FUND_TTL_MS, BACKOFF_MS, buildRequests, requestBody, parseResponse, parseFundamentals, quotes, fundamentals, reset, _state: { cache, backoff, fundCache } };
 })(typeof self !== 'undefined' ? self : this);

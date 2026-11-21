@@ -104,6 +104,14 @@ class TestWatchlistHelpers:
         assert wl.normalise_symbols("TCS, INFY; M&M\nBAJAJ-AUTO") \
             == ["TCS.NS", "INFY.NS", "M&M.NS", "BAJAJ-AUTO.NS"]
 
+    def test_color_is_lowercase_hex_or_null(self):
+        assert wl.clean_payload({"color": "#1E90FF"}) == {"color": "#1e90ff"}
+        assert wl.clean_payload({"color": ""}) == {"color": None}
+        assert wl.clean_payload({"color": None}) == {"color": None}
+        for bad in ("1e90ff", "#fff", "#12345g", 12, "red"):
+            with pytest.raises(ValueError):
+                wl.clean_payload({"color": bad})
+
     def test_clean_payload_rejects_blank_name(self):
         with pytest.raises(ValueError):
             wl.clean_payload({"name": "  "})
@@ -281,6 +289,16 @@ class TestWatchlists:
         assert w["display_order"] == 30
         assert client.post("/api/watchlists", json={"name": "banks"}).status_code == 409
         assert client.post("/api/watchlists", json={"name": ""}).status_code == 400
+
+    def test_color_round_trip_and_validation(self, client):
+        r = client.post("/api/watchlists", json={"name": "Labels", "color": "#2962FF"})
+        assert r.status_code == 200
+        assert r.json()["watchlist"]["color"] == "#2962ff"
+        wid = r.json()["watchlist"]["id"]
+        r = client.put(f"/api/watchlists/{wid}", json={"color": ""})
+        assert r.status_code == 200 and r.json()["watchlist"]["color"] is None
+        assert client.put(f"/api/watchlists/{wid}", json={"color": "blue"}).status_code == 400
+        assert client.post("/api/watchlists", json={"name": "X", "color": "#fff"}).status_code == 400
 
     def test_add_and_remove_symbols(self, client):
         r = client.post("/api/watchlists/1/symbols", json={"symbol": "infy"})

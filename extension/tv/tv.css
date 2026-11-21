@@ -345,6 +345,40 @@ body.px-switching div[data-dialog-name="symbol-search"] { opacity: 0 !important;
 .px-gauge i { position: absolute; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--px-brand, #14b8a6); transform: translateX(-7px); }
 .px-gauge-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--px-mute); }
 
+/* --- labels (watchlists with a colour) --- */
+.px-labels { display: flex; gap: 4px; padding: 5px 8px; border-bottom: 1px solid var(--px-border); flex: 0 0 auto; overflow-x: auto; align-items: center; }
+.px-labels::-webkit-scrollbar { height: 4px; }
+.px-labels-k { color: var(--px-mute); font-size: 11px; flex: 0 0 auto; }
+.px-label { background: var(--px-bg2); color: var(--px-mute); border: 1px solid var(--px-border); border-radius: 999px; padding: 2px 8px 2px 6px; font-size: 10.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; flex: 0 0 auto; }
+.px-label:hover { color: var(--px-text); }
+.px-label.px-on { color: #fff; border-color: var(--px-accent); background: rgba(41,98,255,.18); }
+.px-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.px-sym-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.px-dots { display: inline-flex; gap: 3px; align-items: center; }
+.px-dot-more { font-size: 9px; color: var(--px-mute); }
+.px-swatches { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.px-swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.px-swatch.px-on { border-color: #fff; box-shadow: 0 0 0 2px var(--px-bg); }
+.px-swatch-none { background: var(--px-bg3); color: var(--px-mute); font-size: 11px; line-height: 14px; }
+#px-labelpop { position: fixed; z-index: 2147483150; background: var(--px-bg); color: var(--px-text); border: 1px solid var(--px-border); border-radius: 10px; box-shadow: 0 10px 32px rgba(0,0,0,.55); padding: 8px 10px; font: 12px/1.35 -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; gap: 8px; }
+#px-labelpop * { box-sizing: border-box; }
+#px-labelpop button { font: inherit; }
+.px-labelpop-head { display: flex; align-items: center; gap: 6px; color: #fff; }
+.px-labelpop-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.px-labelpop-row { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.px-labelpop-row:hover { background: var(--px-bg2); }
+.px-labelpop-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.px-labelpop-new { border-top: 1px solid var(--px-border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+
+/* --- provisional card for stocks outside the universe (F14) --- */
+.px-prov { border: 1px dashed var(--px-border); border-radius: 9px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: rgba(134,137,147,.06); }
+.px-prov-head { display: flex; align-items: center; gap: 8px; }
+.px-chip-prov { background: rgba(134,137,147,.25); color: var(--px-text); }
+.px-prov-name { color: #fff; font-weight: 700; }
+.px-prov-grid .px-kv { border-bottom: 1px dashed var(--px-border); }
+.px-prov-grid .px-kv-v { color: var(--px-text); }
+.px-prov-note { font-size: 10px; }
+
 /* --- valuation box (shared card) --- */
 .px-val-meds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
 .px-val-med { border: 1px solid var(--px-line, #363a45); border-radius: 8px; padding: 5px 7px; display: flex; flex-direction: column; gap: 1px; min-width: 0; }

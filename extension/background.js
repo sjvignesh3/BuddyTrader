@@ -187,15 +187,25 @@ async function getWatchlists() {
   return { source: 'local', watchlists: await localLists() };
 }
 
-async function watchlistCreate(name, symbols) {
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+function cleanColor(c) {
+  if (c == null || c === '') return null;
+  if (!HEX_COLOR_RE.test(String(c))) throw new ApiError("color must be '#rrggbb'", 400);
+  return String(c).toLowerCase();
+}
+
+async function watchlistCreate(name, symbols, color) {
   const syms = PlutusSymbols.parseList((symbols || []).join(' '));
+  const col = cleanColor(color);
   if (await hasToken()) {
-    const res = await apiFetch('/api/watchlists', { method: 'POST', body: { name, symbols: syms } });
+    const body = { name, symbols: syms };
+    if (col) body.color = col;
+    const res = await apiFetch('/api/watchlists', { method: 'POST', body });
     return res.watchlist;
   }
   const lists = await localLists();
   if (lists.some((l) => l.name.toLowerCase() === name.toLowerCase())) throw new ApiError('a watchlist named ' + name + ' exists', 409);
-  const row = { id: 'local-' + Date.now(), name, symbols: syms, display_order: (Math.max(0, ...lists.map((l) => l.display_order || 0)) + 10) };
+  const row = { id: 'local-' + Date.now(), name, symbols: syms, color: col, display_order: (Math.max(0, ...lists.map((l) => l.display_order || 0)) + 10) };
   lists.push(row);
   await saveLocalLists(lists);
   return row;
@@ -214,6 +224,7 @@ async function watchlistUpdate(id, patch) {
     row.name = patch.name;
   }
   if (Array.isArray(patch.symbols)) row.symbols = PlutusSymbols.parseList(patch.symbols.join(' '));
+  if ('color' in patch) row.color = cleanColor(patch.color);
   await saveLocalLists(lists);
   return row;
 }
@@ -482,7 +493,7 @@ const HANDLERS = {
   'bootstrap': (m) => getBootstrap({ force: !!m.force }),
   'stock': (m) => getStock(m.symbol, { force: !!m.force }),
   'watchlists': () => getWatchlists(),
-  'watchlist.create': (m) => watchlistCreate(m.name, m.symbols),
+  'watchlist.create': (m) => watchlistCreate(m.name, m.symbols, m.color),
   'watchlist.update': (m) => watchlistUpdate(m.id, m.patch || {}),
   'watchlist.delete': (m) => watchlistDelete(m.id),
   'watchlist.add': (m) => watchlistAddSymbols(m.id, m.symbols),
@@ -498,6 +509,7 @@ const HANDLERS = {
   'notes.delete': (m) => noteDelete(m.id),
   'trades.forSymbol': (m) => tradesForSymbol(m.symbol),
   'live.quotes': (m) => liveQuotes(m.symbols || []),
+  'live.fundamentals': (m) => PlutusTvScan.fundamentals(PlutusSymbols.toPlutus(m.symbol) || m.symbol),
   'bridge.register': () => registerTokenBridge(),
   'token.state': () => ({ rejected: tokenRejected }),
   'opportunity.create': (m) => opportunityCreate(m.body || {}),

@@ -276,6 +276,20 @@ test('without a token a 401 is just "sign in required" — nothing is flagged', 
   assert.equal((await w.send({ type: 'token.state' })).data.rejected, false);
 });
 
+test('local watchlists keep a colour; a bad colour is refused; the API gets it in the body', async () => {
+  const local = loadWorker();
+  const created = await local.send({ type: 'watchlist.create', name: 'Banks', symbols: ['HDFCBANK'], color: '#2962FF' });
+  assert.equal(created.data.color, '#2962ff');
+  const upd = await local.send({ type: 'watchlist.update', id: created.data.id, patch: { color: null } });
+  assert.equal(upd.data.color, null);
+  const bad = await local.send({ type: 'watchlist.update', id: created.data.id, patch: { color: 'blue' } });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.status, 400);
+  const api = loadWorker({ settings: { token: 't' }, fetch: okJson({ watchlist: { id: 9, name: 'Banks', color: '#2962ff' } }) });
+  await api.send({ type: 'watchlist.create', name: 'Banks', symbols: [], color: '#2962ff' });
+  assert.deepEqual(api.calls.fetched[0].body, { name: 'Banks', symbols: [], color: '#2962ff' });
+});
+
 // ---- token bridge on the deployed web app (F5) ------------------------------
 test('bridge: a deployed web-app origin with permission gets the bridge registered', async () => {
   const w = loadWorker({ settings: { webAppUrl: 'https://plutus.example.app/stocks' }, granted: ['https://plutus.example.app/*'] });

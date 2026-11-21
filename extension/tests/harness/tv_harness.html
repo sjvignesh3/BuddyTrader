@@ -56,8 +56,8 @@
       thresholds: { fundamental: { pe_max: '70', roce_min: '15', roe_min: '15', net_debt_to_equity_max: '0.25', pledging_max: '5' }, envelope: { buy_zone_below_dma_pct: '14', opportunity_below_dma_pct: '9' }, ath_fall_pct_by_cap: { Large: '20', Mid: '30', Small: '40' } },
     };
     let WATCHLISTS = [
-      { id: 1, name: 'S1', symbols: ['CELLO.NS', 'SUMICHEM.NS'] }, { id: 2, name: 'S2', symbols: [] },
-      { id: 3, name: 'U1', symbols: ['NVDA'] },
+      { id: 1, name: 'S1', symbols: ['CELLO.NS', 'SUMICHEM.NS'], color: '#f59e0b' }, { id: 2, name: 'Opportunity', symbols: ['INFY.NS', 'CELLO.NS'], color: '#14b8a6' },
+      { id: 3, name: 'U1', symbols: ['NVDA'], color: '#a78bfa' }, { id: 4, name: 'S4', symbols: ['TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'BAJFINANCE.NS'] },
     ];
     let NOTES = [
       { id: 1, symbol: 'INFY', note_date: '2026-11-18', content: 'Q2 beat on margins; BFSI commentary cautious. Wait for 200 DMA retest near 1,480.' },
@@ -78,7 +78,7 @@
         case 'notes.create': { const n = { id: nextId++, symbol: msg.symbol.replace(/\.(NS|BO)$/, ''), note_date: msg.note_date, content: msg.content }; NOTES.push(n); return { note: n }; }
         case 'notes.update': { const n = NOTES.find((x) => x.id === msg.id); Object.assign(n, msg.patch); return { note: n }; }
         case 'notes.delete': NOTES = NOTES.filter((x) => x.id !== msg.id); return { deleted: msg.id };
-        case 'watchlist.create': { const w = { id: nextId++, name: msg.name, symbols: msg.symbols || [] }; WATCHLISTS.push(w); return w; }
+        case 'watchlist.create': { const w = { id: nextId++, name: msg.name, symbols: msg.symbols || [], color: msg.color || null }; WATCHLISTS.push(w); return w; }
         case 'watchlist.add': { const w = WATCHLISTS.find((x) => x.id === msg.id); const added = msg.symbols.filter((s) => !w.symbols.includes(s)); w.symbols.push(...added); return { watchlist: w, added }; }
         case 'watchlist.remove': { const w = WATCHLISTS.find((x) => x.id === msg.id); w.symbols = w.symbols.filter((s) => s !== msg.symbol); return { watchlist: w }; }
         case 'watchlist.update': { const w = WATCHLISTS.find((x) => x.id === msg.id); Object.assign(w, msg.patch); return w; }
@@ -107,6 +107,8 @@
           (msg.symbols || []).forEach((sym) => { const e = STOCKS.find((x) => x.symbol === sym); if (!e) return; const base = Number(e.close); const wobble = (Math.sin(Date.now() / 4000 + base) * 0.012); quotes[sym] = { close: Math.round(base * (1 + wobble) * 100) / 100, chgPct: Math.round((Number(e.price_change_1d_pct) + wobble * 100) * 100) / 100, chg: null, at: Date.now() }; });
           return { quotes, degraded: false };
         }
+        case 'live.fundamentals': return { symbol: msg.symbol, tv: 'NSE:' + msg.symbol.replace(/\.NS$/, ''), region: 'IN', source: 'tradingview-scanner', at: Date.now(),
+          data: { name: 'Some Company Ltd', close: 412.5, chgPct: 1.2, sma200: 380, high52: 500, low52: 300, ath: 620, marketCap: 9500e7, pe: 31.2, pb: 4.1, roe: 14.2, roic: 11.8, debtToEquity: 0.35, opMargin: 17.5, netMargin: 9.1, revenueYoY: 12.4, netIncomeYoY: -3.2, eps: 13.2, dividendYield: 0.8, sector: 'Industrials', industry: 'Machinery', dist200: 8.55, off52: -17.5, offAth: -33.5 } };
         case 'cache.clear': return { cleared: true };
         case 'link.symbol': return { linked: false, reason: 'harness' };
         default: return { ok: true };

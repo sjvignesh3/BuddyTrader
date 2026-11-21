@@ -18,15 +18,27 @@ Contract (mirrors plutus.api.journal):
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from plutus.api.universe import canonical_symbol
 
 logger = logging.getLogger(__name__)
 
-WATCHLIST_FIELDS = {"name", "symbols", "display_order"}
+WATCHLIST_FIELDS = {"name", "symbols", "display_order", "color"}
 MAX_NAME_LEN = 60
 MAX_SYMBOLS = 500
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def normalise_color(raw: Any) -> Optional[str]:
+    """'#1E90FF' -> '#1e90ff'; None / '' clear the colour. Raises ValueError
+    on anything that is not a 6-digit hex colour (migration 028 CHECK)."""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    if not isinstance(raw, str) or not _HEX_COLOR.match(raw.strip()):
+        raise ValueError("color must be '#rrggbb'")
+    return raw.strip().lower()
 
 
 def _rows(res: Any) -> List[Dict[str, Any]]:
@@ -73,6 +85,8 @@ def clean_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 out["display_order"] = int(v)
             except (TypeError, ValueError):
                 raise ValueError("display_order must be an integer")
+        elif k == "color":
+            out["color"] = normalise_color(v)
     return out
 
 
