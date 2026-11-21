@@ -25,8 +25,12 @@
     tvSpaceKeyNavigates: false,      // Space advances to the next stock (steals TradingView's shortcut)
     tvFocusMode: true,               // hide TradingView upsell dialogs
     tvShowChips: true,               // signal / score / held chips on rows
-    tvSort: 'default',               // default | conviction | dma | ath | score | name
+    tvSort: 'default',               // default | conviction | dma | ath | high52 | score | mcap | name
+    tvSortDir: '',                   // asc | desc; blank = the key's natural direction
+    tvRegion: 'IN',                  // IN | US — which market's pools / lists the panel shows
     tvHeldStrip: true,               // held-position strip for the active symbol
+    tvDrawerOpen: false,             // side drawer (Filters · Stock · Trades · Notes)
+    tvDrawerTab: 'notes',
 
     // Cross-site
     linkTabs: true,                  // TradingView and Screener company tabs follow each other

@@ -8,9 +8,9 @@
  * positions, watchlists, PlayArea) without pasting anything.
  *
  * It never reads anything else from the page and never writes to it.
- * The production web-app origin is not matched by the manifest (it differs
- * per deployment); paste the token in the popup there, or add your origin
- * to manifest.json.
+ * The manifest matches localhost:5173. For a deployed web app, saving its
+ * URL in the popup asks Chrome for that one origin and the service worker
+ * registers this script there (background.js registerTokenBridge).
  */
 (function () {
   'use strict';

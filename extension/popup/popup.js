@@ -6,7 +6,41 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const BOOLS = ['tvEnabled', 'tvShowChips', 'tvFocusMode', 'tvSpaceKeyNavigates', 'tvHeldStrip', 'scrEnabled', 'scrAutoConsolidated', 'scrPlutusCard', 'scrHighlightTables', 'scrPageRules', 'scrWalk', 'linkTabs'];
-  const TEXTS = ['apiUrl', 'webAppUrl', 'token', 'adminToken', 'tvSort'];
+  const TEXTS = ['apiUrl', 'webAppUrl', 'token', 'adminToken', 'tvSort', 'tvRegion'];
+  const LOCAL_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
+  /**
+   * A deployed web-app URL needs a host permission before the token bridge can
+   * run there. Must be called from the click handler (a user gesture).
+   */
+  async function ensureBridgePermission(webAppUrl) {
+    const info = $('bridgeInfo');
+    let origin;
+    try { origin = new URL(webAppUrl).origin; } catch (e) { info.textContent = ''; return; }
+    if (LOCAL_RE.test(origin)) { info.textContent = 'Local web app: the token is picked up automatically on localhost:5173.'; return; }
+    if (!chrome.permissions) return;
+    const match = origin + '/*';
+    try {
+      let ok = await chrome.permissions.contains({ origins: [match] });
+      if (!ok) ok = await chrome.permissions.request({ origins: [match] });
+      if (ok) {
+        const r = await send({ type: 'bridge.register' });
+        info.textContent = r && r.registered ? 'Token bridge active on ' + origin + ' — sign in there and the token arrives here.' : 'Could not register the token bridge: ' + ((r && r.reason) || 'unknown');
+      } else {
+        info.textContent = 'Permission for ' + origin + ' declined — paste the token manually.';
+      }
+    } catch (e) { info.textContent = e.message; }
+  }
+  async function showBridgeState(webAppUrl) {
+    const info = $('bridgeInfo');
+    let origin;
+    try { origin = new URL(webAppUrl).origin; } catch (e) { info.textContent = ''; return; }
+    if (LOCAL_RE.test(origin) || !chrome.permissions) { info.textContent = ''; return; }
+    try {
+      const ok = await chrome.permissions.contains({ origins: [origin + '/*'] });
+      info.textContent = ok ? 'Token bridge active on ' + origin + '.' : 'Save to allow the token bridge on ' + origin + '.';
+    } catch (e) { info.textContent = ''; }
+  }
   const OVERRIDES = ['pe_max', 'roce_min', 'roe_min', 'net_debt_to_equity_max', 'pledging_max'];
   const TILES = ['publicHoldingMaxPct', 'high52RedPct', 'high52YellowPct', 'smaGreenPct', 'athGreenPct', 'athYellowPct'];
 
@@ -76,10 +110,19 @@
 
   document.addEventListener('DOMContentLoaded', async () => {
     $('version').textContent = 'v' + chrome.runtime.getManifest().version;
-    fill(await PlutusSettings.get());
+    const initial = await PlutusSettings.get();
+    fill(initial);
     showCacheInfo();
+    showBridgeState(initial.webAppUrl);
     test();
-    $('save').addEventListener('click', async () => { await PlutusSettings.save(collect()); $('saved').textContent = 'Saved'; setTimeout(() => { $('saved').textContent = ''; }, 1500); });
+    $('save').addEventListener('click', async () => {
+      const s = collect();
+      // permissions.request must run inside the click: ask before any await
+      const perm = ensureBridgePermission(s.webAppUrl);
+      await PlutusSettings.save(s);
+      await perm;
+      $('saved').textContent = 'Saved'; setTimeout(() => { $('saved').textContent = ''; }, 1500);
+    });
     $('reset').addEventListener('click', async () => { if (confirm('Reset all Plutus Companion settings (keeps nothing, including the token)?')) { fill(await PlutusSettings.reset()); } });
     $('test').addEventListener('click', test);
     $('refresh').addEventListener('click', async () => {

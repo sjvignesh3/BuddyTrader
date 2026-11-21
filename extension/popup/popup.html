@@ -16,9 +16,10 @@
     <label>Plutus API URL
       <input type="text" id="apiUrl" placeholder="http://127.0.0.1:8787 or https://plutus-api.onrender.com" spellcheck="false">
     </label>
-    <label>Plutus web app URL
+    <label>Plutus web app URL <span class="hint">(a deployed URL asks for that site once, then your sign-in there feeds the token here)</span>
       <input type="text" id="webAppUrl" placeholder="http://localhost:5173" spellcheck="false">
     </label>
+    <div id="bridgeInfo" class="hint"></div>
     <label>Session token <span class="hint">(owner or viewer; needed for notes, positions, watchlists, PlayArea)</span>
       <input type="password" id="token" placeholder="paste from the Plutus web app · localStorage plutus.auth.v1" spellcheck="false" autocomplete="off">
     </label>
@@ -46,7 +47,15 @@
         <option value="conviction">Conviction</option>
         <option value="dma">% below 200 DMA</option>
         <option value="ath">% off ATH</option>
+        <option value="high52">% off 52-week high</option>
         <option value="score">Fundamental score</option>
+        <option value="mcap">Market cap</option>
+      </select>
+    </label>
+    <label>Region shown first
+      <select id="tvRegion">
+        <option value="IN">India</option>
+        <option value="US">US</option>
       </select>
     </label>
   </section>

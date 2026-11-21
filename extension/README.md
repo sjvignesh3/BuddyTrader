@@ -11,6 +11,7 @@ extension/
 │   ├── symbols.js           TCS.NS ↔ TCS ↔ NSE:TCS ↔ /company/TCS/ (one converter, unit-tested on the server side too)
 │   ├── settings.js          one settings blob in chrome.storage.local with defaults
 │   ├── ui.js                toast / dialog / DOM helpers, brand mark + the message bridge
+│   ├── panel_logic.js       pure list logic: markets, US cap tiers, sectors, sort comparator (Node-tested)
 │   └── sizer.js             position sizer: port of lib/sizing.ts + the journal cap rule, and its dialog
 ├── tv/                      TradingView panel (tv_content.js + tv.css)
 ├── screener/                Screener.in overlays (screener_content.js + screener.css)
@@ -25,8 +26,10 @@ extension/
 
 1. `chrome://extensions` → enable **Developer mode** → **Load unpacked** → pick this `extension/` folder.
 2. Click the toolbar icon → set **Plutus API URL** (local `http://127.0.0.1:8787`, or the Render URL) → **Test connection**.
-3. Sign in on the Plutus web app once. On `localhost:5173` the token is picked up automatically; for a
-   deployed web app copy `localStorage["plutus.auth.v1"]` from its DevTools and paste it into **Session token**.
+3. Sign in on the Plutus web app once. On `localhost:5173` the token is picked up automatically. For a
+   deployed web app, enter its URL as **Plutus web app URL** and Save: Chrome asks once for that site, the
+   token bridge is registered there, and signing in on the web app feeds the token to the extension. (Pasting
+   `localStorage["plutus.auth.v1"]` into **Session token** still works.)
    Everything read-only works without a token; notes, held badges, PlayArea and synced watchlists need it.
 4. Reload any open TradingView / Screener tabs (the worker also injects into already-open tabs on install).
 
@@ -57,8 +60,17 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
 * Click a row (or `↑` / `↓`, optional `Space`) to switch the chart instantly — drives TradingView's own symbol
   search. `←` / `→` cycle lists, `/` filters, `Alt+W` hides the panel.
 * Follows the chart: whatever symbol TradingView shows is highlighted (and the list holding it is selected).
-* Per-row chips: cap bucket, technical signal (BUY / OPP / RALLY), fundamental score `n/11`, PRIME, HELD qty,
-  % from 200 DMA. Sort by conviction, DMA depth, ATH fall or score. Cap slicer with counts.
+* **India / US switch** (shown once the universe has US stocks): pools, watchlists and sector views of one
+  market at a time. Switching resets the slicers; following the chart into a stock of the other market flips
+  the region. US rows get a Mega / Large / Mid / Small tier from market cap (display only; sizing is unchanged).
+* **Sector views**: a sector dropdown next to the filter narrows the current list (India groups Banks / NBFC
+  by `sector_group`, else `sector`), and every sector of the region is also a virtual list in the selector.
+* **Columns**: each row shows % from the 200 DMA, % off the 52-week high, % off the ATH and the `n/11` score.
+  Click a column header to sort, click again to flip. Chips underneath: technical signal (BUY / OPP / RALLY),
+  PRIME, HELD qty. Cap slicer with counts.
+* **Drawer** (`☰` or `Alt+D`, slides out beside the panel) that follows the selected stock:
+  *Filters* (sort, region, watchlist New / Rename / Delete, refresh), *Stock* (summary; the full 11-check card
+  arrives in v0.4), *Trades* (open lots), *Notes* (the full dated timeline: add with `Ctrl+Enter`, edit, delete).
 * Hot-keys on the active stock: `N` dated note, `O` opportunity, `B` bookmark to a watchlist, `A` PlayArea
   add/remove, `S` Screener, `P` Plutus stock page.
 * Focus mode hides TradingView upsell dialogs. Data-as-of stamp turns amber when the snapshot is stale.
@@ -109,8 +121,12 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
 ## Tests
 
 ```bash
-node --test extension/tests/background.test.js
+node --test extension/tests/*.test.js
 ```
+
+`tests/harness/tv_harness.html` renders the real panel against a stubbed service worker and a fixture
+universe (India + US) for eyeballing layout changes without TradingView:
+`python -m http.server 8799 --directory extension` → `http://127.0.0.1:8799/tests/harness/tv_harness.html`.
 
 ## Conventions
 

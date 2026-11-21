@@ -48,7 +48,7 @@ jobs:
         working-directory: frontend_v2
       - run: npm run test
         working-directory: frontend_v2
-      - run: node --test extension/tests/background.test.js
+      - run: node --test extension/tests/*.test.js
 
   no-float-in-money-paths:
     runs-on: ubuntu-latest

@@ -263,6 +263,8 @@ def register_extension_routes(app: Any, cli: Any) -> None:
             "snapshot_date": date,
             "pools": [{"code": p.get("code"), "name": p.get("name"),
                        "display_order": p.get("display_order"),
+                       # 'IN' | 'US' (migration 026); the panel's region switch
+                       "market": p.get("market") or "IN",
                        "count": counts.get(p.get("code"), 0)} for p in pools],
             "stocks": entries,
             "thresholds": default_thresholds(),

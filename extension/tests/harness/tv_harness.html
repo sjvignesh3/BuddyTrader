@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<!--
+  Plutus Companion — visual harness for the TradingView panel.
+
+  Serves the real content script against a FAKE chrome.* runtime and a fixture
+  bootstrap, so the panel can be eyeballed without TradingView or the API:
+      python -m http.server 8799 --directory extension
+      open http://127.0.0.1:8799/tests/harness/tv_harness.html
+  Nothing here ships in the extension (manifest does not reference tests/).
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>INFY 1,520.35 ▼ −0.86% — harness</title>
+  <link rel="stylesheet" href="../../tv/tv.css">
+  <style>
+    body { margin: 0; background: #0b0e14; color: #d1d4dc; font: 13px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; min-height: 100vh; }
+    .fake-toolbar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; background: #131722; border-bottom: 1px solid #2a2e39; }
+    #header-toolbar-symbol-search { background: #1e222d; color: #fff; border: 1px solid #363a45; border-radius: 6px; padding: 4px 10px; font-weight: 700; }
+    .fake-chart { position: absolute; inset: 44px 0 0 0; background:
+      repeating-linear-gradient(90deg, transparent 0 79px, #161a25 79px 80px),
+      repeating-linear-gradient(0deg, transparent 0 79px, #161a25 79px 80px); }
+    .note { position: absolute; left: 16px; bottom: 16px; color: #868993; font-size: 12px; max-width: 420px; }
+  </style>
+</head>
+<body>
+  <div class="fake-toolbar">
+    <button id="header-toolbar-symbol-search">INFY</button>
+    <span>Fake TradingView · the panel on the right is the real extension UI</span>
+  </div>
+  <div class="fake-chart"></div>
+  <div class="note">Clicking a row only changes the fake toolbar label and the tab title (no real symbol search here). The service worker is stubbed with the fixture below; notes and watchlists live in memory.</div>
+
+  <script>
+    // ---- fixture: a slice of a real bootstrap, India + US ----------------------
+    const STOCKS = [
+      { symbol: 'INFY.NS', plain: 'INFY', tv: 'NSE:INFY', market: 'IN', exchange: 'NSE', name: 'Infosys', sector: 'Technology', sector_group: null, pools: ['F40'], cap: 'Large', best_status: 'BUY_ZONE', funda_points: 9, close: '1520.35', below_200dma_pct: '6.1', fall_from_ath_pct: '24.3', distance_from_52w_high_pct: '-18.2', price_change_1d_pct: '-0.86', market_cap: '6300000000000' },
+      { symbol: 'TCS.NS', plain: 'TCS', tv: 'NSE:TCS', market: 'IN', exchange: 'NSE', name: 'Tata Consultancy Services', sector: 'Technology', pools: ['F40'], cap: 'Large', best_status: 'OPPORTUNITY', funda_points: 10, close: '3410.00', below_200dma_pct: '12.4', fall_from_ath_pct: '31.0', distance_from_52w_high_pct: '-27.5', price_change_1d_pct: '0.42', market_cap: '12300000000000' },
+      { symbol: 'HDFCBANK.NS', plain: 'HDFCBANK', tv: 'NSE:HDFCBANK', market: 'IN', exchange: 'NSE', name: 'HDFC Bank', sector: 'Financial Services', sector_group: 'Banks', pools: ['F40'], cap: 'Large', best_status: 'VALID', funda_points: 8, close: '1655.10', below_200dma_pct: '-2.2', fall_from_ath_pct: '5.1', distance_from_52w_high_pct: '-4.0', price_change_1d_pct: '1.10', market_cap: '12600000000000' },
+      { symbol: 'BAJFINANCE.NS', plain: 'BAJFINANCE', tv: 'NSE:BAJFINANCE', market: 'IN', exchange: 'NSE', name: 'Bajaj Finance', sector: 'Financial Services', sector_group: 'NBFC', pools: ['F40', 'E40'], cap: 'Large', best_status: null, funda_points: 7, close: '6920.00', below_200dma_pct: '-8.0', fall_from_ath_pct: '9.9', distance_from_52w_high_pct: '-9.9', price_change_1d_pct: '-1.4', market_cap: '4280000000000' },
+      { symbol: 'CELLO.NS', plain: 'CELLO', tv: 'NSE:CELLO', market: 'IN', exchange: 'NSE', name: 'Cello World', sector: 'Consumer Cyclical', pools: ['S200'], cap: 'Small', best_status: 'OPPORTUNITY', funda_points: 6, close: '364.40', below_200dma_pct: '6.1', fall_from_ath_pct: '64.4', distance_from_52w_high_pct: '-41.4', price_change_1d_pct: '-0.12', market_cap: '82140000000' },
+      { symbol: 'SUMICHEM.NS', plain: 'SUMICHEM', tv: 'NSE:SUMICHEM', market: 'IN', exchange: 'NSE', name: 'Sumitomo Chemical India', sector: 'Basic Materials', pools: ['S200'], cap: 'Mid', best_status: null, funda_points: null, close: '344.70', below_200dma_pct: '22.5', fall_from_ath_pct: '48.2', distance_from_52w_high_pct: '-39.7', price_change_1d_pct: '-0.55', market_cap: '172000000000' },
+      { symbol: 'NVDA', plain: 'NVDA', tv: 'NASDAQ:NVDA', market: 'US', exchange: 'NASDAQ', name: 'NVIDIA', sector: 'Technology', pools: ['USMEGA'], cap: null, best_status: 'VALID', funda_points: null, close: '182.11', below_200dma_pct: '-12.0', fall_from_ath_pct: '13.4', distance_from_52w_high_pct: '-13.4', price_change_1d_pct: '2.3', market_cap: '4450000000000' },
+      { symbol: 'CAT', plain: 'CAT', tv: 'NYSE:CAT', market: 'US', exchange: 'NYSE', name: 'Caterpillar', sector: 'Industrials', pools: ['USMEGA'], cap: null, best_status: null, funda_points: null, close: '395.20', below_200dma_pct: '-4.1', fall_from_ath_pct: '6.0', distance_from_52w_high_pct: '-6.0', price_change_1d_pct: '-0.7', market_cap: '188000000000' },
+      { symbol: 'ETSY', plain: 'ETSY', tv: 'NASDAQ:ETSY', market: 'US', exchange: 'NASDAQ', name: 'Etsy', sector: 'Consumer Cyclical', pools: ['USMEGA'], cap: null, best_status: 'BUY_ZONE', funda_points: null, close: '52.10', below_200dma_pct: '18.0', fall_from_ath_pct: '83.0', distance_from_52w_high_pct: '-44.0', price_change_1d_pct: '-3.1', market_cap: '6100000000' },
+    ];
+    const BOOT = {
+      snapshot_date: new Date(Date.now() - 86400000).toISOString().slice(0, 10),
+      pools: [
+        { code: 'F40', name: 'F40', market: 'IN', count: 4 }, { code: 'E40', name: 'E40', market: 'IN', count: 1 },
+        { code: 'S200', name: 'S200', market: 'IN', count: 2 }, { code: 'PlayArea', name: 'PlayArea', market: 'IN', count: 0 },
+        { code: 'USMEGA', name: 'US Mega Cap', market: 'US', count: 3 },
+      ],
+      stocks: STOCKS, thresholds: {},
+    };
+    let WATCHLISTS = [
+      { id: 1, name: 'S1', symbols: ['CELLO.NS', 'SUMICHEM.NS'] }, { id: 2, name: 'S2', symbols: [] },
+      { id: 3, name: 'U1', symbols: ['NVDA'] },
+    ];
+    let NOTES = [
+      { id: 1, symbol: 'INFY', note_date: '2026-11-18', content: 'Q2 beat on margins; BFSI commentary cautious. Wait for 200 DMA retest near 1,480.' },
+      { id: 2, symbol: 'INFY', note_date: '2026-10-02', content: 'Added to watch after the guidance cut. Valuation now at 5Y median PE.' },
+      { id: 3, symbol: 'CELLO', note_date: '2026-11-10', content: 'Glassware capex done; watch OPM recovery.' },
+    ];
+    let nextId = 10;
+    const settingsStore = { plutus_settings: { apiUrl: 'http://127.0.0.1:8787', token: 'harness-token', tvDrawerOpen: true, tvDrawerTab: 'notes' } };
+    const changeListeners = [];
+
+    function handle(msg) {
+      switch (msg.type) {
+        case 'bootstrap': return BOOT;
+        case 'watchlists': return { source: 'api', watchlists: WATCHLISTS };
+        case 'positions': return { positions: [{ symbol: 'INFY', qty: 20, invested: 28400 }] };
+        case 'trades.open': return { trades: [{ symbol: 'INFY', qty: 20, buy_price: '1420.00', buy_date: '2026-08-12', target_price: '1750', stop_price: '1320', strategy: 'Envelope' }] };
+        case 'notes.list': { const p = msg.symbol.replace(/\.(NS|BO)$/, ''); return { notes: NOTES.filter((n) => n.symbol === p).sort((a, b) => b.note_date.localeCompare(a.note_date)) }; }
+        case 'notes.create': { const n = { id: nextId++, symbol: msg.symbol.replace(/\.(NS|BO)$/, ''), note_date: msg.note_date, content: msg.content }; NOTES.push(n); return { note: n }; }
+        case 'notes.update': { const n = NOTES.find((x) => x.id === msg.id); Object.assign(n, msg.patch); return { note: n }; }
+        case 'notes.delete': NOTES = NOTES.filter((x) => x.id !== msg.id); return { deleted: msg.id };
+        case 'watchlist.create': { const w = { id: nextId++, name: msg.name, symbols: msg.symbols || [] }; WATCHLISTS.push(w); return w; }
+        case 'watchlist.add': { const w = WATCHLISTS.find((x) => x.id === msg.id); const added = msg.symbols.filter((s) => !w.symbols.includes(s)); w.symbols.push(...added); return { watchlist: w, added }; }
+        case 'watchlist.remove': { const w = WATCHLISTS.find((x) => x.id === msg.id); w.symbols = w.symbols.filter((s) => s !== msg.symbol); return { watchlist: w }; }
+        case 'watchlist.update': { const w = WATCHLISTS.find((x) => x.id === msg.id); Object.assign(w, msg.patch); return w; }
+        case 'watchlist.delete': WATCHLISTS = WATCHLISTS.filter((x) => x.id !== msg.id); return { deleted: msg.id };
+        case 'cache.clear': return { cleared: true };
+        case 'link.symbol': return { linked: false, reason: 'harness' };
+        default: return { ok: true };
+      }
+    }
+
+    window.chrome = {
+      runtime: {
+        id: 'harness', lastError: null,
+        sendMessage: (msg, cb) => setTimeout(() => cb({ ok: true, data: handle(msg) }), 60),
+        onMessage: { addListener() {} },
+      },
+      storage: {
+        local: {
+          get: (keys, cb) => { const out = {}; [].concat(keys).forEach((k) => { if (k in settingsStore) out[k] = settingsStore[k]; }); cb(out); },
+          set: (obj, cb) => {
+            const changes = {};
+            Object.keys(obj).forEach((k) => { changes[k] = { oldValue: settingsStore[k], newValue: obj[k] }; settingsStore[k] = obj[k]; });
+            cb && cb();
+            setTimeout(() => changeListeners.forEach((f) => f(changes, 'local')), 0);
+          },
+        },
+        onChanged: { addListener: (f) => changeListeners.push(f) },
+      },
+    };
+
+    // The real script drives TradingView's symbol search; here a click just relabels the toolbar + title.
+    document.getElementById('header-toolbar-symbol-search').addEventListener('click', () => {
+      setTimeout(() => {
+        const input = document.querySelector('input[data-role="search"]') || (() => { const i = document.createElement('input'); i.setAttribute('data-role', 'search'); i.style.position = 'fixed'; i.style.left = '-9999px'; document.body.appendChild(i); return i; })();
+        input.addEventListener('change', () => {
+          const sym = (input.value || '').split(':').pop();
+          document.getElementById('header-toolbar-symbol-search').textContent = sym;
+          document.title = sym + ' 1,000.00 ▲ +0.50% — harness';
+          input.remove();
+        }, { once: true });
+      }, 20);
+    });
+  </script>
+  <script src="../../shared/symbols.js"></script>
+  <script src="../../shared/settings.js"></script>
+  <script src="../../shared/ui.js"></script>
+  <script src="../../shared/panel_logic.js"></script>
+  <script src="../../shared/sizer.js"></script>
+  <script src="../../tv/tv_content.js"></script>
+</body>
+</html>

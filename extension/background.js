@@ -270,10 +270,27 @@ async function noteCreate({ symbol, content, note_date }) {
   return apiFetch('/api/journal/notes', { method: 'POST', body: { symbol: plain, content, note_date } });
 }
 
-async function notesList(symbol, limit = 20) {
+async function notesList(symbol, limit) {
   await requireToken();
   const plain = PlutusSymbols.toPlain(symbol);
-  return apiFetch('/api/journal/notes?symbol=' + encodeURIComponent(plain) + '&limit=' + limit);
+  const n = Math.max(1, Math.min(2000, Number(limit) || 20));
+  return apiFetch('/api/journal/notes?symbol=' + encodeURIComponent(plain) + '&limit=' + n);
+}
+
+async function noteUpdate(id, patch) {
+  await requireToken();
+  if (id == null) throw new ApiError('note id required', 400);
+  const body = {};
+  if (patch && typeof patch.content === 'string') body.content = patch.content;
+  if (patch && patch.note_date) body.note_date = patch.note_date;
+  if (!Object.keys(body).length) throw new ApiError('nothing to update', 400);
+  return apiFetch('/api/journal/notes/' + encodeURIComponent(id), { method: 'PUT', body });
+}
+
+async function noteDelete(id) {
+  await requireToken();
+  if (id == null) throw new ApiError('note id required', 400);
+  return apiFetch('/api/journal/notes/' + encodeURIComponent(id), { method: 'DELETE' });
 }
 
 async function opportunityCreate(body) {
@@ -420,6 +437,9 @@ const HANDLERS = {
   'link.symbol': (m, sender) => linkSymbol(m, sender),
   'notes.list': (m) => notesList(m.symbol, m.limit),
   'notes.create': (m) => noteCreate(m),
+  'notes.update': (m) => noteUpdate(m.id, m.patch || {}),
+  'notes.delete': (m) => noteDelete(m.id),
+  'bridge.register': () => registerTokenBridge(),
   'opportunity.create': (m) => opportunityCreate(m.body || {}),
   'playarea.add': (m) => playAreaAdd(m.symbol),
   'playarea.remove': (m) => playAreaRemove(m.symbol),
@@ -454,7 +474,41 @@ chrome.storage.onChanged.addListener((changes, area) => {
     positionsCache = { at: 0, data: null }; openTradesCache = { at: 0, data: null }; settingsCache = { at: 0, data: null };
     storageSet({ [CACHE_STOCK]: {} });
   }
+  if (before.webAppUrl !== after.webAppUrl) registerTokenBridge().catch(() => {});
 });
+
+// ---------------------------------------------------------------------------
+// Token bridge on the deployed web app (F5)
+// ---------------------------------------------------------------------------
+// The manifest only matches localhost:5173. For a deployed web app the popup
+// asks for that one origin (optional_host_permissions) and the worker then
+// registers webapp/token_bridge.js there, so signing in on the web app is
+// enough — no token pasting.
+const BRIDGE_ID = 'plutus-token-bridge';
+const LOCAL_BRIDGE_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
+/** Origin + "/*" match pattern for the web-app URL, or null when it is local / invalid. */
+function bridgeMatchFor(webAppUrl) {
+  let origin;
+  try { origin = new URL(String(webAppUrl || '')).origin; } catch (e) { return null; }
+  if (!/^https?:$/.test(new URL(origin).protocol) || LOCAL_BRIDGE_RE.test(origin)) return null;
+  return origin + '/*';
+}
+
+async function registerTokenBridge() {
+  if (!chrome.scripting || !chrome.scripting.registerContentScripts) return { registered: false, reason: 'no scripting API' };
+  const s = await PlutusSettings.get();
+  const match = bridgeMatchFor(s.webAppUrl);
+  try { await chrome.scripting.unregisterContentScripts({ ids: [BRIDGE_ID] }); } catch (e) { /* not registered yet */ }
+  if (!match) return { registered: false, reason: 'local or invalid web-app URL' };
+  let granted = false;
+  try { granted = await chrome.permissions.contains({ origins: [match] }); } catch (e) { granted = false; }
+  if (!granted) return { registered: false, reason: 'permission for ' + match + ' not granted (save the web-app URL in the popup)' };
+  await chrome.scripting.registerContentScripts([{
+    id: BRIDGE_ID, matches: [match], js: ['shared/settings.js', 'webapp/token_bridge.js'], runAt: 'document_idle', persistAcrossSessions: true,
+  }]);
+  return { registered: true, match };
+}
 
 // ---------------------------------------------------------------------------
 // inject into tabs already open at install / browser start
@@ -470,7 +524,7 @@ async function injectIntoOpenTabs() {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: isTv
-          ? ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/sizer.js', 'tv/tv_content.js']
+          ? ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/panel_logic.js', 'shared/sizer.js', 'tv/tv_content.js']
           : ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/sizer.js', 'vendor/chart.min.js', 'screener/screener_content.js'],
       });
     } catch (e) { /* restricted tab or already injected */ }
@@ -479,10 +533,12 @@ async function injectIntoOpenTabs() {
 
 chrome.runtime.onInstalled.addListener(() => {
   injectIntoOpenTabs();
+  registerTokenBridge().catch(() => {});
   chrome.alarms.create('plutus-prewarm', { periodInMinutes: 25 });
 });
 chrome.runtime.onStartup.addListener(() => {
   injectIntoOpenTabs();
+  registerTokenBridge().catch(() => {});
   chrome.alarms.create('plutus-prewarm', { periodInMinutes: 25 });
 });
 

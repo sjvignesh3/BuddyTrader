@@ -3,18 +3,19 @@
  *
  * A floating panel over the chart that lists Plutus pools and custom
  * watchlists, switches the chart symbol instantly, follows the chart's
- * active symbol, and shows Plutus signals per row. Hot-keys make the
- * whole analysis loop keyboard-driven.
+ * active symbol, and shows Plutus signals per row. A side drawer follows the
+ * selected stock (Filters · Stock · Trades · Notes). Hot-keys make the whole
+ * analysis loop keyboard-driven.
  *
  * Data comes only from the service worker (background.js); this file never
- * fetches anything itself.
+ * fetches anything itself. Pure list logic lives in shared/panel_logic.js.
  */
 (function () {
   'use strict';
   if (window.__plutusTvLoaded) { if (typeof window.__plutusTvReload === 'function') window.__plutusTvReload(); return; }
   window.__plutusTvLoaded = true;
 
-  const S = window.PlutusSymbols, U = window.PlutusUI, SET = window.PlutusSettings;
+  const S = window.PlutusSymbols, U = window.PlutusUI, SET = window.PlutusSettings, L = window.PlutusPanelLogic;
   const el = U.el, esc = U.esc, num = U.num;
 
   // ---- TradingView selectors (one place to fix after a TradingView redeploy) ----
@@ -33,12 +34,14 @@
 
   const SIGNAL_WEIGHT = { BUY_ZONE: 3, OPPORTUNITY: 2, VALID: 1.5 };
   const SIGNAL_CHIP = { BUY_ZONE: ['BUY', 'px-chip-buy'], OPPORTUNITY: ['OPP', 'px-chip-opp'], VALID: ['RALLY', 'px-chip-rally'] };
-  const CAP_LETTER = { Large: 'L', Mid: 'M', Small: 'S', Micro: 'S' };
+  const CAP_LETTER = { Mega: 'XL', Large: 'L', Mid: 'M', Small: 'S', Micro: 'S' };
 
   const LS_LAYOUT = 'plutus_tv_layout_v1';
   const LS_ACTIVE = 'plutus_tv_active_list_v1';
   // Shared with the Screener walk-through pill (chrome.storage.local, not page storage).
   const NAV_KEY = 'plutus_nav';
+  const DRAWER_W = 320;
+  const DRAWER_TABS = [['filters', 'Filters'], ['stock', 'Stock'], ['trades', 'Trades'], ['notes', 'Notes']];
 
   // ---- state ------------------------------------------------------------------
   const st = {
@@ -48,22 +51,29 @@
     watchlists: [],             // custom lists [{id,name,symbols}]
     wlSource: 'local',
     positions: new Map(),       // "TCS" -> {qty, invested}
-    active: null,               // {kind:'pool'|'wl', id, name}
+    active: null,               // {kind:'pool'|'wl'|'sector', id, name}
     activeSymbol: null,         // Plutus form of what the chart shows
+    region: 'IN',               // IN | US (F1)
     capFilter: 'All',
+    sectorFilter: 'All',        // F2
     filter: '',
+    sort: { key: 'default', dir: 'asc' },
     switchTimer: null,
     lastSwitchAt: 0,
     loading: false,
     error: null,
+    notes: { symbol: null, items: [], loading: false, error: null, editing: null },
   };
-  let panel, toggleBtn, listEl, selectEl, slicerEl, filterInput, sortSelect, asofEl, bannerEl, addRow, addInput, hintEl, focusBtn, linkBtn, heldEl, wideBtn;
+  let panel, toggleBtn, listEl, headerEl, selectEl, slicerEl, regionEl, filterInput, sectorSelect, asofEl, bannerEl, addRow, addInput, hintEl, focusBtn, linkBtn, heldEl, wideBtn, drawerBtn;
+  let drawer, drawerBody, drawerTabsEl, drawerTitleEl;
 
   // =============================================================================
   // Boot
   // =============================================================================
   async function start() {
     st.settings = await SET.get();
+    st.region = st.settings.tvRegion === 'US' ? 'US' : 'IN';
+    st.sort = { key: st.settings.tvSort || 'default', dir: st.settings.tvSortDir || (L.SORT_KEYS[st.settings.tvSort] || L.SORT_KEYS.default).dir };
     buildUI();
     if (!st.settings.tvEnabled) panel.classList.add('px-collapsed');
     if (!st.settings.tvPanelOpen) panel.classList.add('px-collapsed');
@@ -74,7 +84,13 @@
     [400, 1200, 2500, 5000].forEach((ms) => setTimeout(syncActiveSymbol, ms));
     window.addEventListener('focus', syncActiveSymbol);
     observeTitle();
-    SET.onChange((s) => { st.settings = s; applyFocusMode(); renderList(); renderHint(); renderHeld(); });
+    SET.onChange((s) => {
+      const regionChanged = (s.tvRegion || 'IN') !== st.region;
+      st.settings = s;
+      if (s.tvSort && (s.tvSort !== st.sort.key || (s.tvSortDir && s.tvSortDir !== st.sort.dir))) st.sort = { key: s.tvSort, dir: s.tvSortDir || (L.SORT_KEYS[s.tvSort] || L.SORT_KEYS.default).dir };
+      if (regionChanged) setRegion(s.tvRegion === 'US' ? 'US' : 'IN', { silent: true });
+      applyFocusMode(); renderAll();
+    });
     if (U.contextAlive()) {
       chrome.runtime.onMessage.addListener((m) => {
         if (!m) return;
@@ -122,19 +138,35 @@
   }
 
   // =============================================================================
-  // Lists
+  // Lists (pools · watchlists · sector views), per region
   // =============================================================================
+  function allStocks() { return Array.from(st.stocks.values()); }
+  function hasUs() { return allStocks().some((s) => L.marketOfEntry(s) === 'US') || pools().some((p) => p.market === 'US'); }
   function pools() { return (st.boot && st.boot.pools) || []; }
+  function poolsInRegion() { const all = allStocks(); return pools().filter((p) => L.poolMarket(p, all) === st.region); }
+  function watchlistsInRegion() { return st.watchlists.filter((w) => L.listVisibleIn(st.region, L.listMarket(w.symbols, st.stocks))); }
+  function regionStocks() { return allStocks().filter((s) => L.marketOfEntry(s) === st.region); }
+  function sectorsInRegion() { return L.sectorCounts(regionStocks()).sectors; }
+
   function listExists(a) {
     if (!a) return false;
     if (a.kind === 'pool') return pools().some((p) => p.code === a.id);
+    if (a.kind === 'sector') return sectorsInRegion().some(([name]) => name === a.id);
     return st.watchlists.some((w) => String(w.id) === String(a.id));
   }
+  function listInRegion(a) {
+    if (!a) return false;
+    if (a.kind === 'pool') return poolsInRegion().some((p) => p.code === a.id);
+    if (a.kind === 'sector') return sectorsInRegion().some(([name]) => name === a.id);
+    return watchlistsInRegion().some((w) => String(w.id) === String(a.id));
+  }
   function defaultList() {
-    const p = pools()[0];
+    const p = poolsInRegion()[0];
     if (p) return { kind: 'pool', id: p.code, name: p.name };
-    const w = st.watchlists[0];
-    return w ? { kind: 'wl', id: w.id, name: w.name } : null;
+    const w = watchlistsInRegion()[0];
+    if (w) return { kind: 'wl', id: w.id, name: w.name };
+    const anyPool = pools()[0];
+    return anyPool ? { kind: 'pool', id: anyPool.code, name: anyPool.name } : null;
   }
   function restoreActiveList() {
     try { const raw = localStorage.getItem(LS_ACTIVE); if (raw) st.active = JSON.parse(raw); } catch (e) { /* ignore */ }
@@ -145,7 +177,10 @@
   function activeSymbols() {
     if (!st.active) return [];
     if (st.active.kind === 'pool') {
-      return Array.from(st.stocks.values()).filter((s) => (s.pools || []).includes(st.active.id)).map((s) => s.symbol).sort();
+      return allStocks().filter((s) => (s.pools || []).includes(st.active.id)).map((s) => s.symbol).sort();
+    }
+    if (st.active.kind === 'sector') {
+      return regionStocks().filter((s) => L.sectorOf(s) === st.active.id).map((s) => s.symbol).sort();
     }
     const w = st.watchlists.find((x) => String(x.id) === String(st.active.id));
     return w ? (w.symbols || []).slice() : [];
@@ -161,11 +196,17 @@
       symbol, plain,
       entry: e || null,
       name: e ? e.name : null,
-      cap: e ? e.cap : null,
+      market: L.marketOfEntry(e, symbol),
+      cap: L.capLabel(e),
+      sector: L.sectorOf(e),
       status: e ? e.best_status : null,
       points: e ? e.funda_points : null,
       below: e ? num(e.below_200dma_pct) : null,
       athFall: e ? num(e.fall_from_ath_pct) : null,
+      off52: e ? num(e.distance_from_52w_high_pct) : null,
+      chgPct: e ? num(e.price_change_1d_pct) : null,
+      mcap: e ? num(e.market_cap) : null,
+      close: e ? num(e.close) : null,
       held: st.positions.get(plain) || null,
     };
   }
@@ -178,25 +219,14 @@
     if (sig >= 1.5 || score >= 8) return 'WATCH';
     return null;
   }
-  function rankValue(r) {
-    const sig = r.status ? (SIGNAL_WEIGHT[r.status] || 0) : 0;
-    const score = (r.points || 0) / 11;
-    const depth = Math.min(Math.max(r.below || 0, 0), 30) / 100;
-    return sig * 10 + score * 5 + depth;
-  }
 
   function visibleRows() {
     let rows = activeSymbols().map(rowFor);
-    if (st.capFilter !== 'All') rows = rows.filter((r) => (r.cap || 'Unknown') === st.capFilter || (st.capFilter === 'Small' && r.cap === 'Micro'));
+    if (st.capFilter !== 'All') rows = rows.filter((r) => L.capMatches(st.capFilter, r.cap || 'Unknown'));
+    if (st.sectorFilter !== 'All') rows = rows.filter((r) => st.sectorFilter === '__none__' ? !r.sector : r.sector === st.sectorFilter);
     const f = st.filter.trim().toUpperCase();
     if (f) rows = rows.filter((r) => r.plain.includes(f) || (r.name || '').toUpperCase().includes(f));
-    const sort = (st.settings && st.settings.tvSort) || 'default';
-    const desc = (get) => (a, b) => ((get(b) == null ? -1e9 : get(b)) - (get(a) == null ? -1e9 : get(a)));
-    if (sort === 'conviction') rows.sort((a, b) => rankValue(b) - rankValue(a));
-    else if (sort === 'dma') rows.sort(desc((r) => r.below));
-    else if (sort === 'ath') rows.sort(desc((r) => r.athFall));
-    else if (sort === 'score') rows.sort(desc((r) => r.points));
-    else if (sort === 'name') rows.sort((a, b) => a.plain.localeCompare(b.plain));
+    rows.sort(L.comparator(st.sort.key, st.sort.dir));
     return rows;
   }
 
@@ -212,10 +242,12 @@
     asofEl = el('span', { class: 'px-asof' });
     focusBtn = el('button', { class: 'px-icon-btn', title: 'Focus mode: hide TradingView upsell dialogs', text: '◐', onclick: () => SET.save({ tvFocusMode: !st.settings.tvFocusMode }) });
     linkBtn = el('button', { class: 'px-icon-btn', title: 'Link tabs: an open Screener company tab follows this chart, and the chart follows Screener', text: '⇄', onclick: () => SET.save({ linkTabs: !st.settings.linkTabs }) });
+    drawerBtn = el('button', { class: 'px-icon-btn', title: 'Drawer: filters, stock, trades, notes (Alt+D)', text: '☰', onclick: () => toggleDrawer() });
     const header = el('div', { class: 'px-header' }, [
       el('span', { class: 'px-title' }, [U.logo(18), 'Plutus']),
       asofEl,
       el('span', { class: 'px-header-spacer' }),
+      drawerBtn,
       el('button', { class: 'px-icon-btn', title: 'Size a position for the active stock (Z)', text: '⚖', onclick: () => sizerDialog(currentSymbol()) }),
       linkBtn,
       el('button', { class: 'px-icon-btn', title: 'Refresh Plutus data', text: '↻', onclick: () => refresh(true) }),
@@ -230,25 +262,30 @@
     bannerEl = el('div', { class: 'px-banner', style: 'display:none' });
     panel.appendChild(bannerEl);
 
+    // region switch (F1) — rendered only when the universe has US stocks
+    regionEl = el('div', { class: 'px-region', style: 'display:none' });
+    panel.appendChild(regionEl);
+
     // list selector row
-    selectEl = el('select', { class: 'px-select', title: 'Pool / watchlist (← → to cycle)', onchange: onSelectList });
+    selectEl = el('select', { class: 'px-select', title: 'Pool / watchlist / sector (← → to cycle)', onchange: onSelectList });
     panel.appendChild(el('div', { class: 'px-row' }, [
       selectEl,
-      el('button', { class: 'px-small-btn', title: 'New watchlist', text: '＋', onclick: newListDialog }),
-      el('button', { class: 'px-small-btn', id: 'px-btn-rename', title: 'Rename watchlist', text: '✎', onclick: renameListDialog }),
-      el('button', { class: 'px-small-btn px-danger', id: 'px-btn-delete', title: 'Delete watchlist', text: '🗑', onclick: deleteListDialog }),
+      el('button', { class: 'px-small-btn', title: 'New watchlist', text: '＋', onclick: () => newListDialog() }),
     ]));
 
     // cap slicer
     slicerEl = el('div', { class: 'px-slicer' });
     panel.appendChild(slicerEl);
 
-    // filter + sort
+    // filter + sector (F2)
     filterInput = el('input', { class: 'px-input', type: 'text', placeholder: 'Filter…  ( / )', oninput: () => { st.filter = filterInput.value; renderList(); } });
     filterInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { filterInput.value = ''; st.filter = ''; renderList(); filterInput.blur(); } if (e.key === 'Enter') { const first = listEl.querySelector('.px-item'); if (first) first.click(); } e.stopPropagation(); });
-    sortSelect = el('select', { class: 'px-select', style: 'flex:0 0 auto;max-width:120px', title: 'Sort', onchange: () => SET.save({ tvSort: sortSelect.value }) });
-    [['default', 'A → Z'], ['conviction', 'Conviction'], ['dma', '% below DMA'], ['ath', '% off ATH'], ['score', 'Funda score']].forEach(([v, t]) => sortSelect.appendChild(el('option', { value: v, text: t })));
-    panel.appendChild(el('div', { class: 'px-row' }, [filterInput, sortSelect]));
+    sectorSelect = el('select', { class: 'px-select px-sector-select', title: 'Sector / industry group', onchange: () => { st.sectorFilter = sectorSelect.value; renderSlicer(); renderList(); } });
+    panel.appendChild(el('div', { class: 'px-row' }, [filterInput, sectorSelect]));
+
+    // sortable column header (F3)
+    headerEl = el('div', { class: 'px-cols' });
+    panel.appendChild(headerEl);
 
     // list
     listEl = el('div', { class: 'px-list' });
@@ -263,12 +300,15 @@
     panel.appendChild(el('div', { class: 'px-footer' }, [heldEl, addRow, hintEl]));
 
     document.body.appendChild(panel);
+    buildDrawer();
     restoreLayout();
-    panel.addEventListener('mouseup', saveLayout);
+    panel.addEventListener('mouseup', () => { saveLayout(); positionDrawer(); });
+    window.addEventListener('resize', positionDrawer);
+    if (window.ResizeObserver) new ResizeObserver(positionDrawer).observe(panel);
     window.addEventListener('keydown', onKeyDown, true);
   }
 
-  function renderAll() { renderBanner(); renderSelect(); renderSlicer(); renderList(); renderHint(); renderAsOf(); renderHeld(); }
+  function renderAll() { renderBanner(); renderRegion(); renderSelect(); renderSlicer(); renderSectors(); renderCols(); renderList(); renderHint(); renderAsOf(); renderHeld(); renderDrawer(); }
 
   function renderBanner() {
     if (!bannerEl) return;
@@ -292,32 +332,104 @@
     asofEl.classList.toggle('px-stale', age > 4);
   }
 
+  // ---- region (F1) ------------------------------------------------------------
+  function renderRegion() {
+    if (!regionEl) return;
+    if (!st.boot || !hasUs()) { regionEl.style.display = 'none'; return; }
+    regionEl.style.display = '';
+    regionEl.innerHTML = '';
+    [['IN', '🇮🇳 India'], ['US', '🇺🇸 US']].forEach(([code, label]) => {
+      regionEl.appendChild(el('button', { class: code === st.region ? 'px-active' : '', text: label, onclick: () => setRegion(code) }));
+    });
+  }
+  /** Switch region: reset the slicers, keep the active list if it belongs here, else the first list of the region. */
+  function setRegion(region, opts) {
+    if (region !== 'IN' && region !== 'US') return;
+    st.region = region;
+    st.capFilter = 'All'; st.sectorFilter = 'All'; st.filter = ''; if (filterInput) filterInput.value = '';
+    if (!listInRegion(st.active)) { st.active = defaultList(); saveActiveList(); }
+    if (!(opts && opts.silent)) SET.save({ tvRegion: region });
+    renderRegion(); renderSelect(); renderSlicer(); renderSectors(); renderList();
+  }
+
   function renderSelect() {
     selectEl.innerHTML = '';
-    const og1 = el('optgroup', { label: 'Plutus pools' });
-    pools().forEach((p) => og1.appendChild(el('option', { value: 'pool:' + p.code, text: p.name + ' (' + p.count + ')' })));
+    const og1 = el('optgroup', { label: 'Plutus pools' + (st.region === 'US' ? ' · US' : '') });
+    poolsInRegion().forEach((p) => og1.appendChild(el('option', { value: 'pool:' + p.code, text: p.name + ' (' + p.count + ')' })));
     const og2 = el('optgroup', { label: 'Watchlists' + (st.wlSource === 'local' ? ' (this browser)' : '') });
-    st.watchlists.forEach((w) => og2.appendChild(el('option', { value: 'wl:' + w.id, text: w.name + ' (' + (w.symbols || []).length + ')' })));
+    watchlistsInRegion().forEach((w) => og2.appendChild(el('option', { value: 'wl:' + w.id, text: w.name + ' (' + (w.symbols || []).length + ')' })));
+    const og3 = el('optgroup', { label: 'Sectors' });
+    sectorsInRegion().forEach(([name, n]) => og3.appendChild(el('option', { value: 'sector:' + name, text: name + ' (' + n + ')' })));
     selectEl.appendChild(og1); selectEl.appendChild(og2);
-    if (st.active) selectEl.value = st.active.kind + ':' + st.active.id;
-    const isWl = !!activeWatchlist();
-    panel.querySelector('#px-btn-rename').disabled = !isWl;
-    panel.querySelector('#px-btn-delete').disabled = !isWl;
-    addRow.style.display = isWl ? '' : 'none';
+    if (og3.children.length) selectEl.appendChild(og3);
+    if (st.active) {
+      const v = st.active.kind + ':' + st.active.id;
+      if (!Array.from(selectEl.options).some((o) => o.value === v)) {
+        // Active list from the other region: show it anyway so nothing is hidden by surprise.
+        const og = el('optgroup', { label: 'Other region' });
+        og.appendChild(el('option', { value: v, text: st.active.name || String(st.active.id) }));
+        selectEl.appendChild(og);
+      }
+      selectEl.value = v;
+    }
+    addRow.style.display = activeWatchlist() ? '' : 'none';
   }
 
   function renderSlicer() {
     slicerEl.innerHTML = '';
-    const rows = activeSymbols().map(rowFor);
-    const counts = { All: rows.length, Large: 0, Mid: 0, Small: 0 };
-    rows.forEach((r) => { if (r.cap === 'Large') counts.Large++; else if (r.cap === 'Mid') counts.Mid++; else if (r.cap === 'Small' || r.cap === 'Micro') counts.Small++; });
-    ['All', 'Large', 'Mid', 'Small'].forEach((c) => {
+    let rows = activeSymbols().map(rowFor);
+    if (st.sectorFilter !== 'All') rows = rows.filter((r) => st.sectorFilter === '__none__' ? !r.sector : r.sector === st.sectorFilter);
+    const buckets = L.capBuckets(st.region);
+    const counts = { All: rows.length };
+    buckets.forEach((b) => { counts[b] = 0; });
+    rows.forEach((r) => { buckets.forEach((b) => { if (L.capMatches(b, r.cap) ) counts[b]++; }); });
+    if (!buckets.includes(st.capFilter) && st.capFilter !== 'All') st.capFilter = 'All';
+    ['All'].concat(buckets).forEach((c) => {
       slicerEl.appendChild(el('button', { class: c === st.capFilter ? 'px-active' : '', onclick: () => { st.capFilter = c; renderSlicer(); renderList(); } }, [
         c, el('span', { class: 'px-count', text: String(counts[c]) }),
       ]));
     });
   }
 
+  // ---- sector slicer (F2) ----------------------------------------------------
+  function renderSectors() {
+    if (!sectorSelect) return;
+    const entries = activeSymbols().map((s) => st.stocks.get(s)).filter(Boolean);
+    const { sectors, none } = L.sectorCounts(entries);
+    sectorSelect.innerHTML = '';
+    sectorSelect.appendChild(el('option', { value: 'All', text: 'All sectors (' + entries.length + ')' }));
+    sectors.forEach(([name, n]) => sectorSelect.appendChild(el('option', { value: name, text: name + ' (' + n + ')' })));
+    if (none) sectorSelect.appendChild(el('option', { value: '__none__', text: 'No sector (' + none + ')' }));
+    if (!Array.from(sectorSelect.options).some((o) => o.value === st.sectorFilter)) st.sectorFilter = 'All';
+    sectorSelect.value = st.sectorFilter;
+    sectorSelect.disabled = st.active && st.active.kind === 'sector';
+  }
+
+  // ---- sortable column header (F3) -------------------------------------------
+  const COLS = [
+    ['default', 'Symbol', 'A → Z', 'px-col-sym'],
+    ['dma', '200D', '% from the 200 DMA (− = below)', 'px-col-num'],
+    ['high52', '52wH', '% off the 52-week high', 'px-col-num'],
+    ['ath', 'ATH', '% off the all-time high', 'px-col-num'],
+    ['score', 'n/11', 'Fundamental score', 'px-col-score'],
+  ];
+  function renderCols() {
+    if (!headerEl) return;
+    headerEl.innerHTML = '';
+    COLS.forEach(([key, label, title, cls]) => {
+      const on = st.sort.key === key || (key === 'default' && st.sort.key === 'name');
+      headerEl.appendChild(el('button', { class: 'px-col ' + cls + (on ? ' px-on' : ''), title: 'Sort by ' + title, onclick: () => setSort(key) }, [
+        label, on ? el('span', { class: 'px-col-dir', text: st.sort.dir === 'asc' ? '▲' : '▼' }) : null,
+      ]));
+    });
+  }
+  function setSort(key, dir) {
+    st.sort = dir ? { key, dir } : L.nextSort(st.sort, key);
+    SET.save({ tvSort: st.sort.key, tvSortDir: st.sort.dir });
+    renderCols(); renderList(); renderDrawer();
+  }
+
+  const pct = (v, nd) => (v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(nd == null ? 1 : nd));
   function renderList() {
     if (!listEl) return;
     listEl.innerHTML = '';
@@ -335,22 +447,27 @@
         const conv = conviction(r);
         if (conv === 'PRIME') chips.push(el('span', { class: 'px-chip px-chip-prime', text: 'PRIME', title: 'Strong signal + fundamentals ≥ 8/11' }));
         if (r.status && SIGNAL_CHIP[r.status]) chips.push(el('span', { class: 'px-chip ' + SIGNAL_CHIP[r.status][1], text: SIGNAL_CHIP[r.status][0], title: r.status }));
-        if (r.points != null) chips.push(el('span', { class: 'px-chip px-chip-score ' + (r.points >= 8 ? 'px-strong' : r.points <= 5 ? 'px-weak' : ''), text: r.points + '/11', title: 'Fundamental score' }));
-        if (r.held) chips.push(el('span', { class: 'px-chip px-chip-held', text: 'HELD ' + r.held.qty, title: 'Open position: ' + r.held.qty + ' × ₹' + U.fmt(r.held.invested / Math.max(1, r.held.qty), 0) }));
-        if (r.below != null) chips.push(el('span', { class: 'px-chip px-chip-dma ' + (r.below > 0 ? 'px-pos' : ''), text: (r.below > 0 ? '−' : '+') + Math.abs(r.below).toFixed(1) + '% DMA', title: 'Distance from 200 DMA (− = below)' }));
+        if (r.held) chips.push(el('span', { class: 'px-chip px-chip-held', text: 'HELD ' + r.held.qty, title: 'Open position: ' + r.held.qty + ' × ' + (r.market === 'US' ? '$' : '₹') + U.fmt(r.held.invested / Math.max(1, r.held.qty), 0) }));
       }
       const capL = r.cap ? (CAP_LETTER[r.cap] || 'U') : 'U';
+      // 200D is stored as "% below" (positive = below the DMA); show it signed like the chart reads it.
+      const dmaDist = r.below == null ? null : -r.below;
+      const numCell = (v, cls, title) => el('span', { class: 'px-cell px-col-num ' + (v == null ? '' : v < 0 ? 'px-down' : v > 0 ? 'px-up' : '') + (cls || ''), text: pct(v), title: title || '' });
       const item = el('div', { class: 'px-item' + (r.symbol === st.activeSymbol ? ' px-active' : '') + (r.entry ? '' : ' px-missing'), 'data-symbol': r.symbol, title: r.entry ? '' : 'Not in the Plutus universe' }, [
         el('span', { class: 'px-chip px-chip-cap-' + capL, text: capL, title: r.cap || 'Cap unknown' }),
         el('div', { class: 'px-item-main' }, [
           el('div', { class: 'px-sym', text: r.plain }),
           showChips && chips.length ? el('div', { class: 'px-chips' }, chips) : (r.name ? el('div', { class: 'px-name', text: r.name }) : null),
         ]),
+        numCell(dmaDist, '', 'Distance from the 200 DMA'),
+        numCell(r.off52 == null ? null : -Math.abs(r.off52), '', '% off the 52-week high'),
+        numCell(r.athFall == null ? null : -Math.abs(r.athFall), '', '% off the all-time high'),
+        el('span', { class: 'px-cell px-col-score ' + (r.points == null ? 'px-muted' : r.points >= 8 ? 'px-strong' : r.points <= 5 ? 'px-weak' : ''), text: r.points == null ? '—' : r.points + '/11', title: 'Fundamental score' }),
         el('div', { class: 'px-actions' }, [
           el('button', { class: 'px-act', title: 'Size a position (Z)', text: '⚖', onclick: (e) => { e.stopPropagation(); sizerDialog(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Note (N)', text: '✎', onclick: (e) => { e.stopPropagation(); noteDialog(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Bookmark to a watchlist (B)', text: '🔖', onclick: (e) => { e.stopPropagation(); bookmarkDialog(r.symbol); } }),
-          el('button', { class: 'px-act', title: 'Screener.in (S)', text: '⧉', onclick: (e) => { e.stopPropagation(); openScreener(r.symbol); } }),
+          r.market === 'US' ? null : el('button', { class: 'px-act', title: 'Screener.in (S)', text: '⧉', onclick: (e) => { e.stopPropagation(); openScreener(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Open in Plutus (P)', text: '⌂', onclick: (e) => { e.stopPropagation(); openPlutus(r.symbol); } }),
           isWl ? el('button', { class: 'px-act px-act-del', title: 'Remove from this watchlist', text: '✕', onclick: (e) => { e.stopPropagation(); removeFromActive(r.symbol); } }) : null,
         ]),
@@ -364,24 +481,30 @@
   function renderHint() {
     const space = st.settings.tvSpaceKeyNavigates;
     hintEl.innerHTML = '<span><kbd>↑</kbd><kbd>↓</kbd>' + (space ? '<kbd>Space</kbd>' : '') + ' stock</span><span><kbd>←</kbd><kbd>→</kbd> list</span>' +
-      '<span><kbd>Z</kbd> size</span><span><kbd>N</kbd> note</span><span><kbd>B</kbd> bookmark</span><span><kbd>O</kbd> opportunity</span><span><kbd>S</kbd> screener</span><span><kbd>P</kbd> plutus</span><span><kbd>A</kbd> play area</span><span><kbd>Alt</kbd>+<kbd>W</kbd> panel</span><span><kbd>Alt</kbd>+<kbd>E</kbd> expand</span>';
+      '<span><kbd>Z</kbd> size</span><span><kbd>N</kbd> note</span><span><kbd>B</kbd> bookmark</span><span><kbd>O</kbd> opportunity</span><span><kbd>S</kbd> screener</span><span><kbd>P</kbd> plutus</span><span><kbd>A</kbd> play area</span><span><kbd>Alt</kbd>+<kbd>D</kbd> drawer</span><span><kbd>Alt</kbd>+<kbd>W</kbd> panel</span><span><kbd>Alt</kbd>+<kbd>E</kbd> expand</span>';
     focusBtn.classList.toggle('px-on', !!st.settings.tvFocusMode);
     linkBtn.classList.toggle('px-on', !!st.settings.linkTabs);
     linkBtn.title = st.settings.linkTabs ? 'Tabs linked: Screener follows this chart and the chart follows Screener (click to unlink)' : 'Tabs not linked (click to link TradingView and Screener)';
-    sortSelect.value = st.settings.tvSort || 'default';
+    drawerBtn.classList.toggle('px-on', !!st.settings.tvDrawerOpen);
   }
 
   function togglePanel() {
     const collapsed = panel.classList.toggle('px-collapsed');
     SET.save({ tvPanelOpen: !collapsed });
+    positionDrawer();
   }
 
   function onSelectList() {
-    const [kind, id] = selectEl.value.split(':');
-    const name = kind === 'pool' ? (pools().find((p) => p.code === id) || {}).name : (st.watchlists.find((w) => String(w.id) === id) || {}).name;
-    st.active = { kind, id: kind === 'pool' ? id : (isNaN(Number(id)) ? id : Number(id)), name };
+    const [kind, ...rest] = selectEl.value.split(':');
+    const id = rest.join(':');
+    let name;
+    if (kind === 'pool') name = (pools().find((p) => p.code === id) || {}).name;
+    else if (kind === 'sector') name = id;
+    else name = (st.watchlists.find((w) => String(w.id) === id) || {}).name;
+    st.active = { kind, id: kind === 'wl' ? (isNaN(Number(id)) ? id : Number(id)) : id, name };
+    if (kind === 'sector') st.sectorFilter = 'All';
     saveActiveList();
-    renderSelect(); renderSlicer(); renderList();
+    renderSelect(); renderSlicer(); renderSectors(); renderList(); renderDrawer();
   }
 
   async function refresh(force) {
@@ -406,9 +529,10 @@
       const l = Math.max(0, Math.min(window.innerWidth - 80, sl + e.clientX - sx));
       const t = Math.max(0, Math.min(window.innerHeight - 60, stp + e.clientY - sy));
       panel.style.left = l + 'px'; panel.style.top = t + 'px';
+      positionDrawer();
     });
-    window.addEventListener('mouseup', () => { if (dragging) { dragging = false; saveLayout(); } });
-    handle.addEventListener('dblclick', () => { panel.style.cssText = ''; panel.classList.remove('px-wide'); syncWideBtn(); try { localStorage.removeItem(LS_LAYOUT); } catch (e) { /* ignore */ } renderHeld(); });
+    window.addEventListener('mouseup', () => { if (dragging) { dragging = false; saveLayout(); positionDrawer(); } });
+    handle.addEventListener('dblclick', () => { panel.style.cssText = ''; panel.classList.remove('px-wide'); syncWideBtn(); try { localStorage.removeItem(LS_LAYOUT); } catch (e) { /* ignore */ } renderHeld(); positionDrawer(); });
   }
   function saveLayout() {
     try {
@@ -431,6 +555,7 @@
       if (l.wide) panel.classList.add('px-wide');
       syncWideBtn();
     } catch (e) { /* ignore */ }
+    positionDrawer();
   }
   /**
    * Expand: a tall, wide panel (room for every chip, the held strip in four
@@ -461,6 +586,7 @@
     saveLayout();
     syncWideBtn();
     renderHeld();
+    positionDrawer();
   }
   function syncWideBtn() {
     if (!wideBtn) return;
@@ -468,6 +594,245 @@
     wideBtn.textContent = wide ? '⤡' : '⤢';
     wideBtn.title = wide ? 'Restore the panel size (Alt+E)' : 'Expand the panel (Alt+E)';
     wideBtn.classList.toggle('px-on', wide);
+  }
+
+  // =============================================================================
+  // Drawer (F18): Filters · Stock · Trades · Notes — follows the selected stock
+  // =============================================================================
+  function buildDrawer() {
+    drawerTitleEl = el('span', { class: 'px-drawer-sym', text: '' });
+    drawerTabsEl = el('div', { class: 'px-drawer-tabs' });
+    drawerBody = el('div', { class: 'px-drawer-body' });
+    drawer = el('div', { id: 'px-tv-drawer', class: 'px-collapsed' }, [
+      el('div', { class: 'px-drawer-head' }, [
+        drawerTabsEl,
+        el('span', { class: 'px-header-spacer' }),
+        drawerTitleEl,
+        el('button', { class: 'px-icon-btn', title: 'Close the drawer (Alt+D)', text: '✕', onclick: () => toggleDrawer(false) }),
+      ]),
+      drawerBody,
+    ]);
+    document.body.appendChild(drawer);
+  }
+  function drawerTab() { return (st.settings && st.settings.tvDrawerTab) || 'notes'; }
+  function toggleDrawer(open) {
+    const next = open == null ? !st.settings.tvDrawerOpen : !!open;
+    st.settings.tvDrawerOpen = next;
+    SET.save({ tvDrawerOpen: next });
+    renderDrawer();
+  }
+  function setDrawerTab(tab) {
+    st.settings.tvDrawerTab = tab;
+    SET.save({ tvDrawerTab: tab, tvDrawerOpen: true });
+    st.settings.tvDrawerOpen = true;
+    renderDrawer();
+  }
+  /** The drawer is a sibling of the panel (the panel clips its children): keep it glued to the panel's left edge. */
+  function positionDrawer() {
+    if (!drawer || !panel) return;
+    const open = !!(st.settings && st.settings.tvDrawerOpen) && !panel.classList.contains('px-collapsed');
+    drawer.classList.toggle('px-collapsed', !open);
+    if (!open) return;
+    const r = panel.getBoundingClientRect();
+    const w = Math.min(DRAWER_W, Math.max(240, window.innerWidth - 40));
+    let left = r.left - w - 8;
+    if (left < 4) left = Math.min(window.innerWidth - w - 4, r.right + 8);   // no room on the left: sit on the right
+    drawer.style.left = Math.max(4, left) + 'px';
+    drawer.style.top = r.top + 'px';
+    drawer.style.width = w + 'px';
+    drawer.style.height = r.height + 'px';
+  }
+  function renderDrawer() {
+    if (!drawer) return;
+    positionDrawer();
+    drawerBtn.classList.toggle('px-on', !!st.settings.tvDrawerOpen);
+    if (!st.settings.tvDrawerOpen) return;
+    const tab = drawerTab();
+    drawerTabsEl.innerHTML = '';
+    DRAWER_TABS.forEach(([id, label]) => drawerTabsEl.appendChild(el('button', { class: 'px-drawer-tab' + (tab === id ? ' px-on' : ''), text: label, onclick: () => setDrawerTab(id) })));
+    const sym = currentSymbol();
+    drawerTitleEl.textContent = sym ? S.toPlain(sym) : '';
+    drawerBody.innerHTML = '';
+    if (tab === 'filters') renderFiltersTab(drawerBody);
+    else if (tab === 'stock') renderStockTab(drawerBody, sym);
+    else if (tab === 'trades') renderTradesTab(drawerBody, sym);
+    else renderNotesTab(drawerBody, sym);
+  }
+
+  function section(title, children) {
+    return el('div', { class: 'px-dsec' }, [el('div', { class: 'px-dsec-title', text: title })].concat(children || []));
+  }
+
+  // ---- Filters tab: sort, region, watchlist admin ------------------------------
+  function renderFiltersTab(body) {
+    const sortSel = el('select', { class: 'px-select', onchange: () => setSort(sortSel.value, (L.SORT_KEYS[sortSel.value] || L.SORT_KEYS.default).dir) });
+    Object.keys(L.SORT_KEYS).filter((k) => k !== 'name' && k !== 'chg').forEach((k) => sortSel.appendChild(el('option', { value: k, text: L.SORT_KEYS[k].label })));
+    sortSel.value = L.SORT_KEYS[st.sort.key] ? (st.sort.key === 'name' ? 'default' : st.sort.key) : 'default';
+    const dirBtn = el('button', { class: 'px-small-btn', text: st.sort.dir === 'asc' ? '▲ asc' : '▼ desc', title: 'Flip the sort direction', onclick: () => setSort(st.sort.key, st.sort.dir === 'asc' ? 'desc' : 'asc') });
+    body.appendChild(section('Sort', [el('div', { class: 'px-drow' }, [sortSel, dirBtn])]));
+
+    if (hasUs()) {
+      const seg = el('div', { class: 'px-region px-region-inline' });
+      [['IN', '🇮🇳 India'], ['US', '🇺🇸 US']].forEach(([code, label]) => seg.appendChild(el('button', { class: code === st.region ? 'px-active' : '', text: label, onclick: () => setRegion(code) })));
+      body.appendChild(section('Region', [seg]));
+    }
+
+    const w = activeWatchlist();
+    body.appendChild(section('Watchlists' + (st.wlSource === 'local' ? ' (this browser)' : ''), [
+      el('div', { class: 'px-drow' }, [
+        el('button', { class: 'px-small-btn px-primary', text: '＋ New', onclick: () => newListDialog() }),
+        el('button', { class: 'px-small-btn', text: '✎ Rename', disabled: w ? null : 'disabled', onclick: renameListDialog }),
+        el('button', { class: 'px-small-btn px-danger', text: '🗑 Delete', disabled: w ? null : 'disabled', onclick: deleteListDialog }),
+      ]),
+      el('div', { class: 'px-muted', text: w ? 'Active: ' + w.name + ' (' + (w.symbols || []).length + ')' : 'Pick a watchlist in the panel to rename or delete it.' }),
+    ]));
+
+    body.appendChild(section('Fundamental filters', [
+      el('div', { class: 'px-muted', text: 'Per-rule pass / fail chips arrive in v0.4 together with live prices.' }),
+    ]));
+
+    body.appendChild(section('Data', [
+      el('div', { class: 'px-drow' }, [
+        el('button', { class: 'px-small-btn', text: '↻ Refresh Plutus data', onclick: () => refresh(true) }),
+      ]),
+      el('div', { class: 'px-muted', text: st.boot ? 'Snapshot ' + (st.boot.snapshot_date || '—') + ' · ' + st.stocks.size + ' stocks' + (st.boot._cached ? ' · cached' : '') : '' }),
+    ]));
+  }
+
+  // ---- Stock tab: a compact summary now; the full Plutus card lands in v0.4 ----
+  function renderStockTab(body, sym) {
+    if (!sym) { body.appendChild(el('div', { class: 'px-empty', text: 'Pick a stock.' })); return; }
+    const r = rowFor(sym);
+    if (!r.entry) { body.appendChild(el('div', { class: 'px-empty', text: r.plain + ' is not in the Plutus universe.' })); return; }
+    const cur = r.market === 'US' ? '$' : '₹';
+    const kv = (k, v, cls) => el('div', { class: 'px-kv' }, [el('span', { class: 'px-kv-k', text: k }), el('span', { class: 'px-kv-v ' + (cls || ''), text: v })]);
+    body.appendChild(section(r.plain + (r.name ? ' · ' + r.name : ''), [
+      kv('Market · cap', r.market + (r.cap ? ' · ' + r.cap : '')),
+      kv('Sector', r.sector || '—'),
+      kv('Pools', (r.entry.pools || []).join(', ') || '—'),
+      kv('Close', r.close == null ? '—' : cur + U.fmt(r.close, 2)),
+      kv('Signal', r.status || '—'),
+      kv('Fundamental score', r.points == null ? '—' : r.points + ' / 11', r.points == null ? '' : r.points >= 8 ? 'px-up' : r.points <= 5 ? 'px-down' : ''),
+      kv('From 200 DMA', pct(r.below == null ? null : -r.below) + '%', r.below > 0 ? 'px-up' : ''),
+      kv('Off 52-week high', pct(r.off52 == null ? null : -Math.abs(r.off52)) + '%'),
+      kv('Off ATH', pct(r.athFall == null ? null : -Math.abs(r.athFall)) + '%'),
+      r.held ? kv('Held', r.held.qty + ' · ' + cur + U.fmt(r.held.invested, 0), 'px-up') : null,
+    ]));
+    body.appendChild(el('div', { class: 'px-drow' }, [
+      el('button', { class: 'px-small-btn', text: '✎ Note', onclick: () => noteDialog(sym) }),
+      el('button', { class: 'px-small-btn', text: '⚡ Opportunity', onclick: () => opportunityDialog(sym) }),
+      el('button', { class: 'px-small-btn', text: '⚖ Size', onclick: () => sizerDialog(sym) }),
+      r.market === 'US' ? null : el('button', { class: 'px-small-btn', text: '⧉ Screener', onclick: () => openScreener(sym) }),
+      el('button', { class: 'px-small-btn', text: '⌂ Plutus', onclick: () => openPlutus(sym) }),
+    ]));
+    body.appendChild(el('div', { class: 'px-muted', text: 'The full 11-check card (the one Screener shows) moves here in v0.4.' }));
+  }
+
+  // ---- Trades tab: open lots now; closed trades and opportunities in v0.4 ------
+  function renderTradesTab(body, sym) {
+    if (!sym) { body.appendChild(el('div', { class: 'px-empty', text: 'Pick a stock.' })); return; }
+    if (!st.settings.token) { body.appendChild(el('div', { class: 'px-empty', text: 'Trades need a Plutus token (extension popup).' })); return; }
+    const lots = (st.lots && st.lots.get(S.toPlain(sym))) || [];
+    if (!lots.length) body.appendChild(section('Open lots', [el('div', { class: 'px-muted', text: 'No open position in ' + S.toPlain(sym) + '.' })]));
+    else {
+      const table = el('div', { class: 'px-held-lots px-dlots' });
+      table.appendChild(el('div', { class: 'px-held-lot px-held-lot-head' }, ['Bought', 'Qty @', 'Target', 'Stop'].map((h) => el('span', { text: h }))));
+      lots.slice().sort((a, b) => String(b.buy_date).localeCompare(String(a.buy_date))).forEach((t) => {
+        table.appendChild(el('div', { class: 'px-held-lot', title: (t.strategy ? t.strategy + ' · ' : '') + (t.order_type || '') }, [
+          el('span', { text: shortDate(t.buy_date) }),
+          el('span', { text: (Number(t.qty) || 0) + ' @ ' + (num(t.buy_price) ? U.fmt(t.buy_price, 1) : '—') }),
+          el('span', { text: num(t.target_price) ? U.fmt(t.target_price, 0) : '—' }),
+          el('span', { text: num(t.stop_price) ? U.fmt(t.stop_price, 0) : '—' }),
+        ]));
+      });
+      body.appendChild(section('Open lots (' + lots.length + ')', [table]));
+    }
+    body.appendChild(el('div', { class: 'px-drow' }, [
+      el('button', { class: 'px-small-btn', text: '⚖ Size a position', onclick: () => sizerDialog(sym) }),
+      el('button', { class: 'px-small-btn', text: '⚡ Add opportunity', onclick: () => opportunityDialog(sym) }),
+    ]));
+    body.appendChild(el('div', { class: 'px-muted', text: 'Closed trades, opportunities and live P&L per lot arrive in v0.4.' }));
+  }
+
+  // ---- Notes tab (F4): full timeline with add / edit / delete ----------------
+  async function loadNotes(sym, force) {
+    if (!sym || !st.settings.token) return;
+    if (!force && st.notes.symbol === sym && !st.notes.error && !st.notes.loading) return;
+    st.notes = { symbol: sym, items: [], loading: true, error: null, editing: null };
+    renderDrawer();
+    try {
+      const r = await U.send({ type: 'notes.list', symbol: sym, limit: 200 });
+      if (st.notes.symbol !== sym) return;                 // the chart moved on meanwhile
+      st.notes.items = r.notes || [];
+    } catch (e) { st.notes.error = e.message; }
+    st.notes.loading = false;
+    renderDrawer();
+  }
+  function renderNotesTab(body, sym) {
+    if (!sym) { body.appendChild(el('div', { class: 'px-empty', text: 'Pick a stock.' })); return; }
+    if (!st.settings.token) { body.appendChild(el('div', { class: 'px-empty', text: 'Notes need a Plutus token (extension popup).' })); return; }
+    const plain = S.toPlain(sym);
+    if (st.notes.symbol !== sym) { loadNotes(sym); }
+
+    // add form
+    const date = el('input', { type: 'date', class: 'px-input', value: new Date().toISOString().slice(0, 10) });
+    const text = el('textarea', { class: 'px-input px-note-text', placeholder: 'Your view on ' + plain + ' today… (Ctrl+Enter saves)' });
+    const save = el('button', { class: 'px-small-btn px-primary', text: 'Save note' });
+    const submit = async () => {
+      if (!text.value.trim()) { U.toast('Write something first', 'error'); return; }
+      save.disabled = true;
+      try {
+        await U.send({ type: 'notes.create', symbol: sym, content: text.value.trim(), note_date: date.value });
+        U.toast('Note saved to Plutus', 'success');
+        text.value = '';
+        await loadNotes(sym, true);
+      } catch (e) { U.toast(e.message, 'error'); }
+      save.disabled = false;
+    };
+    save.addEventListener('click', submit);
+    [date, text].forEach((n) => n.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } }));
+    body.appendChild(section('New note · ' + plain, [el('div', { class: 'px-drow' }, [date, save]), text]));
+
+    // timeline
+    const list = el('div', { class: 'px-notes' });
+    if (st.notes.loading) list.appendChild(el('div', { class: 'px-muted', text: 'Loading notes…' }));
+    else if (st.notes.error) list.appendChild(el('div', { class: 'px-muted px-down', text: st.notes.error }));
+    else if (!st.notes.items.length) list.appendChild(el('div', { class: 'px-muted', text: 'No notes yet for ' + plain + '.' }));
+    st.notes.items.forEach((n) => list.appendChild(noteItem(n, sym)));
+    body.appendChild(section('Timeline (' + st.notes.items.length + ')', [list]));
+  }
+  function noteItem(n, sym) {
+    const editing = st.notes.editing === n.id;
+    const head = el('div', { class: 'px-note-head' }, [
+      el('span', { class: 'px-note-date', text: shortDate(n.note_date) }),
+      el('span', { class: 'px-header-spacer' }),
+      editing ? null : el('button', { class: 'px-act', title: 'Edit', text: '✎', onclick: () => { st.notes.editing = n.id; renderDrawer(); } }),
+      editing ? null : el('button', { class: 'px-act px-act-del', title: 'Delete', text: '🗑', onclick: () => deleteNote(n, sym) }),
+    ]);
+    if (!editing) return el('div', { class: 'px-note' }, [head, el('div', { class: 'px-note-body', text: n.content })]);
+    const date = el('input', { type: 'date', class: 'px-input', value: String(n.note_date || '').slice(0, 10) });
+    const text = el('textarea', { class: 'px-input px-note-text', value: '' });
+    text.value = n.content || '';
+    const saveBtn = el('button', { class: 'px-small-btn px-primary', text: 'Save' });
+    const cancel = el('button', { class: 'px-small-btn', text: 'Cancel', onclick: () => { st.notes.editing = null; renderDrawer(); } });
+    const submit = async () => {
+      if (!text.value.trim()) { U.toast('Write something first', 'error'); return; }
+      saveBtn.disabled = true;
+      try {
+        await U.send({ type: 'notes.update', id: n.id, patch: { content: text.value.trim(), note_date: date.value } });
+        st.notes.editing = null;
+        U.toast('Note updated', 'success', 1500);
+        await loadNotes(sym, true);
+      } catch (e) { U.toast(e.message, 'error'); saveBtn.disabled = false; }
+    };
+    saveBtn.addEventListener('click', submit);
+    [date, text].forEach((x) => x.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } if (e.key === 'Escape') cancel.click(); }));
+    return el('div', { class: 'px-note px-note-editing' }, [head, el('div', { class: 'px-drow' }, [date, saveBtn, cancel]), text]);
+  }
+  function deleteNote(n, sym) {
+    U.dialog({ title: 'Delete note', actionLabel: 'Delete', danger: true,
+      body: el('div', { html: 'Delete the note of <b>' + esc(shortDate(n.note_date)) + '</b>?<br><span class="px-muted">' + esc(String(n.content).slice(0, 160)) + '</span>' }),
+      onConfirm: async () => { await U.send({ type: 'notes.delete', id: n.id }); U.toast('Note deleted', 'success', 1500); await loadNotes(sym, true); } });
   }
 
   // =============================================================================
@@ -490,6 +855,7 @@
     st.activeSymbol = symbol;
     highlightActive();
     renderHeld();
+    renderDrawer();
     document.body.classList.add('px-switching');
     const btn = q1(TV.searchButton);
     if (!btn) { document.body.classList.remove('px-switching'); U.toast('TradingView symbol search button not found — selectors need updating', 'error'); return; }
@@ -499,7 +865,7 @@
       tries++;
       const dlg = q1(TV.dialog);
       let input = dlg ? q1(TV.input, dlg) : null;
-      if (!input) input = Array.from(document.querySelectorAll('input[data-role="search"]')).find((i) => !panel.contains(i)) || null;
+      if (!input) input = Array.from(document.querySelectorAll('input[data-role="search"]')).find((i) => !panel.contains(i) && !drawer.contains(i)) || null;
       if (input) {
         clearInterval(poll);
         setNativeValue(input, tvSym);
@@ -556,13 +922,17 @@
     renderHeld();                       // title ticks carry the live price
     if (!sym || sym === st.activeSymbol) { highlightActive(); return; }
     st.activeSymbol = sym;
+    renderDrawer();
     // Follow the chart into whichever list holds the symbol, if the current one does not.
     if (!activeSymbols().includes(sym)) {
-      const pool = pools().find((p) => (st.stocks.get(sym) || { pools: [] }).pools.includes(p.code));
+      const e = st.stocks.get(sym);
+      const mkt = L.marketOfEntry(e, sym);
+      if (e && mkt !== st.region && hasUs()) setRegion(mkt);
+      const pool = poolsInRegion().find((p) => (e || { pools: [] }).pools.includes(p.code));
       const wl = st.watchlists.find((w) => (w.symbols || []).includes(sym));
       if (pool) st.active = { kind: 'pool', id: pool.code, name: pool.name };
       else if (wl) st.active = { kind: 'wl', id: wl.id, name: wl.name };
-      renderSelect(); renderSlicer(); renderList();
+      renderSelect(); renderSlicer(); renderSectors(); renderList();
       return;
     }
     highlightActive();
@@ -608,11 +978,11 @@
     if (!nav || nav.source !== 'screener' || !st.boot) return;
     const same = st.active && st.active.kind === nav.kind && String(st.active.id) === String(nav.id);
     if (same) return;
-    const target = { kind: nav.kind, id: nav.kind === 'pool' ? nav.id : (isNaN(Number(nav.id)) ? nav.id : Number(nav.id)), name: nav.name };
+    const target = { kind: nav.kind, id: nav.kind === 'wl' ? (isNaN(Number(nav.id)) ? nav.id : Number(nav.id)) : nav.id, name: nav.name };
     if (!listExists(target)) return;
-    st.active = target; st.capFilter = 'All'; st.filter = ''; if (filterInput) filterInput.value = '';
+    st.active = target; st.capFilter = 'All'; st.sectorFilter = 'All'; st.filter = ''; if (filterInput) filterInput.value = '';
     saveActiveList();
-    renderSelect(); renderSlicer(); renderList();
+    renderSelect(); renderSlicer(); renderSectors(); renderList();
   }
 
   // =============================================================================
@@ -646,8 +1016,10 @@
     const pnlPct = lp ? (lp.price / avg - 1) * 100 : null;
     const dist = (p) => (lp && num(p) ? ((num(p) / lp.price - 1) * 100) : null);
     const sign = (v, nd) => (v == null ? '—' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(nd == null ? 1 : nd));
-    const rupee = (v) => (v < 0 ? '−' : '') + '₹' + Math.round(Math.abs(v)).toLocaleString('en-IN');
-    const signedRupee = (v) => (v >= 0 ? '+' : '−') + '₹' + Math.round(Math.abs(v)).toLocaleString('en-IN');
+    const cur = L.marketOfEntry(st.stocks.get(sym), sym) === 'US' ? '$' : '₹';
+    const locale = cur === '$' ? 'en-US' : 'en-IN';
+    const rupee = (v) => (v < 0 ? '−' : '') + cur + Math.round(Math.abs(v)).toLocaleString(locale);
+    const signedRupee = (v) => (v >= 0 ? '+' : '−') + cur + Math.round(Math.abs(v)).toLocaleString(locale);
     const openRisk = num(stopP) && lp ? Math.max(0, lp.price - num(stopP)) * qty : null;
     const expanded = heldExpanded();
 
@@ -660,7 +1032,7 @@
       [(lots.length > 1 ? lots.length + ' lots' : '1 lot') + (expanded ? ' ▴' : ' ▾')]);
     heldEl.appendChild(el('div', { class: 'px-held-head' }, [
       el('span', { class: 'px-chip px-chip-held', text: 'HELD' }),
-      el('span', { class: 'px-held-qty', text: qty.toLocaleString('en-IN') + ' @ ₹' + U.fmt(avg, 2) }),
+      el('span', { class: 'px-held-qty', text: qty.toLocaleString(locale) + ' @ ' + cur + U.fmt(avg, 2) }),
       el('span', { class: 'px-header-spacer' }),
       toggle,
     ]));
@@ -670,14 +1042,14 @@
       el('span', { class: 'px-held-pnl-pct', text: pnl == null ? '—' : sign(pnlPct) + '%' }),
       el('span', { class: 'px-held-pnl-amt', text: pnl == null ? '' : signedRupee(pnl) }),
       el('span', { class: 'px-header-spacer' }),
-      el('span', { class: 'px-muted', text: lp ? (lp.live ? 'live ' : 'close ') + '₹' + U.fmt(lp.price, 2) : '' }),
+      el('span', { class: 'px-muted', text: lp ? (lp.live ? 'live ' : 'close ') + cur + U.fmt(lp.price, 2) : '' }),
     ]));
 
     // 3. plan in force, two columns so nothing truncates at the default width
     const cell = (label, value, cls, title) => el('div', { class: 'px-held-cell' + (cls ? ' ' + cls : ''), title: title || '' }, [el('span', { class: 'px-held-k', text: label }), el('span', { class: 'px-held-v', text: value })]);
     heldEl.appendChild(el('div', { class: 'px-held-grid' }, [
-      cell('Target', num(target) ? '₹' + U.fmt(target, 0) + '  ' + sign(dist(target)) + '%' : '—', num(target) && lp && lp.price >= num(target) ? 'px-up' : '', 'Newest lot with a target · distance from the current price'),
-      cell('Stop', num(stopP) ? '₹' + U.fmt(stopP, 0) + '  ' + sign(dist(stopP)) + '%' : '—', num(stopP) && lp && lp.price <= num(stopP) ? 'px-down' : '', 'Newest lot with a stop · distance from the current price'),
+      cell('Target', num(target) ? cur + U.fmt(target, 0) + '  ' + sign(dist(target)) + '%' : '—', num(target) && lp && lp.price >= num(target) ? 'px-up' : '', 'Newest lot with a target · distance from the current price'),
+      cell('Stop', num(stopP) ? cur + U.fmt(stopP, 0) + '  ' + sign(dist(stopP)) + '%' : '—', num(stopP) && lp && lp.price <= num(stopP) ? 'px-down' : '', 'Newest lot with a stop · distance from the current price'),
       cell('Invested → value', rupee(cost) + (lp ? ' → ' + rupee(lp.price * qty) : ''), ''),
       cell('Held · risk to stop', (days == null ? '—' : days + 'd') + ' · ' + (openRisk == null ? 'no stop' : rupee(openRisk)), openRisk == null ? 'px-warn' : '', first ? 'First buy ' + first : ''),
     ]));
@@ -753,6 +1125,7 @@
   function onKeyDown(e) {
     if (e.altKey && (e.key === 'w' || e.key === 'W')) { e.preventDefault(); e.stopImmediatePropagation(); togglePanel(); return; }
     if (e.altKey && (e.key === 'e' || e.key === 'E') && !panel.classList.contains('px-collapsed')) { e.preventDefault(); e.stopImmediatePropagation(); toggleWide(); return; }
+    if (e.altKey && (e.key === 'd' || e.key === 'D') && !panel.classList.contains('px-collapsed')) { e.preventDefault(); e.stopImmediatePropagation(); toggleDrawer(); return; }
     if (panel.classList.contains('px-collapsed')) return;
     if (document.querySelector('.px-dialog-overlay')) return;
     if (inTextField(e) || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -798,7 +1171,7 @@
   // =============================================================================
   // Actions
   // =============================================================================
-  function openScreener(symbol) { const u = symbol && S.toScreenerUrl(symbol); if (u) window.open(u, '_blank'); }
+  function openScreener(symbol) { const u = symbol && S.toScreenerUrl(symbol); if (u) window.open(u, '_blank'); else if (symbol) U.toast('Screener.in has no US pages', 'info', 1500); }
   function openPlutus(symbol) { const u = symbol && S.toPlutusUrl(st.settings.webAppUrl, symbol); if (u) window.open(u, '_blank'); }
 
   async function addSymbolsToActive() {
@@ -823,7 +1196,7 @@
     const wl = await U.send({ type: 'watchlists' });
     st.watchlists = wl.watchlists || []; st.wlSource = wl.source || 'local';
     if (!listExists(st.active)) st.active = defaultList();
-    renderSelect(); renderSlicer(); renderList();
+    renderSelect(); renderSlicer(); renderSectors(); renderList(); renderDrawer();
   }
 
   function newListDialog(prefill) {
@@ -836,7 +1209,7 @@
         if (!name.value.trim()) throw new Error('Name is required');
         const w = await U.send({ type: 'watchlist.create', name: name.value.trim(), symbols: S.parseList(syms.value) });
         await reloadWatchlists();
-        st.active = { kind: 'wl', id: w.id, name: w.name }; saveActiveList(); renderSelect(); renderSlicer(); renderList();
+        st.active = { kind: 'wl', id: w.id, name: w.name }; saveActiveList(); renderSelect(); renderSlicer(); renderSectors(); renderList(); renderDrawer();
         U.toast('Watchlist ' + w.name + ' created', 'success');
       },
     });
@@ -863,7 +1236,9 @@
     if (!symbol) return;
     const plain = S.toPlain(symbol);
     const list = el('div', { class: 'px-radio-list' });
-    st.watchlists.forEach((w, i) => {
+    const mkt = L.marketOfEntry(st.stocks.get(symbol), symbol);
+    const lists = st.watchlists.filter((w) => L.listVisibleIn(mkt, L.listMarket(w.symbols, st.stocks)));
+    lists.forEach((w, i) => {
       const has = (w.symbols || []).includes(symbol);
       list.appendChild(el('label', {}, [el('input', { type: 'radio', name: 'px-wl', value: String(w.id), ...(i === 0 ? { checked: 'checked' } : {}) }), w.name + ' (' + (w.symbols || []).length + ')' + (has ? ' — already in' : '')]));
     });
@@ -908,6 +1283,12 @@
     U.send({ type: 'notes.list', symbol, limit: 3 }).then((r) => {
       const notes = r.notes || [];
       recent.innerHTML = notes.length ? '<b>Recent:</b> ' + notes.map((n) => esc(n.note_date) + ' — ' + esc(String(n.content).slice(0, 90)) + (n.content.length > 90 ? '…' : '')).join('<br>') : 'No notes yet for ' + esc(plain) + '.';
+      recent.appendChild(el('a', { href: '#', text: ' See all in the drawer', onclick: (ev) => {
+        ev.preventDefault();
+        const overlay = document.querySelector('.px-dialog-overlay'); if (overlay) overlay.remove();
+        if (!st.activeSymbol) st.activeSymbol = symbol;
+        setDrawerTab('notes');
+      } }));
     }).catch((e) => { recent.textContent = e.message; });
     U.dialog({ title: 'Note · ' + plain, actionLabel: 'Save note',
       body: el('div', {}, [el('label', {}, ['View as of', date]), el('label', {}, ['Note', text]), recent]),
@@ -915,6 +1296,7 @@
         if (!text.value.trim()) throw new Error('Write something first');
         await U.send({ type: 'notes.create', symbol, content: text.value.trim(), note_date: date.value });
         U.toast('Note saved to Plutus', 'success');
+        if (st.notes.symbol === symbol) loadNotes(symbol, true);
       } });
   }
 
@@ -923,8 +1305,9 @@
     if (!st.settings.token) { U.toast('Opportunities need a Plutus token (extension popup)', 'error'); return; }
     const r = rowFor(symbol);
     const close = r.entry ? num(r.entry.close) : null;
+    const cur = r.market === 'US' ? '$' : '₹';
     const price = el('input', { type: 'number', step: '0.05', value: close != null ? String(close) : '' });
-    const qty = el('input', { type: 'number', step: '1', placeholder: 'optional' });
+    const qty = el('input', { type: 'number', step: r.market === 'US' ? '0.0001' : '1', placeholder: 'optional' });
     const target = el('input', { type: 'number', step: '0.05', placeholder: 'optional' });
     const strategy = el('select', {});
     ['', 'Envelope (200 DMA)', '52-Week Low', '20% Rally', 'Fundamental', 'Other'].forEach((s) => strategy.appendChild(el('option', { value: s, text: s || '— strategy —' })));
@@ -933,12 +1316,12 @@
     const notes = el('textarea', { placeholder: 'Why now?', style: 'min-height:70px' });
     U.dialog({ title: 'Add opportunity · ' + r.plain, actionLabel: 'Add to journal',
       body: el('div', {}, [
-        el('label', {}, ['Buy / reference price (₹)', price]), el('label', {}, ['Qty', qty]), el('label', {}, ['Target (₹)', target]),
+        el('label', {}, ['Buy / reference price (' + cur + ')', price]), el('label', {}, ['Qty', qty]), el('label', {}, ['Target (' + cur + ')', target]),
         el('label', {}, ['Strategy', strategy]), el('label', {}, ['Action', action]), el('label', {}, ['Notes', notes]),
       ]),
       onConfirm: async () => {
         const body = { symbol, opp_date: new Date().toISOString().slice(0, 10), buy_price: price.value || null, qty: qty.value ? Number(qty.value) : null,
-          target_price: target.value || null, strategy: strategy.value || null, action_filter: action.value, notes: notes.value.trim() || null, cap_bucket: r.cap || null, status: 'ACTIVE' };
+          target_price: target.value || null, strategy: strategy.value || null, action_filter: action.value, notes: notes.value.trim() || null, cap_bucket: (r.entry && r.entry.cap) || null, status: 'ACTIVE' };
         await U.send({ type: 'opportunity.create', body });
         U.toast('Opportunity added to the Plutus journal', 'success');
       } });
