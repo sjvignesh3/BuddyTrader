@@ -107,6 +107,15 @@
           (msg.symbols || []).forEach((sym) => { const e = STOCKS.find((x) => x.symbol === sym); if (!e) return; const base = Number(e.close); const wobble = (Math.sin(Date.now() / 4000 + base) * 0.012); quotes[sym] = { close: Math.round(base * (1 + wobble) * 100) / 100, chgPct: Math.round((Number(e.price_change_1d_pct) + wobble * 100) * 100) / 100, chg: null, at: Date.now() }; });
           return { quotes, degraded: false };
         }
+        case 'live.fundamentalsBatch': {
+          const data = {};
+          const base = { NVDA: [45.2, 90.5, 60.2, 0.4, 62.1, 60.0, 70.0, 55.3], CAT: [19.5, 52.0, 21.0, 1.9, 20.4, -3.1, -6.0, 15.0], ETSY: [28.0, -60, 8.0, -3.5, 9.8, 2.0, 15.0, 10.0] };
+          (msg.symbols || []).forEach((sym) => {
+            const b = base[sym] || [22, 18, 16, 0.3, 19, 8, 11, 12];
+            data[sym] = { name: sym, close: 100, chgPct: 0.5, pe: b[0], roe: b[1], roic: b[2], debtToEquity: b[3], opMargin: b[4], revenueYoY: b[5], netIncomeYoY: b[6], netMargin: b[7], pb: 4, eps: 3, dividendYield: 0.5, marketCap: 1e11, sector: 'Technology', industry: 'Semiconductors' };
+          });
+          return { data, error: null, fetched: Object.keys(data).length };
+        }
         case 'live.fundamentals': return { symbol: msg.symbol, tv: 'NSE:' + msg.symbol.replace(/\.NS$/, ''), region: 'IN', source: 'tradingview-scanner', at: Date.now(),
           data: { name: 'Some Company Ltd', close: 412.5, chgPct: 1.2, sma200: 380, high52: 500, low52: 300, ath: 620, marketCap: 9500e7, pe: 31.2, pb: 4.1, roe: 14.2, roic: 11.8, debtToEquity: 0.35, opMargin: 17.5, netMargin: 9.1, revenueYoY: 12.4, netIncomeYoY: -3.2, eps: 13.2, dividendYield: 0.8, sector: 'Industrials', industry: 'Machinery', dist200: 8.55, off52: -17.5, offAth: -33.5 } };
         case 'cache.clear': return { cleared: true };
@@ -154,6 +163,7 @@
   <script src="../../shared/panel_logic.js"></script>
   <script src="../../shared/card.js"></script>
   <script src="../../shared/sizer.js"></script>
+  <script src="../../shared/links.js"></script>
   <script src="../../tv/tv_content.js"></script>
 </body>
 </html>

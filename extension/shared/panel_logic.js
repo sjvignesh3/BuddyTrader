@@ -140,7 +140,7 @@
     dma:        { label: '% below 200 DMA', get: (r) => r.below,            dir: 'desc' },
     ath:        { label: '% off ATH',      get: (r) => r.athFall,          dir: 'desc' },
     high52:     { label: '% off 52w high', get: (r) => r.off52,            dir: 'desc' },
-    score:      { label: 'Funda score',    get: (r) => r.points,           dir: 'desc' },
+    score:      { label: 'Funda score',    get: (r) => (r.points != null ? r.points : r.tvScore), dir: 'desc' },
     chg:        { label: 'Day change %',   get: (r) => r.chgPct,           dir: 'desc' },
     mcap:       { label: 'Market cap',     get: (r) => r.mcap,             dir: 'desc' },
   };
@@ -170,11 +170,73 @@
     return { key, dir: spec.dir };
   }
 
+  // ---- on-demand filters -----------------------------------------------------------
+  // Two groups besides the Plutus checks (which arrive per stock in the bootstrap):
+  //  * TECH: Plutus snapshot numbers — every market, no extra data.
+  //  * TV:   TradingView's fundamentals, fetched on demand for the list on screen.
+  //          The only fundamentals US stocks have today. Thresholds are per region
+  //          and editable; a missing value never passes.
+  const TV_DEFAULTS = {
+    IN: { pe_max: 50, roe_min: 15, roic_min: 15, de_max: 0.5, opm_min: 15 },
+    US: { pe_max: 35, roe_min: 15, roic_min: 12, de_max: 1.0, opm_min: 15 },
+  };
+  function tvThresholds(settings, region) {
+    const saved = (settings && settings.tvRules && settings.tvRules[region]) || {};
+    const out = Object.assign({}, TV_DEFAULTS[region === US ? US : IN]);
+    Object.keys(out).forEach((k) => { const v = num(saved[k]); if (v != null) out[k] = v; });
+    return out;
+  }
+  const TV_RULES = [
+    { id: 'pe', label: (t) => 'P/E < ' + t.pe_max, test: (d, t) => (d.pe == null ? null : d.pe > 0 && d.pe < t.pe_max) },
+    { id: 'roe', label: (t) => 'ROE ≥ ' + t.roe_min + '%', test: (d, t) => (d.roe == null ? null : d.roe >= t.roe_min) },
+    { id: 'roic', label: (t) => 'ROIC ≥ ' + t.roic_min + '%', test: (d, t) => (d.roic == null ? null : d.roic >= t.roic_min) },
+    { id: 'de', label: (t) => 'D/E ≤ ' + t.de_max, test: (d, t) => (d.debtToEquity == null ? null : d.debtToEquity <= t.de_max) },
+    { id: 'opm', label: (t) => 'OPM ≥ ' + t.opm_min + '%', test: (d, t) => (d.opMargin == null ? null : d.opMargin >= t.opm_min) },
+    { id: 'sales', label: () => 'Sales growth', test: (d) => (d.revenueYoY == null ? null : d.revenueYoY > 0) },
+    { id: 'profit', label: () => 'Profit growth', test: (d) => (d.netIncomeYoY == null ? null : d.netIncomeYoY > 0) },
+    { id: 'profitable', label: () => 'Profitable', test: (d) => (d.netMargin == null ? null : d.netMargin > 0) },
+  ];
+  /** {ruleId: true|false|null} for one stock's TradingView fundamentals (null data -> null). */
+  function evalTvRules(data, t) {
+    if (!data) return null;
+    const out = {};
+    TV_RULES.forEach((r) => { out[r.id] = r.test(data, t); });
+    return out;
+  }
+  function tvScore(res) { return res ? Object.values(res).filter((v) => v === true).length : null; }
+
+  /** Cap-aware dip rule (Plutus ath_fall_pct_by_cap); US Mega counts as Large. */
+  function dipRule(cap, athFallByCap) {
+    const R = Object.assign({ Large: 20, Mid: 30, Small: 40, Micro: 40 }, athFallByCap || {});
+    const key = cap === 'Mega' ? 'Large' : cap;
+    const v = num(R[key]);
+    return v != null ? v : 30;
+  }
+  const TECH_FILTERS = [
+    { id: 'below200', label: () => 'Below 200 DMA', test: (r) => (r.below == null ? null : r.below > 0) },
+    { id: 'buyzone', label: (c) => 'Buy zone (≥ ' + c.buyZone + '% below)', test: (r, c) => (r.below == null ? null : r.below >= c.buyZone) },
+    { id: 'dip52', label: () => '52W dip ≥ cap rule', test: (r, c) => (r.off52 == null ? null : Math.abs(r.off52) >= dipRule(r.cap, c.athFall)) },
+    { id: 'athdip', label: () => 'ATH dip ≥ cap rule', test: (r, c) => (r.athFall == null ? null : Math.abs(r.athFall) >= dipRule(r.cap, c.athFall)) },
+    { id: 'signal', label: () => 'Has a signal', test: (r) => !!r.status && ['BUY_ZONE', 'OPPORTUNITY', 'VALID'].includes(r.status) },
+    { id: 'held', label: () => 'Held', test: (r) => !!r.held },
+    { id: 'notheld', label: () => 'Not held', test: (r) => !r.held },
+  ];
+  /** Every selected filter id must test true (null = unknown = fails). */
+  function passesAll(ids, defs, row, ctx, results) {
+    return ids.every((id) => {
+      const def = defs.find((x) => x.id === id);
+      if (!def) return true;
+      const v = results ? results[id] : def.test(row, ctx);
+      return v === true;
+    });
+  }
+
   root.PlutusPanelLogic = {
     IN, US,
     marketOfEntry, poolMarket, listMarket, listVisibleIn,
     usTier, capLabel, capBuckets, capMatches,
     sectorOf, sectorCounts,
     SORT_KEYS, rankValue, comparator, nextSort,
+    TV_DEFAULTS, tvThresholds, TV_RULES, evalTvRules, tvScore, dipRule, TECH_FILTERS, passesAll,
   };
 })(typeof self !== 'undefined' ? self : this);

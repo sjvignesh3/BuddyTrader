@@ -109,6 +109,28 @@ test('fundamentals: one request, named fields, derived distances, 1 h cache, nev
   assert.equal(calls, 1);
 });
 
+test('fundamentalsBatch: one request per region, per-stock cache, misses remembered', async () => {
+  const T = load().PlutusTvScan;
+  const row = (s, pe) => ({ s, d: ['X', 100, 1, 90, 120, 80, 150, 1e12, pe, 3, 20, 18, 0.2, 25, 15, 10, 12, 4, 1, 'Tech', 'Chips'] });
+  const calls = [];
+  const fetchFn = async (url, opts) => {
+    const tickers = JSON.parse(opts.body).symbols.tickers;
+    calls.push([url, tickers.length]);
+    const data = tickers.filter((t) => t !== 'NYSE:CAT').map((t) => row(t, 20));      // CAT "not on TradingView"
+    return { ok: true, status: 200, json: async () => ({ data }) };
+  };
+  const r = await T.fundamentalsBatch(['INFY.NS', 'TCS.NS', 'NVDA', 'CAT'], fetchFn);
+  assert.equal(calls.length, 2);                                   // India + America
+  assert.equal(r.data['INFY.NS'].pe, 20);
+  assert.equal(r.data.NVDA.sector, 'Tech');
+  assert.equal(r.data.CAT, null);
+  const again = await T.fundamentalsBatch(['INFY.NS', 'CAT'], fetchFn);
+  assert.equal(calls.length, 2);                                   // both answered from the cache, the miss included
+  assert.equal(again.data['INFY.NS'].pe, 20);
+  const bad = await T.fundamentalsBatch(['HDFCBANK.NS'], async () => ({ ok: false, status: 429 }));
+  assert.match(bad.error, /429/);
+});
+
 test('quotes: a thrown fetch never rejects', async () => {
   const T = load().PlutusTvScan;
   const r = await T.quotes(['INFY.NS'], async () => { throw new Error('offline'); });

@@ -129,7 +129,9 @@
 
   function parseFundamentals(json, tv) {
     const rows = json && Array.isArray(json.data) ? json.data : [];
-    const row = rows.find((r) => r && r.s === tv) || rows[0];
+    return parseFundRow(rows.find((r) => r && r.s === tv) || rows[0]);
+  }
+  function parseFundRow(row) {
     if (!row || !Array.isArray(row.d)) return null;
     const out = {};
     FUND_KEYS.forEach((k, i) => {
@@ -164,7 +166,43 @@
     }
   }
 
+  /**
+   * Fundamentals for a whole list (the on-demand filters): one request per
+   * region per 200 symbols, each stock cached for an hour. Never throws.
+   * -> {data: {symbol: fields|null}, error, fetched}
+   */
+  async function fundamentalsBatch(symbols, fetchFn) {
+    const doFetch = fetchFn || root.fetch;
+    const now = Date.now();
+    const out = { data: {}, error: null, fetched: 0 };
+    const missing = [];
+    (symbols || []).forEach((sym) => {
+      const hit = fundCache.get(sym);
+      if (hit && now - hit.at < FUND_TTL_MS) out.data[sym] = hit.data; else missing.push(sym);
+    });
+    if (!missing.length) return out;
+    const { requests, back } = buildRequests(missing);
+    for (const req of requests) {
+      try {
+        const res = await doFetch(req.url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ symbols: { tickers: req.tickers }, columns: FUND_COLUMNS }) });
+        if (!res || !res.ok) throw new Error('scanner HTTP ' + (res ? res.status : '0'));
+        const json = await res.json();
+        const seen = new Set();
+        ((json && json.data) || []).forEach((row) => {
+          const sym = back[row && row.s];
+          if (!sym) return;
+          const data = parseFundRow(row);
+          fundCache.set(sym, { symbol: sym, tv: row.s, data, error: data ? null : 'no data', at: now, source: 'tradingview-scanner' });
+          out.data[sym] = data; seen.add(sym); out.fetched++;
+        });
+        // asked but not returned: remember the miss for the hour too, so we do not ask again and again
+        req.tickers.forEach((tv) => { const sym = back[tv]; if (sym && !seen.has(sym)) { fundCache.set(sym, { symbol: sym, tv, data: null, error: 'not on TradingView', at: now }); out.data[sym] = null; } });
+      } catch (e) { out.error = (e && e.message) || String(e); }
+    }
+    return out;
+  }
+
   function reset() { cache.clear(); fundCache.clear(); backoff.IN = { until: 0, level: 0 }; backoff.US = { until: 0, level: 0 }; }
 
-  root.PlutusTvScan = { HOSTS, COLUMNS, FUND_COLUMNS, FUND_KEYS, BATCH, QUOTE_TTL_MS, FUND_TTL_MS, BACKOFF_MS, buildRequests, requestBody, parseResponse, parseFundamentals, quotes, fundamentals, reset, _state: { cache, backoff, fundCache } };
+  root.PlutusTvScan = { HOSTS, COLUMNS, FUND_COLUMNS, FUND_KEYS, BATCH, QUOTE_TTL_MS, FUND_TTL_MS, BACKOFF_MS, buildRequests, requestBody, parseResponse, parseFundamentals, parseFundRow, quotes, fundamentals, fundamentalsBatch, reset, _state: { cache, backoff, fundCache } };
 })(typeof self !== 'undefined' ? self : this);

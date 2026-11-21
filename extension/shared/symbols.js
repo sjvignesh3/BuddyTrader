@@ -99,7 +99,9 @@
     if (!sfx.suffix && exchange !== 'NSE' && exchange !== 'BSE' && !(opts && opts.market === 'IN')) {
       const us = body.replace(/\s+/g, '').replace('.', '-');
       const ex = usExchange(exchange);
-      if (US_RE.test(us) && (ex || (!exchange && usRegistry.has(us)))) {
+      // opts.market === 'US': the caller knows the page is American (stockanalysis.com & co.)
+      if (US_RE.test(us) && (ex || (!exchange && (usRegistry.has(us) || (opts && opts.market === 'US'))))) {
+        if (opts && opts.market === 'US' && !usRegistry.has(us)) usRegistry.set(us, null);
         if (ex) usRegistry.set(us, ex);          // "NASDAQ:SNDK" teaches us the exchange
         return us;
       }

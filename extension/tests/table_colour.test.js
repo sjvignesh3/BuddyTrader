@@ -36,6 +36,10 @@ test('periods: quarters, fiscal years, month ends, TTM, and their ordering', () 
   const T = load();
   assert.equal(T.parsePeriod('Q3 2025').score, 2025 * 4 + 3);
   assert.equal(T.parsePeriod("Q3'25").score, 2025 * 4 + 3);
+  assert.equal(T.parsePeriod('2025 Q3').score, 2025 * 4 + 3);
+  assert.equal(T.parsePeriod('Q3 FY25').score, 2025 * 4 + 3);
+  assert.equal(T.parsePeriod('FY 2026').score, 2026 * 4 + 4);         // stockanalysis.com top header
+  assert.equal(T.parsePeriod('Oct 2, 2026').q, 4);                     // its "Period Ending" row
   assert.equal(T.parsePeriod('FY2024').score, 2024 * 4 + 4);
   assert.equal(T.parsePeriod('FY24').score, 2024 * 4 + 4);
   assert.equal(T.parsePeriod('2024').score, 2024 * 4 + 4);
@@ -144,6 +148,43 @@ test('outlier rows: a spike in other income is flagged, a steady line is not', (
   ] });
   assert.equal(marks[0][0].cls, 'px-c-alert');
   assert.deepEqual(cls(marks[1]), [null, null, null, null, null]);
+});
+
+// The real stockanalysis.com table (SNDK income statement, read off the live page 2026-11-21).
+test('live stockanalysis.com SNDK income statement colours as intended', () => {
+  const T = load();
+  const headers = ['Oct 2, 2026', 'Jul 3, 2026', 'Jun 27, 2025', 'Jun 28, 2024', 'Jun 30, 2023', 'Jul 1, 2022'];   // its "Period Ending" row
+  const row = (label, cells) => ({ label, values: cells.map(T.parseNumber) });
+  const rows = [
+    row('Revenue', ['28,971', '20,248', '7,355', '6,663', '6,086', '9,754']),
+    row('Revenue Growth', ['272.38%', '175.30%', '10.39%', '9.48%', '-37.60%', '75.28%']),
+    row('Cost of Revenue', ['5,808', '5,776', '5,143', '5,591', '5,656', '6,510']),
+    row('Selling, General & Admin', ['711', '676', '573', '455', '558', '666']),
+    row('Operating Income', ['21,056', '12,468', '507', '-444', '-1,295', '1,216']),
+    row('Interest Expense', ['-35', '-73', '-63', '-40', '-31', '-15']),
+    row('Interest & Investment Income', ['105', '70', '22', '12', '21', '6']),
+    row('EBT Excluding Unusual Items', ['21,047', '12,381', '407', '-480', '-1,262', '1,250']),
+    row('Impairment of Goodwill', ['-', '-', '-1,830', '-', '-671', '-']),
+    row('Legal Settlements', ['-93', '-93', '-', '-', '-', '-']),
+    row('Income Tax Expense', ['2,790', '1,584', '162', '169', '141', '170']),
+    row('Shares Change', ['7.57%', '6.90%', '-', '-', '-31.89%', '-']),
+  ];
+  assert.ok(headers.every((h) => T.parsePeriod(h)));
+  const m = T.colourTable({ headers, rows });
+  const c = (i) => cls(m[i]);
+  assert.equal(c(0)[0], 'px-c-best');                               // TTM revenue is the row peak
+  assert.equal(c(0)[3], 'px-c-up');                                 // FY24 6,663 > FY23 6,086
+  assert.equal(c(0)[4], 'px-c-down');                               // FY23 6,086 < FY22 9,754
+  assert.deepEqual(c(1).slice(0, 2), ['px-c-best', 'px-c-best']);   // growth ≥ 20 %
+  assert.equal(c(1)[4], 'px-c-worst');                              // −37.6 %
+  assert.equal(c(2)[0], 'px-c-best');                               // cost of revenue is its lowest share of revenue on TTM
+  assert.equal(T.classify('Interest Expense').type, 'REVERSE');
+  assert.equal(T.classify('Interest & Investment Income').type, 'VALUE');
+  assert.equal(T.classify('EBT Excluding Unusual Items').type, 'VALUE');
+  assert.equal(T.classify('Legal Settlements').type, 'OUTLIER');
+  assert.equal(T.classify('Shares Change').type, 'SKIP');
+  assert.deepEqual(c(11), [null, null, null, null, null, null]);
+  assert.ok(m.flat().filter(Boolean).length > 25);                  // the table is genuinely coloured
 });
 
 test('P/E history: cumulative weekly deltas decode and summarise', () => {

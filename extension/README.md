@@ -95,9 +95,21 @@ extension at the FastAPI service (the same `VITE_PLUTUS_API_URL` the web app use
   (price, market cap tier, 200 DMA / 52-week / ATH distances, P/E, P/B, ROE, ROIC, margins, growth) with
   **Add to PlayArea** and, with an admin token, **Sync now**. Uncoloured and unscored on purpose: TradingView's
   definitions are not Plutus' checks.
-* **Fundamental filter chips**: each check is a chip with three states — off, *must pass* (solid), *must not
-  fail* (dashed, n/a allowed). `⭐ All pass` keeps only 11/11 stocks. Unlike the HIFY score, a missing value
-  never counts as a pass; stocks with no scan yet are hidden while a chip is on.
+* **On-demand filters** (drawer → Filters; a yellow strip in the panel shows what is on, `shown / total`, and
+  clears with ✕). Three groups, combined with AND:
+  * *Quick filters · Plutus data* (any market): below 200 DMA, buy zone, 52-week dip and ATH dip against the
+    cap rule (Large 20 / Mid 30 / Small 40 %, US Mega = Large), has a signal, held / not held.
+  * *Plutus fundamental checks* (Indian stocks): one chip per check, three states — off, *must pass*, *must not
+    fail* (n/a allowed); `⭐ All pass` = 11/11. A missing value never counts as a pass.
+  * *TradingView fundamentals · on demand* (India and **US**): P/E, ROE, ROIC, D/E, OPM, sales growth, profit
+    growth, profitable, plus `⭐ All pass`. Read from TradingView's scanner for the list on screen (US lists
+    always, Indian lists when a chip is on), cached an hour; thresholds per region, editable (`✎ Thresholds`).
+    US rows show the rules passed (`7/8`, italic) in the score column. They filter; they never change a Plutus
+    score.
+* **Stock tab for US stocks**: TradingView fundamentals with each rule ✓ / ✗ and its value, above the Plutus card.
+  **Research** links for every stock — India: Screener company / quarters / P&L / balance sheet / shareholding /
+  peers, TradingView financials; US: stockanalysis.com (quarterly and annual P&L, balance sheet, ratios), roic.ai,
+  vcpscanner.com, stockresearch.app, TradingView financials. The hover card shows the TradingView rules for US rows.
 * Hot-keys on the active stock: `N` dated note, `O` opportunity, `B` bookmark to a watchlist, `A` PlayArea
   add/remove, `S` Screener, `P` Plutus stock page.
 * Focus mode hides TradingView upsell dialogs. Data-as-of stamp turns amber when the snapshot is stale.

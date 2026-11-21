@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Plutus Companion",
   "short_name": "Plutus",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Plutus overlays for TradingView, Screener.in and the US research sites: pool watchlists with instant symbol switching, live prices, Plutus signals and fundamental score, ratio colour-coding, labels, notes and PlayArea from any chart.",
   "icons": {
     "16": "icons/icon16.png",
@@ -61,6 +61,7 @@
         "shared/panel_logic.js",
         "shared/card.js",
         "shared/sizer.js",
+        "shared/links.js",
         "tv/tv_content.js"
       ],
       "css": [

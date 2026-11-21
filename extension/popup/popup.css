@@ -27,5 +27,7 @@ input:focus, select:focus { border-color: var(--brand); }
 .out { font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; color: var(--mute); max-height: 90px; overflow: auto; }
 .out.ok { color: #15803d; } .out.bad { color: #b91c1c; }
 .hint.ok { color: #15803d; } .hint.bad { color: #b91c1c; font-weight: 600; }
+#siteAccess div.ok { color: #15803d; } #siteAccess div.bad { color: #b91c1c; font-weight: 600; }
+#siteAccess .btn { margin-top: 6px; }
 footer { display: flex; align-items: center; gap: 8px; }
 .spacer { flex: 1; }

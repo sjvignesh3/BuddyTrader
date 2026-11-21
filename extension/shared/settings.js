@@ -34,6 +34,7 @@
     tvLivePrices: true,              // live Last / Chg% in rows from TradingView's scanner (display only)
     tvLiveIntervalSec: 15,           // 15 | 30 | 60
     tvHoverCard: true,               // hover a row -> Plutus checks card
+    tvRules: {},                     // on-demand TradingView-fundamentals thresholds per region: {IN:{pe_max,…}, US:{…}}
 
     // US research sites (stockanalysis.com, roic.ai, vcpscanner.com, stockresearch.app)
     usSitesEnabled: true,

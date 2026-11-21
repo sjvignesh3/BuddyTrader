@@ -114,6 +114,72 @@ test('conviction rank orders signal, then score, then DMA depth', () => {
   assert.deepEqual([none, opp, buy].sort(L.comparator('conviction')).map((r) => r.plain), ['X', 'Y', 'Z']);
 });
 
+test('TradingView rules: per-region thresholds, saved overrides, missing data never passes', () => {
+  const L = load();
+  const us = L.tvThresholds({}, 'US');
+  assert.equal(us.pe_max, 35);
+  assert.equal(L.tvThresholds({ tvRules: { US: { pe_max: '60', junk: 1 } } }, 'US').pe_max, 60);
+  assert.equal(L.tvThresholds({ tvRules: { US: { pe_max: '' } } }, 'US').pe_max, 35);       // blank keeps the default
+  assert.equal(L.tvThresholds({}, 'IN').pe_max, 50);
+  const d = { pe: 28, roe: 40, roic: 30, debtToEquity: 0.3, opMargin: 36, revenueYoY: 33, netIncomeYoY: -2, netMargin: null };
+  const res = plain(L.evalTvRules(d, us));
+  assert.deepEqual(res, { pe: true, roe: true, roic: true, de: true, opm: true, sales: true, profit: false, profitable: null });
+  assert.equal(L.tvScore(res), 6);                                                          // six true; false and null do not count
+  assert.equal(L.evalTvRules(null, us), null);
+  assert.equal(plain(L.evalTvRules({ pe: -4 }, us)).pe, false);                             // loss-making P/E is not "cheap"
+  assert.deepEqual(plain(L.TV_RULES.map((r) => r.id)), ['pe', 'roe', 'roic', 'de', 'opm', 'sales', 'profit', 'profitable']);
+});
+
+test('quick filters: cap-aware dips, buy zone, signal, held; unknown fails', () => {
+  const L = load();
+  const ctx = { buyZone: 14, athFall: { Large: '20', Mid: '30', Small: '40' } };
+  assert.equal(L.dipRule('Mega', ctx.athFall), 20);
+  assert.equal(L.dipRule('Small', ctx.athFall), 40);
+  assert.equal(L.dipRule(null, null), 30);
+  const row = { below: 15, off52: -45, athFall: 62, cap: 'Small', status: 'BUY_ZONE', held: { qty: 1 } };
+  assert.equal(L.passesAll(['below200', 'buyzone', 'dip52', 'athdip', 'signal', 'held'], L.TECH_FILTERS, row, ctx), true);
+  assert.equal(L.passesAll(['dip52'], L.TECH_FILTERS, Object.assign({}, row, { off52: -35 }), ctx), false);   // small cap needs 40 %
+  assert.equal(L.passesAll(['notheld'], L.TECH_FILTERS, row, ctx), false);
+  assert.equal(L.passesAll(['below200'], L.TECH_FILTERS, { below: null }, ctx), false);
+  assert.equal(L.passesAll([], L.TECH_FILTERS, {}, ctx), true);
+});
+
+test('score sort falls back to the TradingView score when Plutus has none (US lists)', () => {
+  const L = load();
+  const rows = [{ plain: 'A', points: null, tvScore: 3 }, { plain: 'B', points: null, tvScore: 7 }, { plain: 'C', points: null, tvScore: null }];
+  assert.deepEqual(rows.sort(L.comparator('score')).map((r) => r.plain), ['B', 'A', 'C']);
+});
+
+test('research links: Screener + TradingView for India, the four US sites + TradingView for US', () => {
+  const ctx = { self: {} }; ctx.self = ctx; vm.createContext(ctx);
+  vm.runInContext(read('shared/symbols.js'), ctx);
+  vm.runInContext(read('shared/links.js'), ctx);
+  ctx.PlutusSymbols.registerUs([{ symbol: 'SNDK', exchange: 'NASDAQ' }, { symbol: 'BRK-B', exchange: 'NYSE' }]);
+  const inn = plain(ctx.PlutusLinks.researchLinks('M&M.NS'));
+  assert.equal(inn[0].url, 'https://www.screener.in/company/M%26M/consolidated/');
+  assert.ok(inn.some((l) => l.url.endsWith('#profit-loss')));
+  assert.equal(inn[inn.length - 1].url, 'https://www.tradingview.com/symbols/NSE-M_M/financials-overview/');
+  const us = plain(ctx.PlutusLinks.researchLinks('SNDK'));
+  const urls = us.map((l) => l.url);
+  assert.ok(urls.includes('https://stockanalysis.com/stocks/sndk/financials/?p=quarterly'));
+  assert.ok(urls.includes('https://www.roic.ai/quote/SNDK/financials?yearRange=15'));
+  assert.ok(urls.includes('https://vcpscanner.com/stock/sndk/financials'));
+  assert.ok(urls.includes('https://www.stockresearch.app/stocks/SNDK'));
+  assert.ok(urls.includes('https://www.tradingview.com/symbols/NASDAQ-SNDK/financials-overview/'));
+  assert.ok(plain(ctx.PlutusLinks.researchLinks('BRK-B')).some((l) => l.url === 'https://stockanalysis.com/stocks/brk-b/financials/'));
+  assert.equal(ctx.PlutusLinks.researchLinks('bad symbol!').length, 0);
+});
+
+test('US pages: market hint makes an unregistered ticker American', () => {
+  const ctx = { self: {} }; ctx.self = ctx; vm.createContext(ctx);
+  vm.runInContext(read('shared/symbols.js'), ctx);
+  const S = ctx.PlutusSymbols;
+  assert.equal(S.toPlutus('SNDK'), 'SNDK.NS');                    // unknown bare ticker: Indian, as before
+  assert.equal(S.toPlutus('SNDK', { market: 'US' }), 'SNDK');
+  assert.equal(S.toPlutus('SNDK'), 'SNDK');                       // and now remembered as US
+  assert.equal(S.toTradingViewUrl('SNDK'), 'https://www.tradingview.com/chart/?symbol=SNDK');
+});
+
 test('header clicks: a new key starts at its natural direction, the same key flips', () => {
   const L = load();
   assert.deepEqual(plain(L.nextSort({ key: 'default', dir: 'asc' }, 'dma')), { key: 'dma', dir: 'desc' });

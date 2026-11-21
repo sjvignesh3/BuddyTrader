@@ -53,8 +53,14 @@
     if (!s) return null;
     if (/^(ttm|ltm|trailing|current|latest)\b/i.test(s)) return { kind: 'TTM', score: 999999, label: s };
     let m;
-    if ((m = /^Q([1-4])\s*['’]?\s*(\d{2}|\d{4})$/i.exec(s)) || (m = /^(?:(\d{4})\s*)?Q([1-4])(?:\s*(\d{4}))?$/i.exec(s) && m[1] ? [m[0], m[2], m[1]] : (m && m[3] ? [m[0], m[2], m[3]] : null))) {
+    // "Q3 2025" / "Q3'25" / "Q3 FY25"
+    if ((m = /^Q([1-4])\s*(?:FY)?\s*['’]?\s*(\d{2}|\d{4})$/i.exec(s))) {
       const q = Number(m[1]), year = yy(String(m[2]));
+      return { kind: 'Q', year, q, score: year * 4 + q, label: s };
+    }
+    // "2025 Q3"
+    if ((m = /^(\d{4})\s*Q([1-4])$/i.exec(s))) {
+      const year = Number(m[1]), q = Number(m[2]);
       return { kind: 'Q', year, q, score: year * 4 + q, label: s };
     }
     if ((m = /^(?:FY\s*['’]?)(\d{2}|\d{4})$/i.exec(s))) { const year = yy(m[1]); return { kind: 'FY', year, score: year * 4 + 4, label: s }; }
@@ -111,8 +117,9 @@
     margin: /margin|\bopm\b|\bnpm\b|\bebitda\s*%|\bebit\s*%|return on|\broe\b|\broce\b|\broic\b|\broa\b/i,
     expense: /^(cost of|cogs|cost of revenue|cost of goods|operating expenses?|opex|selling|sg&a|sga|general (and|&) admin|research|r&d|employee|staff|personnel|marketing|advertising|other (operating )?expenses?|total (operating )?expenses?|expenses)\b/i,
     reverse: /^(interest( expense)?|finance cost|depreciation|amortization|amortisation|d&a|tax(es)?( expense)?|income tax|provision for tax|total debt|long[- ]term debt|short[- ]term debt|borrowings?|debt|lease liabilit|capital expenditure|capex)\b/i,
-    bankIncome: /net interest income|interest income/i,
-    outlier: /other income|other non[- ]?operating|non[- ]?operating|exceptional|unusual|one[- ]?time|special item|impairment|restructuring|write[- ]?(off|down)|gain|loss on|fx |foreign exchange|currency/i,
+    bankIncome: /interest.*income|investment income/i,
+    profitLine: /^(ebt|ebit|ebitda|pretax|pre-tax|profit|income before|earnings before|operating income|net income|gross profit)\b/i,
+    outlier: /other income|other non[- ]?operating|non[- ]?operating|exceptional|unusual|one[- ]?time|special item|impairment|restructuring|write[- ]?(off|down)|gain|loss on|fx |foreign exchange|currency|legal settlement|litigation/i,
     netDebt: /^net debt\b/i,
     current: /^current ratio/i, quick: /^quick ratio/i, coverage: /interest coverage/i,
     pct: /%|margin|ratio|growth|yield|return/i,
@@ -128,6 +135,7 @@
     if (RX.netDebt.test(l)) return { type: 'NET_DEBT' };
     if (RX.growth.test(l)) return { type: 'GROWTH_PCT' };
     if (RX.bankIncome.test(l)) return { type: 'VALUE' };               // a bank's interest income is revenue, not a cost
+    if (RX.profitLine.test(l) && !RX.margin.test(l)) return { type: 'VALUE', revenue: false };   // "EBT Excluding Unusual Items" is a profit line
     if (RX.outlier.test(l) && !RX.revenue.test(l)) return { type: 'OUTLIER' };
     if (RX.margin.test(l)) return { type: 'MARGIN' };
     if (RX.expense.test(l)) return { type: 'EXPENSE' };

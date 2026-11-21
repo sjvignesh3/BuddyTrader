@@ -345,6 +345,29 @@ body.px-switching div[data-dialog-name="symbol-search"] { opacity: 0 !important;
 .px-gauge i { position: absolute; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--px-brand, #14b8a6); transform: translateX(-7px); }
 .px-gauge-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--px-mute); }
 
+/* --- active-filter strip in the panel --- */
+.px-filterbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--px-border); background: rgba(250,204,21,.07); flex: 0 0 auto; }
+.px-filterbar-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; background: transparent; border: 0; color: var(--px-text); cursor: pointer; padding: 0; text-align: left; font-size: 11px; }
+.px-filterbar-main b { color: var(--px-gold); white-space: nowrap; }
+.px-filterbar-names { color: var(--px-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.px-filterbar-count { font-size: 10.5px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.px-fsummary { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid rgba(250,204,21,.35); background: rgba(250,204,21,.06); border-radius: 9px; font-size: 11.5px; color: var(--px-text); }
+.px-tvedit { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.px-tvedit label { display: flex; flex-direction: column; gap: 2px; font-size: 10px; color: var(--px-mute); }
+.px-tvedit .px-input { padding: 4px 6px; }
+.px-cell.px-tv-score { font-style: italic; }
+
+/* --- TradingView fundamentals box + research links (drawer) --- */
+.px-tvbox { display: flex; flex-direction: column; gap: 6px; }
+.px-tvbox-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.px-tvbox-head b { color: #fff; }
+.px-tvrules { display: grid; grid-template-columns: 1fr; gap: 2px; }
+.px-tvrules .px-check > span:first-of-type { flex: 1; }
+.px-links-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.px-links-group { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: var(--px-mute); min-width: 100%; }
+.px-link { background: var(--px-bg); border: 1px solid var(--px-border); color: var(--px-text); border-radius: 999px; padding: 2px 9px; font-size: 11px; text-decoration: none; white-space: nowrap; }
+.px-link:hover { border-color: var(--px-accent); color: #fff; }
+
 /* --- labels (watchlists with a colour) --- */
 .px-labels { display: flex; gap: 4px; padding: 5px 8px; border-bottom: 1px solid var(--px-border); flex: 0 0 auto; overflow-x: auto; align-items: center; }
 .px-labels::-webkit-scrollbar { height: 4px; }

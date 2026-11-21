@@ -45,6 +45,45 @@
     } catch (e) { info.textContent = ''; }
   }
 
+  // Chrome can hold back a site the manifest asks for (site access set to "on click" /
+  // "specific sites", or a new host after an update): show it and offer to grant.
+  const SITES = [
+    ['TradingView', ['https://*.tradingview.com/*']],
+    ['Screener.in', ['https://*.screener.in/*']],
+    ['stockanalysis.com', ['https://*.stockanalysis.com/*', 'https://stockanalysis.com/*']],
+    ['roic.ai', ['https://*.roic.ai/*', 'https://roic.ai/*']],
+    ['vcpscanner.com', ['https://*.vcpscanner.com/*', 'https://vcpscanner.com/*']],
+    ['stockresearch.app', ['https://*.stockresearch.app/*', 'https://stockresearch.app/*']],
+  ];
+  async function showSiteAccess() {
+    const box = $('siteAccess');
+    if (!box || !chrome.permissions) return;
+    box.innerHTML = '';
+    const missing = [];
+    for (const [name, origins] of SITES) {
+      let ok = false;
+      try { ok = await chrome.permissions.contains({ origins }); } catch (e) { ok = false; }
+      if (!ok) missing.push(...origins);
+      const row = document.createElement('div');
+      row.textContent = (ok ? '✓ ' : '✗ ') + name + (ok ? '' : ' — not allowed');
+      row.className = ok ? 'ok' : 'bad';
+      box.appendChild(row);
+    }
+    if (missing.length) {
+      const b = document.createElement('button');
+      b.className = 'btn'; b.textContent = 'Allow the missing sites';
+      b.addEventListener('click', async () => {
+        try { await chrome.permissions.request({ origins: missing }); } catch (e) { /* user said no */ }
+        showSiteAccess();
+      });
+      box.appendChild(b);
+    } else {
+      const note = document.createElement('div');
+      note.textContent = 'Reload any page that was open before the extension was reloaded.';
+      box.appendChild(note);
+    }
+  }
+
   /** What the stored token says about itself (`<role>.<exp>.<sig>`), without trusting it. */
   function describeToken(token, apiVerdict) {
     const info = $('tokenInfo'), clear = $('clearToken');
@@ -144,6 +183,7 @@
     showCacheInfo();
     showBridgeState(initial.webAppUrl);
     describeToken(initial.token, null);
+    showSiteAccess();
     test();
     $('token').addEventListener('input', () => describeToken($('token').value.trim(), null));
     $('webAppUrl').addEventListener('change', () => showBridgeState($('webAppUrl').value.trim()));

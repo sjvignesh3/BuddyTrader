@@ -21,6 +21,9 @@ const DEFAULT_LOCAL_LISTS = ['S1', 'S2', 'S3', 'S4'];
 
 const TV_MATCH = ['https://*.tradingview.com/chart*', 'https://tradingview.com/chart*'];
 const SCR_MATCH = ['https://*.screener.in/*', 'https://screener.in/*'];
+// US research sites (us/us_sites.js); kept in step with manifest.json content_scripts.
+const US_MATCH = ['https://*.stockanalysis.com/stocks/*', 'https://stockanalysis.com/stocks/*', 'https://*.roic.ai/*', 'https://roic.ai/*',
+  'https://*.vcpscanner.com/stock/*', 'https://vcpscanner.com/stock/*', 'https://*.stockresearch.app/stocks/*', 'https://stockresearch.app/stocks/*'];
 
 let bootstrapInflight = null;
 let positionsCache = { at: 0, data: null };
@@ -510,6 +513,7 @@ const HANDLERS = {
   'trades.forSymbol': (m) => tradesForSymbol(m.symbol),
   'live.quotes': (m) => liveQuotes(m.symbols || []),
   'live.fundamentals': (m) => PlutusTvScan.fundamentals(PlutusSymbols.toPlutus(m.symbol) || m.symbol),
+  'live.fundamentalsBatch': (m) => PlutusTvScan.fundamentalsBatch(Array.from(new Set((m.symbols || []).map((x) => PlutusSymbols.toPlutus(x)).filter(Boolean))).slice(0, 800)),
   'bridge.register': () => registerTokenBridge(),
   'token.state': () => ({ rejected: tokenRejected }),
   'opportunity.create': (m) => opportunityCreate(m.body || {}),
@@ -589,6 +593,17 @@ async function registerTokenBridge() {
 async function injectIntoOpenTabs() {
   let tabs = [];
   try { tabs = await chrome.tabs.query({ url: TV_MATCH.concat(SCR_MATCH) }); } catch (e) { return; }
+  // US research tabs that were open before the extension (re)loaded
+  try {
+    const usTabs = await chrome.tabs.query({ url: US_MATCH });
+    for (const tab of usTabs) {
+      if (!tab.id) continue;
+      try {
+        await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['us/us.css'] });
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/table_colour.js', 'us/us_sites.js'] });
+      } catch (e) { /* no access to that tab (site access withheld) or already injected */ }
+    }
+  } catch (e) { /* ignore */ }
   for (const tab of tabs) {
     if (!tab.id || !tab.url) continue;
     const isTv = tab.url.includes('tradingview.com');
@@ -597,7 +612,7 @@ async function injectIntoOpenTabs() {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: isTv
-          ? ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/panel_logic.js', 'shared/card.js', 'shared/sizer.js', 'tv/tv_content.js']
+          ? ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/panel_logic.js', 'shared/card.js', 'shared/sizer.js', 'shared/links.js', 'tv/tv_content.js']
           : ['shared/symbols.js', 'shared/settings.js', 'shared/ui.js', 'shared/card.js', 'shared/sizer.js', 'vendor/chart.min.js', 'screener/screener_content.js'],
       });
     } catch (e) { /* restricted tab or already injected */ }

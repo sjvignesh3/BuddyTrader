@@ -15,7 +15,7 @@
   if (window.__plutusTvLoaded) { if (typeof window.__plutusTvReload === 'function') window.__plutusTvReload(); return; }
   window.__plutusTvLoaded = true;
 
-  const S = window.PlutusSymbols, U = window.PlutusUI, SET = window.PlutusSettings, L = window.PlutusPanelLogic, C = window.PlutusCard;
+  const S = window.PlutusSymbols, U = window.PlutusUI, SET = window.PlutusSettings, L = window.PlutusPanelLogic, C = window.PlutusCard, LK = window.PlutusLinks;
   const el = U.el, esc = U.esc, num = U.num;
 
   // ---- TradingView selectors (one place to fix after a TradingView redeploy) ----
@@ -71,10 +71,18 @@
     stockCache: new Map(),      // "TCS.NS" -> {data|null, error, at}  for the Stock tab / hover card
     trades: { symbol: null, data: null, loading: false, error: null },
     labelFilter: null,          // watchlist id -> only its members (F13)
+    techChips: {},              // on-demand technical filters (Plutus snapshot): id -> true
+    tvChips: {},                // on-demand TradingView-fundamentals filters: id -> true
+    tvAllPass: false,
+    tvFund: new Map(),          // "NVDA" -> TradingView fundamentals (or null = not on TradingView), fetched on demand
+    tvAsked: new Map(),         // symbol -> when we last asked (no re-ask for 10 min)
+    tvLoading: false,
+    tvEdit: false,              // thresholds editor open in the Filters tab
     provisional: new Map(),     // "XYZ.NS" -> live.fundamentals result for stocks outside the universe (F14)
   };
   // Label colours (a label is a watchlist with a colour). Same family as the chart palette.
   const PALETTE = ['#14b8a6', '#2962ff', '#a78bfa', '#f59e0b', '#f23645', '#ec4899', '#84cc16'];
+  let filterBarEl;
   let panel, toggleBtn, listEl, headerEl, selectEl, slicerEl, labelsEl, regionEl, filterInput, sectorSelect, asofEl, liveEl, bannerEl, addRow, addInput, hintEl, focusBtn, linkBtn, heldEl, wideBtn, drawerBtn;
   let drawer, drawerBody, drawerTabsEl, drawerTitleEl, hoverEl, labelPop;
 
@@ -219,16 +227,20 @@
     const below = q && dma ? (dma - q.close) / dma * 100 : (e ? num(e.below_200dma_pct) : null);
     const off52 = q && hi52 ? (q.close / hi52 - 1) * 100 : (e ? num(e.distance_from_52w_high_pct) : null);
     const athFall = q && ath ? (1 - q.close / ath) * 100 : (e ? num(e.fall_from_ath_pct) : null);
+    const mkt = L.marketOfEntry(e, symbol);
+    const tvd = st.tvFund.get(symbol) || null;
+    const tvRes = tvd ? L.evalTvRules(tvd, L.tvThresholds(st.settings, mkt)) : null;
     return {
       symbol, plain,
       entry: e || null,
       name: e ? e.name : null,
-      market: L.marketOfEntry(e, symbol),
+      market: mkt,
       cap: L.capLabel(e),
       sector: L.sectorOf(e),
       status: e ? e.best_status : null,
       points: e ? e.funda_points : null,
       checks: e ? e.checks || null : null,
+      tv: tvd, tvRes, tvScore: L.tvScore(tvRes),
       below, athFall, off52,
       chgPct: q && q.chgPct != null ? q.chgPct : (e ? num(e.price_change_1d_pct) : null),
       mcap: e ? num(e.market_cap) : null,
@@ -253,6 +265,38 @@
     });
   }
   function chipsActive() { return st.allPass || Object.keys(st.chips).length > 0; }
+  function techCtx() {
+    const t = (st.boot && st.boot.thresholds) || {};
+    const bz = num((t.envelope || {}).buy_zone_below_dma_pct);
+    return { buyZone: bz != null ? bz : 14, athFall: t.ath_fall_pct_by_cap || null };
+  }
+  function tvActive() { return st.tvAllPass || Object.keys(st.tvChips).length > 0; }
+  function filtersActive() { return chipsActive() || Object.keys(st.techChips).length > 0 || tvActive(); }
+  function filterCount() { return Object.keys(st.chips).length + (st.allPass ? 1 : 0) + Object.keys(st.techChips).length + Object.keys(st.tvChips).length + (st.tvAllPass ? 1 : 0); }
+  function clearFilters() { st.chips = {}; st.allPass = false; st.techChips = {}; st.tvChips = {}; st.tvAllPass = false; renderAll(); }
+  function passesTv(r) {
+    if (!tvActive()) return true;
+    if (!r.tvRes) return false;
+    if (st.tvAllPass) return L.TV_RULES.every((x) => r.tvRes[x.id] === true);
+    return Object.keys(st.tvChips).every((id) => r.tvRes[id] === true);
+  }
+  /** TradingView fundamentals for the list on screen, on demand: US lists always, Indian lists when a TradingView filter is on. */
+  let tvTimer = null;
+  function ensureTvFund(extra) {
+    clearTimeout(tvTimer);
+    tvTimer = setTimeout(() => {
+      const want = new Set(extra || []);
+      if (st.region === 'US' || tvActive() || (st.settings.tvDrawerOpen && drawerTab() === 'filters')) activeSymbols().forEach((x) => want.add(x));
+      const now = Date.now();
+      const missing = Array.from(want).filter((x) => !st.tvFund.has(x) && !(st.tvAsked.get(x) > now - 600000));
+      if (!missing.length) return;
+      missing.forEach((x) => st.tvAsked.set(x, now));
+      st.tvLoading = true; renderFilterBar();
+      U.send({ type: 'live.fundamentalsBatch', symbols: missing }, 30000).then((res) => {
+        Object.keys((res && res.data) || {}).forEach((sym) => st.tvFund.set(sym, res.data[sym]));
+      }).catch(() => {}).then(() => { st.tvLoading = false; renderList(); renderFilterBar(); renderDrawer(); });
+    }, 250);
+  }
 
   function conviction(r) {
     const sig = r.status ? (SIGNAL_WEIGHT[r.status] || 0) : 0;
@@ -270,6 +314,9 @@
     const f = st.filter.trim().toUpperCase();
     if (f) rows = rows.filter((r) => r.plain.includes(f) || (r.name || '').toUpperCase().includes(f));
     if (chipsActive()) rows = rows.filter(passesChips);
+    const techIds = Object.keys(st.techChips);
+    if (techIds.length) { const ctx = techCtx(); rows = rows.filter((r) => L.passesAll(techIds, L.TECH_FILTERS, r, ctx)); }
+    if (tvActive()) rows = rows.filter(passesTv);
     if (st.labelFilter != null) {
       const w = st.watchlists.find((x) => String(x.id) === String(st.labelFilter));
       const members = new Set((w && w.symbols) || []);
@@ -346,6 +393,9 @@
     // label slicer (F13): one chip per watchlist that has members in this region
     labelsEl = el('div', { class: 'px-labels', style: 'display:none' });
     panel.appendChild(labelsEl);
+    // active-filter strip: what is narrowing the list, with one-click edit / clear
+    filterBarEl = el('div', { class: 'px-filterbar', style: 'display:none' });
+    panel.appendChild(filterBarEl);
 
     // filter + sector (F2)
     filterInput = el('input', { class: 'px-input', type: 'text', placeholder: 'Filter…  ( / )', oninput: () => { st.filter = filterInput.value; renderList(); } });
@@ -381,7 +431,34 @@
     window.addEventListener('keydown', onKeyDown, true);
   }
 
-  function renderAll() { renderBanner(); renderRegion(); renderSelect(); renderSlicer(); renderLabels(); renderSectors(); renderCols(); renderList(); renderHint(); renderAsOf(); renderHeld(); renderDrawer(); }
+  function renderAll() { renderBanner(); renderRegion(); renderSelect(); renderSlicer(); renderLabels(); renderSectors(); renderCols(); renderList(); renderFilterBar(); renderHint(); renderAsOf(); renderHeld(); renderDrawer(); }
+
+  function filterNames() {
+    const names = [];
+    const labels = (st.boot && st.boot.check_labels) || {};
+    if (st.allPass) names.push('⭐ Plutus all pass');
+    Object.keys(st.chips).forEach((id) => names.push(labels[id] || id));
+    const ctx = techCtx();
+    Object.keys(st.techChips).forEach((id) => { const d = L.TECH_FILTERS.find((x) => x.id === id); if (d) names.push(d.label(ctx)); });
+    const tt = L.tvThresholds(st.settings, st.region);
+    if (st.tvAllPass) names.push('⭐ TV all pass');
+    Object.keys(st.tvChips).forEach((id) => { const d = L.TV_RULES.find((x) => x.id === id); if (d) names.push('TV ' + d.label(tt)); });
+    return names;
+  }
+  function renderFilterBar() {
+    if (!filterBarEl) return;
+    if (!filtersActive()) { filterBarEl.style.display = 'none'; return; }
+    const names = filterNames();
+    const shown = visibleRows().length, total = activeSymbols().length;
+    filterBarEl.style.display = '';
+    filterBarEl.innerHTML = '';
+    filterBarEl.appendChild(el('button', { class: 'px-filterbar-main', title: names.join(' · ') + ' (click to edit)', onclick: () => setDrawerTab('filters') }, [
+      el('b', { text: '⚙ ' + filterCount() + (filterCount() > 1 ? ' filters' : ' filter') }),
+      el('span', { class: 'px-filterbar-names', text: names.join(' · ') }),
+    ]));
+    filterBarEl.appendChild(el('span', { class: 'px-filterbar-count', text: (st.tvLoading ? '… ' : '') + shown + ' / ' + total }));
+    filterBarEl.appendChild(el('button', { class: 'px-icon-btn', title: 'Clear all filters', text: '✕', onclick: clearFilters }));
+  }
 
   function renderLabels() {
     if (!labelsEl) return;
@@ -681,7 +758,9 @@
         el('span', { class: 'px-cell px-col-num', 'data-cell': 'dma' }),
         el('span', { class: 'px-cell px-col-num', 'data-cell': 'h52' }),
         el('span', { class: 'px-cell px-col-num', 'data-cell': 'ath' }),
-        el('span', { class: 'px-cell px-col-score ' + (r.points == null ? 'px-muted' : r.points >= 8 ? 'px-strong' : r.points <= 5 ? 'px-weak' : ''), text: r.points == null ? '—' : r.points + '/11', title: 'Fundamental score' }),
+        r.points == null && r.tvScore != null
+          ? el('span', { class: 'px-cell px-col-score px-tv-score ' + (r.tvScore >= 6 ? 'px-strong' : r.tvScore <= 3 ? 'px-weak' : ''), text: r.tvScore + '/' + L.TV_RULES.length, title: 'TradingView fundamentals: rules passed (no Plutus score for this stock). See Filters.' })
+          : el('span', { class: 'px-cell px-col-score ' + (r.points == null ? 'px-muted' : r.points >= 8 ? 'px-strong' : r.points <= 5 ? 'px-weak' : ''), text: r.points == null ? '—' : r.points + '/11', title: 'Plutus fundamental score' }),
         el('div', { class: 'px-actions' }, [
           el('button', { class: 'px-act', title: 'Size a position (Z)', text: '⚖', onclick: (e) => { e.stopPropagation(); sizerDialog(r.symbol); } }),
           el('button', { class: 'px-act', title: 'Note (N)', text: '✎', onclick: (e) => { e.stopPropagation(); noteDialog(r.symbol); } }),
@@ -699,6 +778,8 @@
       listEl.appendChild(item);
     });
     scrollActiveIntoView();
+    renderFilterBar();
+    ensureTvFund();
   }
   /** Numeric cells of one row (also used by the live patcher). */
   function fillCells(item, r) {
@@ -774,7 +855,24 @@
         ]));
       });
       hoverEl.appendChild(grid);
-    } else hoverEl.appendChild(el('div', { class: 'px-muted', text: r.market === 'US' ? 'No fundamental score for US stocks yet.' : 'No fundamental scan yet.' }));
+    } else if (r.tvRes) {
+      const tt = L.tvThresholds(st.settings, r.market);
+      const d = r.tv || {};
+      const VALUE = { pe: d.pe, roe: d.roe, roic: d.roic, de: d.debtToEquity, opm: d.opMargin, sales: d.revenueYoY, profit: d.netIncomeYoY, profitable: d.netMargin };
+      const grid = el('div', { class: 'px-hover-checks' });
+      grid.appendChild(el('div', { class: 'px-muted', text: 'TradingView fundamentals · ' + r.tvScore + '/' + L.TV_RULES.length }));
+      L.TV_RULES.forEach((rule) => {
+        const v = r.tvRes[rule.id], x = VALUE[rule.id];
+        grid.appendChild(el('div', { class: 'px-check ' + (v === true ? 'px-pass' : v === false ? 'px-fail' : 'px-na') }, [
+          el('b', { text: v === true ? '✓' : v === false ? '✗' : '·' }), el('span', { text: rule.label(tt) }),
+          el('span', { class: 'px-hover-detail', text: x == null ? 'n/a' : x.toFixed(rule.id === 'de' ? 2 : 1) }),
+        ]));
+      });
+      hoverEl.appendChild(grid);
+    } else {
+      hoverEl.appendChild(el('div', { class: 'px-muted', text: r.market === 'US' ? 'Reading TradingView fundamentals…' : 'No fundamental scan yet.' }));
+      if (r.market === 'US') ensureTvFund([symbol]);
+    }
     hoverEl.classList.remove('px-collapsed');
     // position: left of the panel, aligned with the row; fall back to the right
     const pr = panel.getBoundingClientRect(), ir = item.getBoundingClientRect();
@@ -975,7 +1073,7 @@
     if (!drawer) return;
     positionDrawer();
     drawerBtn.classList.toggle('px-on', !!st.settings.tvDrawerOpen);
-    drawerBtn.classList.toggle('px-dot', chipsActive());
+    drawerBtn.classList.toggle('px-dot', filtersActive());
     if (!st.settings.tvDrawerOpen) return;
     const tab = drawerTab();
     drawerTabsEl.innerHTML = '';
@@ -1036,32 +1134,77 @@
       el('div', { class: 'px-muted', text: w ? 'Active: ' + w.name + ' (' + (w.symbols || []).length + ')' : 'Pick a watchlist in the panel to rename or delete it.' }),
     ]));
 
-    // F8: per-rule chips. Three states per rule — off → must pass → must not fail (n/a allowed) → off.
+    const shown = visibleRows().length, total = activeSymbols().length;
+    body.appendChild(el('div', { class: 'px-fsummary' }, [
+      el('span', { text: filtersActive() ? filterCount() + (filterCount() > 1 ? ' filters on · ' : ' filter on · ') + shown + ' of ' + total + ' shown' : 'No filter on · ' + total + ' stocks' }),
+      el('span', { class: 'px-header-spacer' }),
+      filtersActive() ? el('button', { class: 'px-small-btn', text: 'Clear all', onclick: clearFilters }) : null,
+    ]));
+    const chip = (on, text, title, onclick, extra) => el('button', { class: 'px-fchip' + (on === true ? ' px-on' : on === 'soft' ? ' px-soft' : '') + (extra || ''), text, title: title || '', onclick });
+
+    // 1. Quick filters — Plutus snapshot numbers, any market
+    const ctx = techCtx();
+    const techRow = el('div', { class: 'px-fchips' });
+    L.TECH_FILTERS.forEach((f) => techRow.appendChild(chip(!!st.techChips[f.id], f.label(ctx), f.id === 'dip52' || f.id === 'athdip' ? 'Cap rule: Large ' + L.dipRule('Large', ctx.athFall) + '% · Mid ' + L.dipRule('Mid', ctx.athFall) + '% · Small ' + L.dipRule('Small', ctx.athFall) + '% (Plutus ATH rule; US Mega = Large)' : '',
+      () => { if (st.techChips[f.id]) delete st.techChips[f.id]; else { st.techChips[f.id] = true; if (f.id === 'held') delete st.techChips.notheld; if (f.id === 'notheld') delete st.techChips.held; } renderAll(); })));
+    body.appendChild(section('Quick filters · Plutus data', [techRow]));
+
+    // 2. Plutus fundamental checks — three states per rule
     const labels = (st.boot && st.boot.check_labels) || {};
     const present = new Set();
     activeSymbols().forEach((sym) => { const e = st.stocks.get(sym); Object.keys((e && e.checks) || {}).forEach((id) => present.add(id)); });
     const ids = Object.keys(labels).filter((id) => present.has(id));
-    const chipRow = el('div', { class: 'px-fchips' });
-    chipRow.appendChild(el('button', { class: 'px-fchip px-fchip-star' + (st.allPass ? ' px-on' : ''), title: 'Only stocks that pass every check (n/a counts as not passed)', text: '⭐ All pass',
-      onclick: () => { st.allPass = !st.allPass; if (st.allPass) st.chips = {}; renderAll(); } }));
-    ids.forEach((id) => {
-      const state = st.chips[id];
-      chipRow.appendChild(el('button', { class: 'px-fchip' + (state === 'pass' ? ' px-on' : state === 'nofail' ? ' px-soft' : ''), text: labels[id],
-        title: state === 'pass' ? 'Must pass (click: allow n/a)' : state === 'nofail' ? 'Must not fail — n/a allowed (click: off)' : 'Click: must pass',
-        onclick: () => {
-          st.allPass = false;
-          if (!state) st.chips[id] = 'pass'; else if (state === 'pass') st.chips[id] = 'nofail'; else delete st.chips[id];
-          renderAll();
-        } }));
-    });
-    const shown = visibleRows().length;
-    body.appendChild(section('Fundamental filters' + (chipsActive() ? ' · ' + shown + ' shown' : ''), [
-      ids.length ? chipRow : el('div', { class: 'px-muted', text: 'No scored stocks in this list yet.' }),
-      el('div', { class: 'px-drow' }, [
-        chipsActive() ? el('button', { class: 'px-small-btn', text: 'Clear filters', onclick: () => { st.chips = {}; st.allPass = false; renderAll(); } }) : null,
-        el('span', { class: 'px-muted', text: 'Solid = must pass · outlined = must not fail (n/a allowed). Stocks without a scan are hidden while a filter is on.' }),
-      ]),
-    ]));
+    if (ids.length) {
+      const chipRow = el('div', { class: 'px-fchips' });
+      chipRow.appendChild(chip(st.allPass, '⭐ All pass', 'Only stocks that pass every Plutus check (n/a counts as not passed)', () => { st.allPass = !st.allPass; if (st.allPass) st.chips = {}; renderAll(); }, ' px-fchip-star'));
+      ids.forEach((id) => {
+        const state = st.chips[id];
+        chipRow.appendChild(chip(state === 'pass' ? true : state === 'nofail' ? 'soft' : false, labels[id],
+          state === 'pass' ? 'Must pass (click: allow n/a)' : state === 'nofail' ? 'Must not fail — n/a allowed (click: off)' : 'Click: must pass',
+          () => { st.allPass = false; if (!state) st.chips[id] = 'pass'; else if (state === 'pass') st.chips[id] = 'nofail'; else delete st.chips[id]; renderAll(); }));
+      });
+      body.appendChild(section('Plutus fundamental checks', [chipRow,
+        el('div', { class: 'px-muted', text: 'Solid = must pass · dashed = must not fail (n/a allowed). Stocks without a Plutus scan are hidden while one is on.' })]));
+    } else {
+      body.appendChild(section('Plutus fundamental checks', [el('div', { class: 'px-muted', text: st.region === 'US' ? 'Plutus does not score US stocks yet — use the TradingView filters below.' : 'No scored stocks in this list yet.' })]));
+    }
+
+    // 3. TradingView fundamentals — on demand for the list on screen (the only fundamentals US stocks have)
+    const tt = L.tvThresholds(st.settings, st.region);
+    const tvRow = el('div', { class: 'px-fchips' });
+    tvRow.appendChild(chip(st.tvAllPass, '⭐ All pass', 'Every TradingView rule passes (missing data counts as not passed)', () => { st.tvAllPass = !st.tvAllPass; if (st.tvAllPass) st.tvChips = {}; renderAll(); ensureTvFund(); }, ' px-fchip-star'));
+    L.TV_RULES.forEach((rule) => tvRow.appendChild(chip(!!st.tvChips[rule.id], rule.label(tt), '',
+      () => { st.tvAllPass = false; if (st.tvChips[rule.id]) delete st.tvChips[rule.id]; else st.tvChips[rule.id] = true; renderAll(); ensureTvFund(); })));
+    const have = activeSymbols().filter((x) => st.tvFund.has(x)).length;
+    const status = el('div', { class: 'px-muted', text: (st.tvLoading ? 'Reading TradingView… ' : '') + have + ' of ' + total + ' stocks have TradingView data · ' + (st.region === 'US' ? 'US thresholds' : 'India thresholds') });
+    const editBtn = el('button', { class: 'px-small-btn', text: st.tvEdit ? 'Done' : '✎ Thresholds', onclick: () => { st.tvEdit = !st.tvEdit; renderDrawer(); } });
+    const kids = [tvRow, el('div', { class: 'px-drow' }, [status, el('span', { class: 'px-header-spacer' }), editBtn])];
+    if (st.tvEdit) {
+      const grid = el('div', { class: 'px-tvedit' });
+      const fields = [['pe_max', 'P/E max'], ['roe_min', 'ROE min %'], ['roic_min', 'ROIC min %'], ['de_max', 'D/E max'], ['opm_min', 'OPM min %']];
+      const inputs = {};
+      fields.forEach(([k, label]) => {
+        inputs[k] = el('input', { class: 'px-input', type: 'number', step: k === 'de_max' ? '0.05' : '1', value: String(tt[k]) });
+        inputs[k].addEventListener('keydown', (e) => e.stopPropagation());
+        grid.appendChild(el('label', {}, [el('span', { text: label }), inputs[k]]));
+      });
+      const save = el('button', { class: 'px-small-btn px-primary', text: 'Save for ' + (st.region === 'US' ? 'US' : 'India'), onclick: async () => {
+        const next = {};
+        fields.forEach(([k]) => { const v = Number(inputs[k].value); if (Number.isFinite(v)) next[k] = v; });
+        const rules = Object.assign({}, st.settings.tvRules || {});
+        rules[st.region] = next;
+        await SET.save({ tvRules: rules });
+        st.settings.tvRules = rules; st.tvEdit = false; renderAll();
+      } });
+      const reset = el('button', { class: 'px-small-btn', text: 'Defaults', onclick: async () => {
+        const rules = Object.assign({}, st.settings.tvRules || {}); delete rules[st.region];
+        await SET.save({ tvRules: rules }); st.settings.tvRules = rules; st.tvEdit = false; renderAll();
+      } });
+      kids.push(grid, el('div', { class: 'px-drow' }, [save, reset]));
+    }
+    kids.push(el('div', { class: 'px-muted', text: 'TradingView\u2019s own figures (ROIC, gross D/E, TTM margins and growth), read on demand for this list and kept an hour. They filter the list; they never change the Plutus score.' }));
+    body.appendChild(section('TradingView fundamentals · on demand', kids));
+    ensureTvFund();
 
     const liveSel = el('select', { class: 'px-select', onchange: () => SET.save({ tvLiveIntervalSec: Number(liveSel.value) }) });
     [[15, 'every 15 s'], [30, 'every 30 s'], [60, 'every 60 s']].forEach(([v, t]) => liveSel.appendChild(el('option', { value: String(v), text: t })));
@@ -1104,13 +1247,72 @@
       },
     });
     body.appendChild(card);
+    if (r.points == null) {
+      const tv = tvFor(sym);
+      const tvSec = section('TradingView fundamentals' + (r.market === 'US' ? ' · US' : ''), [
+        tv.loading ? el('div', { class: 'px-muted', text: 'Reading TradingView…' })
+          : tv.data ? tvFundBox(sym, r, tv.data) : el('div', { class: 'px-muted', text: 'No TradingView data for ' + r.plain + '.' }),
+        el('div', { class: 'px-muted', text: 'Plutus has no fundamental score for this stock' + (r.market === 'US' ? ' (US scoring is not built yet)' : '') + ', so these are TradingView\u2019s figures against the thresholds in Filters.' }),
+      ]);
+      // US: the TradingView read is the useful part, so it goes above the (mostly empty) Plutus card
+      if (r.market === 'US') body.insertBefore(tvSec, card); else body.appendChild(tvSec);
+    }
+    const rs = researchSection(sym); if (rs) body.appendChild(rs);
     const links = el('div', { class: 'px-drow' }, [
-      r.market === 'US' ? null : el('button', { class: 'px-small-btn', text: '⧉ Screener', onclick: () => openScreener(sym) }),
       el('button', { class: 'px-small-btn', text: '⌂ Plutus', onclick: () => openPlutus(sym) }),
-      el('button', { class: 'px-small-btn', text: '↻', title: 'Reload this stock', onclick: () => stockFor(sym, true).then(() => renderDrawer()) }),
+      el('button', { class: 'px-small-btn', text: '↻', title: 'Reload this stock', onclick: () => { stockFor(sym, true).then(() => renderDrawer()); } }),
     ]);
     body.appendChild(links);
     if (r.live && r.last != null) body.appendChild(el('div', { class: 'px-muted', text: 'Live ' + (r.market === 'US' ? '$' : '₹') + U.fmt(r.last, 2) + ' · ' + pct(r.chgPct) + '% today (TradingView). The card above uses the nightly snapshot.' }));
+  }
+
+  /** TradingView fundamentals for one stock with the on-demand rules as ✓ / ✗ (display; the Plutus score is separate). */
+  function tvFundBox(sym, r, d) {
+    const cur = r.market === 'US' ? '$' : '₹';
+    const tt = L.tvThresholds(st.settings, r.market);
+    const res = L.evalTvRules(d, tt);
+    const f = (v, nd, suf) => (v == null ? '—' : v.toFixed(nd == null ? 1 : nd) + (suf || ''));
+    const p = (v) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%');
+    const tier = r.market === 'US' ? L.usTier(d.marketCap) : (d.marketCap >= 50000e7 ? 'Large' : d.marketCap >= 15000e7 ? 'Mid' : d.marketCap != null ? 'Small' : null);
+    const VALUE = { pe: f(d.pe, 1), roe: f(d.roe, 1, '%'), roic: f(d.roic, 1, '%'), de: f(d.debtToEquity, 2), opm: f(d.opMargin, 1, '%'), sales: p(d.revenueYoY), profit: p(d.netIncomeYoY), profitable: f(d.netMargin, 1, '%') };
+    const score = L.tvScore(res);
+    const box = el('div', { class: 'px-tvbox' });
+    box.appendChild(el('div', { class: 'px-tvbox-head' }, [
+      el('b', { text: (d.name || r.plain) }),
+      el('span', { class: 'px-muted', text: [d.sector, d.industry].filter(Boolean).join(' · ') }),
+      el('span', { class: 'px-header-spacer' }),
+      el('span', { class: 'px-chip px-chip-score ' + (score >= 6 ? 'px-strong' : score <= 3 ? 'px-weak' : ''), text: score + '/' + L.TV_RULES.length, title: 'TradingView rules passed' }),
+    ]));
+    const grid = el('div', { class: 'px-tvrules' });
+    L.TV_RULES.forEach((rule) => {
+      const v = res[rule.id];
+      grid.appendChild(el('div', { class: 'px-check ' + (v === true ? 'px-pass' : v === false ? 'px-fail' : 'px-na') }, [
+        el('b', { text: v === true ? '✓' : v === false ? '✗' : '·' }), el('span', { text: rule.label(tt) }), el('span', { class: 'px-hover-detail', text: VALUE[rule.id] }),
+      ]));
+    });
+    box.appendChild(grid);
+    const kv = (k, v) => el('div', { class: 'px-kv' }, [el('span', { class: 'px-kv-k', text: k }), el('span', { class: 'px-kv-v', text: v })]);
+    box.appendChild(el('div', { class: 'px-prov-grid' }, [
+      kv('Market cap', d.marketCap == null ? '—' : (r.market === 'US' ? '$' + (d.marketCap / 1e9).toFixed(1) + ' B' : '₹' + Math.round(d.marketCap / 1e7).toLocaleString('en-IN') + ' Cr') + (tier ? ' · ' + tier : '')),
+      kv('P/B · EPS', f(d.pb, 2) + ' · ' + cur + f(d.eps, 2)),
+      kv('Net margin · dividend yield', f(d.netMargin, 1, '%') + ' · ' + f(d.dividendYield, 2, '%')),
+    ]));
+    return box;
+  }
+  function researchSection(sym) {
+    const links = LK ? LK.researchLinks(sym) : [];
+    if (!links.length) return null;
+    const groups = new Map();
+    links.forEach((l) => { if (!groups.has(l.group)) groups.set(l.group, []); groups.get(l.group).push(l); });
+    const kids = [];
+    groups.forEach((items, g) => kids.push(el('div', { class: 'px-links-row' }, [el('span', { class: 'px-links-group', text: g })].concat(items.map((l) => el('a', { class: 'px-link', href: l.url, target: '_blank', rel: 'noopener', title: l.title || '', text: l.label + ' ↗' }))))));
+    return section('Research', kids);
+  }
+  /** One stock's TradingView fundamentals: from the list cache, else fetched on its own. */
+  function tvFor(sym) {
+    if (st.tvFund.has(sym)) return { loading: false, data: st.tvFund.get(sym) };
+    ensureTvFund([sym]);
+    return { loading: true, data: null };
   }
 
   // ---- F14: a stock outside the Plutus universe — TradingView data, clearly provisional ----
@@ -1123,7 +1325,6 @@
         .catch((e) => { st.provisional.set(sym, { loading: false, data: null, error: e.message }); })
         .then(() => { if (drawerTab() === 'stock' && currentSymbol() === sym) renderDrawer(); });
     }
-    const cur = r.market === 'US' ? '$' : '₹';
     const head = el('div', { class: 'px-prov-head' }, [
       el('span', { class: 'px-chip px-chip-prov', text: 'NOT IN PLUTUS' }),
       el('span', { class: 'px-muted', text: 'TradingView data · provisional' }),
@@ -1133,25 +1334,9 @@
     if (!rec || rec.loading) box.appendChild(el('div', { class: 'px-muted', text: 'Reading TradingView…' }));
     else if (!d) box.appendChild(el('div', { class: 'px-muted', text: 'No TradingView data (' + (rec.error || 'unknown') + ').' }));
     else {
-      const f = (v, nd, suf) => (v == null ? '—' : (nd === 0 ? Math.round(v).toLocaleString('en-US') : v.toFixed(nd == null ? 1 : nd)) + (suf || ''));
-      const pct = (v) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%');
-      const tier = r.market === 'US' ? L.usTier(d.marketCap) : (d.marketCap >= 50000e7 ? 'Large' : d.marketCap >= 15000e7 ? 'Mid' : d.marketCap != null ? 'Small' : null);
-      const kv = (k, v) => el('div', { class: 'px-kv' }, [el('span', { class: 'px-kv-k', text: k }), el('span', { class: 'px-kv-v', text: v })]);
-      box.appendChild(el('div', { class: 'px-prov-name', text: (d.name || r.plain) + (d.sector ? ' · ' + d.sector : '') + (d.industry ? ' · ' + d.industry : '') }));
-      box.appendChild(el('div', { class: 'px-prov-grid' }, [
-        kv('Price', cur + f(d.close, d.close >= 1000 ? 0 : 2) + '  ' + pct(d.chgPct)),
-        kv('Market cap', d.marketCap == null ? '—' : (r.market === 'US' ? '$' + (d.marketCap / 1e9).toFixed(1) + ' B' : '₹' + Math.round(d.marketCap / 1e7).toLocaleString('en-IN') + ' Cr') + (tier ? ' · ' + tier : '')),
-        kv('From 200 DMA', pct(d.dist200)),
-        kv('Off 52-week high', pct(d.off52)),
-        kv('Off ATH', pct(d.offAth)),
-        kv('P/E · P/B', f(d.pe, 1) + ' · ' + f(d.pb, 2)),
-        kv('ROE · ROIC', f(d.roe, 1, '%') + ' · ' + f(d.roic, 1, '%')),
-        kv('Debt / equity', f(d.debtToEquity, 2)),
-        kv('OPM · net margin', f(d.opMargin, 1, '%') + ' · ' + f(d.netMargin, 1, '%')),
-        kv('Revenue · profit YoY', pct(d.revenueYoY) + ' · ' + pct(d.netIncomeYoY)),
-        kv('EPS · dividend yield', f(d.eps, 2) + ' · ' + f(d.dividendYield, 2, '%')),
-      ]));
-      box.appendChild(el('div', { class: 'px-muted px-prov-note', text: 'Uncoloured on purpose: these are TradingView’s definitions (ROIC, TTM margins), not Plutus’ Screener-based checks. No score until the stock is in a pool and synced.' }));
+      st.tvFund.set(sym, d);
+      box.appendChild(tvFundBox(sym, r, d));
+      box.appendChild(el('div', { class: 'px-muted px-prov-note', text: 'TradingView\u2019s definitions (ROIC, gross D/E, TTM margins) checked against the on-demand thresholds in Filters. No Plutus score until the stock is in a pool and synced.' }));
     }
     body.appendChild(section(r.plain + ' · outside the universe', [box]));
     body.appendChild(el('div', { class: 'px-drow' }, [
@@ -1160,6 +1345,7 @@
       r.market === 'US' ? null : el('button', { class: 'px-small-btn', text: '⧉ Screener', onclick: () => openScreener(sym) }),
       el('button', { class: 'px-small-btn', text: '↻', title: 'Read TradingView again', onclick: () => { st.provisional.delete(sym); renderDrawer(); } }),
     ]));
+    const rs = researchSection(sym); if (rs) body.appendChild(rs);
   }
 
   // ---- Trades tab (F19): everything the journal knows about this stock -------
